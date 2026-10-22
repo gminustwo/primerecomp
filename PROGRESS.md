@@ -126,3 +126,13 @@ Open, in order:
 
 Debug recipe: `LARECOMP_DEBUG_FRAME=<n>` (pass images in build/build/, draw log), `LARECOMP_GPUPROF_AT`,
 `LARECOMP_VK_PROF=1` (waits by cause), `LARECOMP_HANG_DUMP`, `LARECOMP_FNTRACE_THREAD` (with `LARECOMP_FNPROF=0:999999999`).
+
+## 2026-10-21 (night): lighting, saves
+
+- Arm cannon / black shadows: the lighting volumes are sparse textures (virtual memory pools); mapped and uploaded now.
+- Saving and loading verified end to end: `LARECOMP_AUTOSAVE_AT=<frame>` makes the game run its own autosave
+  (CStateManager::StartAutoSave, hooked from CStateManager::BeginFrame) - save.bin grows from 4219 to 6900 bytes
+  (a slot added), the slot list shows it after a restart and loading it starts the frigate again. Test runs use
+  `LARECOMP_SAVE_DIR` (a scratch copy). The slot's area name reads "<ERROR>" for that save, maybe because it
+  wasn't made in a save room - to check against a save station save.
+- Menu: Esc no longer opens it while a controller is connected (Steam desktop mode sends Esc for B).

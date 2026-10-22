@@ -37,6 +37,7 @@ def _step(gen, a):
 
 PATCHES = {a: _step for a in STEP_SITES}
 
-# CStateManager::UpdateAutoSave (every frame in gameplay): `mov x29, sp`, then the runtime's debug autosave
-# (runtime/hle/game.c rt_debug_autosave, LARECOMP_AUTOSAVE_AT) - saving tested without reaching a save station.
-PATCHES[0x7000b02f60] = lambda gen, a: '{ c->x[29] = c->sp; extern void rt_debug_autosave(Cpu *); rt_debug_autosave(c); }'
+# CStateManager::BeginFrame (every gameplay frame; it also steps a running autosave): `mov x19, x0`, then the
+# runtime's debug autosave (runtime/hle/game.c rt_debug_autosave, LARECOMP_AUTOSAVE_AT) - saving tested without
+# reaching a save station.
+PATCHES[0x7000b02dcc] = lambda gen, a: '{ c->x[19] = c->x[0]; extern void rt_debug_autosave(Cpu *); rt_debug_autosave(c); }'

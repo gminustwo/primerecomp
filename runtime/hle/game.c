@@ -43,9 +43,9 @@ void game_pace_present(int interval) {
 }
 
 // (debug) LARECOMP_AUTOSAVE_AT=<frame>: from that frame on, the next gameplay frame starts the game's autosave
-// (CStateManager::StartAutoSave), which writes the current slot the way a save station does - for testing saves
-// without playing to one. Called at the start of CStateManager::UpdateAutoSave (tools/patches.py), state manager in
-// x0; every register is put back afterwards.
+// (CStateManager::StartAutoSave, as the settings menu's "save game" action does), which writes the current slot -
+// for testing saves without playing to a save station. Called from CStateManager::BeginFrame (tools/patches.py),
+// state manager in x0; every register is put back afterwards.
 void rt_debug_autosave(Cpu *c) {
     static long at = -2;
     if (at == -2) at = getenv("LARECOMP_AUTOSAVE_AT") ? atol(getenv("LARECOMP_AUTOSAVE_AT")) : -1;
