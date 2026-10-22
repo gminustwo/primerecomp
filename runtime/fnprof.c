@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 #include "hle.h"
+#include "kernel.h"
 #include "platform.h"
 
 volatile int g_fnprof;
@@ -45,6 +46,21 @@ static void bt_check(uint64_t a, uint64_t lr, uint64_t x0) {
 
 void fnprof_hit(uint64_t a, uint64_t lr, uint64_t x0) {
     if (bt_n) bt_check(a, lr, x0);
+    KThread *t = kernel_current_thread();  // (the hang dump shows each thread's last guest function)
+    if (t) t->last_fn = a, t->last_fn_lr = lr;
+    // LARECOMP_FNTRACE_THREAD=<handle hex>: every guest function that thread enters (the first 20000), named
+    static long trace_handle = -2;
+    if (trace_handle == -2) trace_handle = getenv("LARECOMP_FNTRACE_THREAD") ? strtol(getenv("LARECOMP_FNTRACE_THREAD"), NULL, 16) : -1;
+    if (trace_handle >= 0 && t && t->handle == (uint32_t)trace_handle) {
+        static _Atomic int n;
+        if (atomic_fetch_add(&n, 1) < 20000) {
+            uint64_t off, o2;
+            const char *fn = loader_symbol_at(a, &off), *fl = loader_symbol_at(lr, &o2);
+            LOG("[fntrace] %llx %s+%llx <- %s+%llx x0 %llx x1 %llx\n", (unsigned long long)a, fn ? fn : "?",
+                (unsigned long long)off, fl ? fl : "?", (unsigned long long)o2, (unsigned long long)x0,
+                (unsigned long long)kernel_current_cpu()->x[1]);
+        }
+    }
     uint32_t h = (uint32_t)((a >> 2) * 0x9E3779B1u) & (NSLOT - 1);
     for (int n = 0; n < NSLOT; n++, h = (h + 1) & (NSLOT - 1)) {
         uint64_t cur = atomic_load_explicit(&slots[h].addr, memory_order_relaxed);

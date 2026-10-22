@@ -8,7 +8,7 @@
 #include "gamelib.h"
 #include "hle.h"
 
-typedef struct { const uint64_t *addrs; const GuestFn *fns; uint64_t count, lo, hi; } FnTable;
+typedef struct { const uint64_t *addrs; const GuestFn *fns; uint64_t count, lo, hi; const unsigned char *resumable; } FnTable;
 static FnTable tables[GAME_NMODULES];
 
 // HLE stubs live at fake addresses HLE_BASE + 16*i
@@ -109,7 +109,7 @@ void dispatch_init(void) {  // (after gamelib_load)
     const GameLibTables *g = gamelib_tables();
     for (uint32_t t = 0; t < g->nmods && t < GAME_NMODULES; t++) {
         uint64_t n = *g->counts[t];
-        tables[t] = (FnTable){g->addrs[t], g->fns[t], n, n ? g->addrs[t][0] : 1, n ? g->addrs[t][n - 1] : 0};
+        tables[t] = (FnTable){g->addrs[t], g->fns[t], n, n ? g->addrs[t][0] : 1, n ? g->addrs[t][n - 1] : 0, g->resumable[t]};
     }
 }
 
@@ -146,7 +146,21 @@ static GuestFn dispatch_slow(Cpu *c) {
     for (int i = 0; i < override_count; i++)
         if (overrides[i].addr == pc) return overrides[i].fn;
     GuestFn f = dispatch_lookup(pc);
-    if (!f) {
+    if (!f) {  // the middle of a function: fine if the function containing it is resumable (tools/gen.py)
+        for (int t = 0; t < GAME_NMODULES; t++) {
+            FnTable *ft = &tables[t];
+            if (pc < ft->lo || !ft->count) continue;
+            uint64_t lo = 0, hi = ft->count;  // last function starting at or before pc
+            while (hi - lo > 1) {
+                uint64_t mid = (lo + hi) / 2;
+                if (ft->addrs[mid] <= pc) lo = mid;
+                else hi = mid;
+            }
+            if (ft->addrs[lo] <= pc && ft->resumable[lo]) {
+                c->resume = pc;
+                return ft->fns[lo];  // (not cached: the next jump here sets resume again)
+            }
+        }
         uint64_t off;
         const char *s = loader_symbol_at(c->x[30], &off);
         FATAL("no function at %llx (lr=%llx %s+%llx)\n", pc, c->x[30], s ? s : "?", off);
@@ -222,6 +236,18 @@ void rt_fatal_trace(void) {
         for (int i = 0; i < 31; i += 4)
             fprintf(stderr, "  x%-2d %016llx  x%-2d %016llx  x%-2d %016llx  x%-2d %016llx\n", i, c->x[i], i + 1,
                     c->x[i + 1], i + 2, c->x[i + 2], i + 3, c->x[i + 3]);
+        // guest call stack: the frame pointer chain (named from the modules' symbols)
+        uint64_t off, fp = c->x[29];
+        const char *n = loader_symbol_at(c->x[30], &off);
+        fprintf(stderr, "guest stack:\n  lr %llx %s+%llx\n", c->x[30], n ? n : "?", off);
+        for (int i = 0; i < 32 && fp >= GUEST_LO && fp + 16 <= GUEST_HI && !(fp & 7); i++) {
+            uint64_t ra = *(uint64_t *)(uintptr_t)(fp + 8);
+            n = loader_symbol_at(ra, &off);
+            fprintf(stderr, "  #%-2d %llx %s+%llx\n", i, ra, n ? n : "?", off);
+            uint64_t next = *(uint64_t *)(uintptr_t)fp;
+            if (next <= fp) break;
+            fp = next;
+        }
     }
     plat_fatal_notice();
     // our crash handler also catches SIGABRT: without this abort() re-entered it forever (a 5 GB log)

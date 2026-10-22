@@ -1,5 +1,6 @@
 // Windows host layer (runtime/platform.h).
 #include <windows.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -313,7 +314,13 @@ static ssize_t prw(int fd, void *buf, size_t n, off_t off, bool write) {
         BOOL ok = write ? WriteFile(h, (const char *)buf + done, chunk, &got, &ov)
                         : ReadFile(h, (char *)buf + done, chunk, &got, &ov);
         if (!ok) {
-            if (GetLastError() == ERROR_HANDLE_EOF) break;
+            DWORD err = GetLastError();
+            if (err == ERROR_HANDLE_EOF) break;
+            static volatile LONG nlog;
+            if (InterlockedIncrement(&nlog) <= 20)
+                fprintf(stderr, "[plat] %s fd %d at %llx (%u bytes, buffer %p) failed: error %lu\n", write ? "write" : "read",
+                        fd, (unsigned long long)o, (unsigned)chunk, (char *)buf + done, err);
+            errno = EIO;
             return done ? (ssize_t)done : -1;
         }
         if (!got) break;

@@ -77,6 +77,13 @@ HLE_FUNC("_ZNK5movie9MediaData9FindInt32EPKcPi", md_find_int32) {
         if (!m->e[i].is_str && !strcmp(m->e[i].key, k)) { *(int32_t *)(uintptr_t)c->x[2] = (int32_t)m->e[i].ival; c->x[0] = 1; return; }
     c->x[0] = 0;
 }
+HLE_FUNC("_ZNK5movie9MediaData9FindInt64EPKcPl", md_find_int64) {
+    MediaData *m = md(c->x[0]);
+    const char *k = (const char *)(uintptr_t)c->x[1];
+    for (int i = 0; i < m->n; i++)
+        if (!m->e[i].is_str && !strcmp(m->e[i].key, k)) { *(int64_t *)(uintptr_t)c->x[2] = m->e[i].ival; c->x[0] = 1; return; }
+    c->x[0] = 0;
+}
 HLE_FUNC("_ZNK5movie9MediaData10FindStringEPKcPS2_", md_find_string) {
     MediaData *m = md(c->x[0]);
     const char *k = (const char *)(uintptr_t)c->x[1];
@@ -169,6 +176,11 @@ typedef struct {
     AVPacket *pkt;
     bool have_pkt, eof;
     bool skippable;  // the launch opening (forced on the first launch, no save yet): A / B / + ends it
+    // a source read through the game's movie::ClientStreamReader (Metroid Prime Remastered: movies in .pak files)
+    uint64_t reader, handle;  // the guest reader object, its open handle
+    int64_t pos, size;
+    AVIOContext *avio;
+    uint8_t *bounce;  // reads land here first: guest-visible memory (see gs_read)
 } Extractor;
 
 static bool g_skip_held;           // ex_fill: A / B held at the last look
@@ -473,7 +485,9 @@ static void dec_configure(Cpu *c) {
     d->video = p->codec_type == AVMEDIA_TYPE_VIDEO;
     d->width = p->width;
     d->height = p->height;
-    d->stride = (p->width + 255) & ~255;
+    // NV12 rows: Metroid Prime Remastered reads no "nv12-y-stride" (Link's Awakening did, with rows padded to 256):
+    // its rows are the width apart
+    d->stride = (p->width + 15) & ~15;
     d->sample_rate = p->sample_rate;
     d->channels = p->ch_layout.nb_channels;
     d->in_cap = d->video ? 4 << 20 : 256 << 10;
@@ -794,3 +808,146 @@ HLE_FUNC("_ZN5movie7DecoderC1ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11Dec
     self[0] = vt;
     self[1] = (uint64_t)(uintptr_t)d;
 }
+
+// ------------------------------------------------------------------ Metroid Prime Remastered
+// The game calls movie::Extractor / movie::Decoder methods directly (LAS Recomp's game went through the vtable the
+// constructors above install): each import maps onto the same host implementation, `this` in x0 as for a slot.
+// Its movies live inside .pak files, read through the game's movie::ClientStreamReader:
+//   slot 2 bool Open(const char *url, void **handle)      slot 3 size_t ReadAt(handle, int64 offset, void *, size_t)
+//   slot 4 bool Close(handle)                              slot 5 bool GetSize(handle, int64 *size)
+// FFmpeg reads through an AVIOContext whose callbacks call those on the current guest thread.
+static uint64_t reader_call(int slot, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    Cpu *c = kernel_current_cpu();
+    uint64_t saved[8];
+    memcpy(saved, c->x, sizeof saved);
+    uint64_t vt = *(uint64_t *)(uintptr_t)a0;
+    c->x[0] = a0, c->x[1] = a1, c->x[2] = a2, c->x[3] = a3, c->x[4] = a4;
+    guest_call(c, *(uint64_t *)(uintptr_t)(vt + 8 * slot));
+    uint64_t r = c->x[0];
+    memcpy(c->x, saved, sizeof saved);
+    return r;
+}
+
+// The game's reader passes the buffer on to file system requests, whose buffer descriptors hold 39 address bits:
+// FFmpeg's buffers (host heap, above that) would be cut short. Reads go through a buffer in the HLE heap instead.
+#define BOUNCE_SIZE (256u << 10)
+static int gs_read(void *opaque, uint8_t *buf, int n) {
+    Extractor *e = opaque;
+    if (e->pos >= e->size) return AVERROR_EOF;
+    if (n > (int)BOUNCE_SIZE) n = (int)BOUNCE_SIZE;
+    uint64_t got = reader_call(3, e->reader, e->handle, (uint64_t)e->pos, (uint64_t)(uintptr_t)e->bounce, (uint64_t)n);
+    if (!got) return AVERROR_EOF;
+    if (got > (uint64_t)n) got = (uint64_t)n;
+    memcpy(buf, e->bounce, (size_t)got);
+    e->pos += (int64_t)got;
+    return (int)got;
+}
+
+static int64_t gs_seek(void *opaque, int64_t off, int whence) {
+    Extractor *e = opaque;
+    if (whence & AVSEEK_SIZE) return e->size;
+    whence &= ~AVSEEK_FORCE;
+    int64_t to = whence == SEEK_SET ? off : whence == SEEK_CUR ? e->pos + off : whence == SEEK_END ? e->size + off : -1;
+    if (to < 0 || to > e->size) return -1;
+    return e->pos = to;
+}
+
+static void ex_set_reader_source(Cpu *c) {
+    Extractor *e = self_state(c);
+    uint64_t reader = c->x[1];
+    const char *url = c->x[2] ? (const char *)(uintptr_t)c->x[2] : "";
+    uint64_t *slots = hle_alloc(16);  // (out parameters in guest-visible memory)
+    if (!reader_call(2, reader, (uint64_t)(uintptr_t)url, (uint64_t)(uintptr_t)&slots[0], 0, 0)) {
+        LOG("[movie] reader Open(\"%s\") failed\n", url);
+        c->x[0] = 1;
+        return;
+    }
+    e->reader = reader, e->handle = slots[0], e->pos = 0;
+    if (!e->bounce) e->bounce = buf_get(BOUNCE_SIZE);
+    reader_call(5, reader, e->handle, (uint64_t)(uintptr_t)&slots[1], 0, 0);
+    e->size = (int64_t)slots[1];
+    enum { AVIO_BUF = 64 << 10 };
+    e->avio = avio_alloc_context(av_malloc(AVIO_BUF), AVIO_BUF, 0, e, gs_read, NULL, gs_seek);
+    e->fmt = avformat_alloc_context();
+    e->fmt->pb = e->avio;
+    e->fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
+    if (avformat_open_input(&e->fmt, NULL, NULL, NULL) < 0 || avformat_find_stream_info(e->fmt, NULL) < 0) {
+        LOG("[movie] cannot read the game's movie (\"%s\", %lld bytes)\n", url, (long long)e->size);
+        c->x[0] = 1;
+        return;
+    }
+    e->pkt = av_packet_alloc();
+    e->ntracks = 0;
+    for (unsigned i = 0; i < e->fmt->nb_streams && e->ntracks < 16; i++) {
+        enum AVMediaType t = e->fmt->streams[i]->codecpar->codec_type;
+        if (t == AVMEDIA_TYPE_VIDEO || t == AVMEDIA_TYPE_AUDIO) e->map[e->ntracks++] = (int)i;
+    }
+    LOG("[movie] source \"%s\": %lld bytes, %s, %d tracks, %.1f s\n", url, (long long)e->size, e->fmt->iformat->name,
+        e->ntracks, e->fmt->duration > 0 ? e->fmt->duration / 1e6 : 0.0);
+    c->x[0] = 0;
+}
+
+static void ex_close_reader(Extractor *e) {
+    if (e->fmt) avformat_close_input(&e->fmt);
+    if (e->avio) { av_freep(&e->avio->buffer); avio_context_free(&e->avio); }
+    if (e->reader && e->handle) reader_call(4, e->reader, e->handle, 0, 0, 0);
+    e->reader = e->handle = 0;
+    if (e->bounce) buf_put(e->bounce, BOUNCE_SIZE), e->bounce = NULL;
+}
+
+EX_LOCKED(ex_set_reader_source)
+HLE_FUNC("_ZN5movie9ExtractorC1ENS_13ContainerTypeENS_9CacheSizeE", mpr_extractor_ctor) { movie_extractor_ctor(c); }
+HLE_FUNC("_ZN5movie9ExtractorD1Ev", mpr_extractor_dtor) {
+    pthread_mutex_lock(&ex_lock);
+    Extractor *e = self_state(c);
+    if (e) ex_close_reader(e), movie_track(0, e, false);
+    pthread_mutex_unlock(&ex_lock);
+    c->x[0] = 0;
+}
+HLE_FUNC("_ZN5movie9Extractor13SetDataSourceEPNS_18ClientStreamReaderEPKc", mpr_ex_set_data_source) { ex_set_reader_source_l(c); }
+HLE_FUNC("_ZN5movie9Extractor13GetTrackCountEPi", mpr_ex_get_track_count) { ex_get_track_count_l(c); }
+HLE_FUNC("_ZN5movie9Extractor21GetTrackConfigurationEiPNS_9MediaDataE", mpr_ex_get_track_config) { ex_get_track_config_l(c); }
+HLE_FUNC("_ZN5movie9Extractor11SelectTrackEi", mpr_ex_select_track) { ex_select_track_l(c); }
+// The data is read synchronously, so no sample means the end of the stream: the game waits for status
+// MOVIE_STATUS_EOS there (CMoviePlayer: GetSampleTime == 0x2000 ends the movie) and an index past the track count
+#define MOVIE_STATUS_EOS 0x2000
+HLE_FUNC("_ZN5movie9Extractor29GetTrackIndexForAvailableDataEPm", mpr_ex_get_sample_track) {
+    uint64_t out = c->x[1];
+    ex_get_sample_track_l(c);
+    if (c->x[0]) { *(uint64_t *)(uintptr_t)out = ~0ull; c->x[0] = MOVIE_STATUS_EOS; }
+}
+HLE_FUNC("_ZN5movie9Extractor4ReadEPNS_6BufferE", mpr_ex_read) {
+    ex_read_l(c);
+    if (c->x[0]) c->x[0] = MOVIE_STATUS_EOS;
+}
+HLE_FUNC("_ZN5movie9Extractor7AdvanceEv", mpr_ex_advance) { ex_advance_l(c); }
+HLE_FUNC("_ZN5movie9Extractor13GetSampleTimeEPl", mpr_ex_get_sample_time) {
+    ex_get_sample_time_l(c);
+    if (c->x[0]) c->x[0] = MOVIE_STATUS_EOS;
+}
+HLE_FUNC("_ZN5movie9Extractor6SeekToEl", mpr_ex_seek) { ex_seek_l(c); }
+
+HLE_FUNC("_ZN5movie7DecoderD1Ev", mpr_decoder_dtor) { dec_dtor(c); }
+HLE_FUNC("_ZN5movie7Decoder9ConfigureEPNS_9MediaDataE", mpr_dec_configure) { dec_configure(c); }
+HLE_FUNC("_ZN5movie7Decoder20RegisterClientEventsEPNS_13DecoderEventsE", mpr_dec_register_events) { dec_register_events(c); }
+HLE_FUNC("_ZN5movie7Decoder15GetOutputFormatEPNS_9MediaDataE", mpr_dec_get_output_format) { dec_get_output_format(c); }
+HLE_FUNC("_ZN5movie7Decoder5StartEv", mpr_dec_start) { dec_start(c); }
+HLE_FUNC("_ZN5movie7Decoder4StopEv", mpr_dec_stop) { dec_stop(c); }
+HLE_FUNC("_ZN5movie7Decoder23AcquireInputBufferIndexEPiS1_", mpr_dec_acquire_input) { dec_acquire_input(c); }
+HLE_FUNC("_ZN5movie7Decoder14GetInputBufferEiPNS_6BufferE", mpr_dec_get_input_buffer) { dec_get_input_buffer(c); }
+HLE_FUNC("_ZN5movie7Decoder24SendInputBufferForDecodeEiiilj", mpr_dec_send_input) { dec_send_input(c); }
+HLE_FUNC("_ZN5movie7Decoder24AcquireOutputBufferIndexEPiPlPjS1_", mpr_dec_acquire_output) { dec_acquire_output(c); }
+HLE_FUNC("_ZN5movie7Decoder15GetOutputBufferEiPNS_6BufferEPNS_9MediaDataE", mpr_dec_get_output_buffer) {
+    uint64_t fmt = c->x[3];
+    Decoder *d = self_state(c);  // (before the call: it returns its result in x0)
+    dec_get_output_buffer(c);
+    if (fmt && !c->x[0]) dec_output_format(d, md(fmt));
+}
+HLE_FUNC("_ZN5movie7Decoder24ReleaseOutputBufferIndexEi", mpr_dec_release_output) { dec_release_output(c); }
+HLE_FUNC("_ZN5movie7Decoder19GetOutputBufferSizeEPiS1_", mpr_dec_output_buffer_size) {
+    Decoder *d = self_state(c);  // (out: size of one output buffer, how many there are)
+    if (c->x[1]) *(int32_t *)(uintptr_t)c->x[1] = (int32_t)d->out_cap;
+    if (c->x[2]) *(int32_t *)(uintptr_t)c->x[2] = NOUT;
+    c->x[0] = 0;
+}
+HLE_FUNC("_ZN5movie11SetCoreMaskEm", movie_set_core_mask) { c->x[0] = 0; }

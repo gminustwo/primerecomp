@@ -94,6 +94,16 @@ int ipc_handle_request(Cpu *c, uint32_t handle) {
     IpcReq req = {0};
     IpcResp resp = {0};
     req.type = msg[0] & 0xFFFF;
+    if (ENV("LARECOMP_LOG_IPC")) {  // each (service, type, first payload words) the first few times
+        static struct { const char *svc; uint32_t w[6]; int n; } seen[512];
+        static int nseen;
+        int k = 0;
+        while (k < nseen && !(seen[k].svc == sess->svc->name && !memcmp(seen[k].w, msg, 24))) k++;
+        if (k == nseen && nseen < 512) { seen[k].svc = sess->svc->name; memcpy(seen[k].w, msg, 24); nseen++; }
+        if (k < 512 && seen[k].n++ < 3)
+            LOG("[ipc] -> %s (handle %x) %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x\n", sess->svc->name, handle,
+                msg[0], msg[1], msg[2], msg[3], msg[4], msg[5], msg[6], msg[7], msg[8], msg[9]);
+    }
     int nx = (msg[0] >> 16) & 0xF, na = (msg[0] >> 20) & 0xF, nb = (msg[0] >> 24) & 0xF;
     uint32_t raw_words = msg[1] & 0x3FF;
     uint32_t cflags = (msg[1] >> 10) & 0xF;
@@ -134,9 +144,30 @@ int ipc_handle_request(Cpu *c, uint32_t handle) {
         req.nc = ncd;
     }
 
-    if (req.type == 2) {  // close
+    if (req.type == 2 || req.type == 15) {  // close (CMIF / TIPC)
         LOG("[ipc] close session %s (handle %x)\n", sess->svc->name, handle);
         if (!sess->domain) service_release(sess->svc);  // (a domain's objects stay: closed one by one)
+        return 0;
+    }
+    if (req.type >= 16) {  // TIPC (newer SDKs' sm:): command = type - 16, raw data unpadded, no SFCI header
+        req.cmd = req.type - 16;
+        req.data = (const uint8_t *)raw;
+        req.data_size = raw_words * 4;
+        sess->svc->handler(sess->svc, &req, &resp);
+        for (int i = 0; i < resp.nobjects; i++) resp.move_handles[resp.nmove++] = session_new(resp.objects[i]);
+        memset(msg, 0, 0x100);
+        uint32_t *w = msg;
+        int has_handles = resp.ncopy || resp.nmove;
+        w[0] = req.type;
+        w[1] = (1 + (resp.data_size + 3) / 4) | (has_handles ? 0x80000000u : 0);  // result + output words
+        uint32_t *q = w + 2;
+        if (has_handles) {
+            *q++ = (resp.ncopy << 1) | (resp.nmove << 5);
+            for (int i = 0; i < resp.ncopy; i++) *q++ = resp.copy_handles[i];
+            for (int i = 0; i < resp.nmove; i++) *q++ = resp.move_handles[i];
+        }
+        *q++ = resp.result;
+        memcpy(q, resp.data, resp.data_size);
         return 0;
     }
     uint8_t *payload = (uint8_t *)aligned;

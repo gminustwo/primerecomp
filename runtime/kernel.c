@@ -225,8 +225,9 @@ static void thread_start(KThread *t) {
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 256ull << 20);  // guest recursion runs on the host stack
     t->started = true;
-    pthread_create(&t->host, &attr, thread_main, t);
+    int e = pthread_create(&t->host, &attr, thread_main, t);
     pthread_attr_destroy(&attr);
+    if (e) FATAL("thread %x: pthread_create failed (%d)\n", t->handle, e);
 }
 
 KThread *kernel_create_main_thread(uint64_t entry, uint64_t stack_size, int prio) {
@@ -237,8 +238,8 @@ KThread *kernel_create_main_thread(uint64_t entry, uint64_t stack_size, int prio
     return t;
 }
 
-void kernel_run_main(KThread *t, uint64_t x0, uint64_t x1, uint64_t x2, uint64_t x3) {
-    t->cpu.x[0] = x0; t->cpu.x[1] = x1; t->cpu.x[2] = x2; t->cpu.x[3] = x3;
+void kernel_run_main(KThread *t, uint64_t x0, uint64_t x1, uint64_t x2, uint64_t x3, uint64_t x4) {
+    t->cpu.x[0] = x0; t->cpu.x[1] = x1; t->cpu.x[2] = x2; t->cpu.x[3] = x3; t->cpu.x[4] = x4;
     thread_start(t);  // the host main thread goes on to run the window event loop
 }
 
@@ -753,7 +754,7 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
         case 14: v = STACK_BASE; break;
         case 15: v = STACK_SIZE; break;
         case 16: case 17: v = 0; break;
-        case 18: v = 0x01006BB00C6F0000ull; break;
+        case 18: v = 0x010012101468C000ull; break;  // program id: Metroid Prime Remastered
         case 20: v = 0; break;
         default: r = R_INVALID_ENUM; LOG("[kernel] GetInfo unknown id %u/%llu\n", id0, x[3]);
         }
@@ -838,6 +839,55 @@ void kernel_reset(void) {
     pthread_mutex_unlock(&g_klock);
 }
 
+// (debug) LARECOMP_HANG_DUMP=<seconds>: every so often, each guest thread's wait state, registers and guest call
+// stack (the frame pointer chain; the recompiled code keeps guest registers in memory, so they can be read from
+// here) - where a boot that stops making progress is stuck
+static bool guest_ptr_ok(uint64_t p) { return p >= GUEST_LO && p + 16 <= GUEST_HI && !(p & 7); }
+
+static void dump_threads(void) {
+    static const char *const kinds[] = {"run", "mutex", "condvar", "arbiter"};
+    pthread_mutex_lock(&g_klock);
+    LOG("[hang] ---- threads\n");
+    for (KThread *t = g_threads; t; t = t->anext) {
+        Cpu *c = &t->cpu;
+        uint64_t off;
+        const char *en = loader_symbol_at(t->entry, &off);
+        LOG("[hang] thread %x prio %d entry %llx (%s) %s%s wait_addr %llx\n", t->handle, t->prio,
+            (unsigned long long)t->entry, en ? en : "?", kinds[t->wait_kind & 3], t->in_sync_wait ? " +sync" : "",
+            (unsigned long long)t->wait_addr);
+        if (t->last_fn) {
+            const char *fn = loader_symbol_at(t->last_fn, &off);
+            uint64_t o2;
+            const char *fl = loader_symbol_at(t->last_fn_lr, &o2);
+            LOG("[hang]   last fn %llx %s+%llx (from %llx %s+%llx)\n", (unsigned long long)t->last_fn, fn ? fn : "?",
+                (unsigned long long)off, (unsigned long long)t->last_fn_lr, fl ? fl : "?", (unsigned long long)o2);
+        }
+        const char *ln = loader_symbol_at(c->x[30], &off);
+        LOG("[hang]   pc %llx lr %llx %s+%llx sp %llx x0 %llx x1 %llx x2 %llx\n", (unsigned long long)c->pc,
+            (unsigned long long)c->x[30], ln ? ln : "?", (unsigned long long)off, (unsigned long long)c->sp,
+            (unsigned long long)c->x[0], (unsigned long long)c->x[1], (unsigned long long)c->x[2]);
+        uint64_t fp = c->x[29];
+        for (int i = 0; i < 24 && guest_ptr_ok(fp); i++) {
+            uint64_t ra = *(uint64_t *)(uintptr_t)(fp + 8);
+            const char *n = loader_symbol_at(ra, &off);
+            LOG("[hang]     #%d %llx %s+%llx\n", i, (unsigned long long)ra, n ? n : "?", (unsigned long long)off);
+            uint64_t next = *(uint64_t *)(uintptr_t)fp;
+            if (next <= fp) break;
+            fp = next;
+        }
+    }
+    pthread_mutex_unlock(&g_klock);
+}
+
+static void *hang_watch(void *arg) {
+    double every = *(double *)arg;
+    for (;;) {
+        plat_sleep_until_ns(plat_now_ns() + (uint64_t)(every * 1e9));
+        dump_threads();
+    }
+    return NULL;
+}
+
 void kernel_init(void) {
     // Reserve the heap, alias, stack, and TLS regions.
     region_add(TLS_BASE, TLS_SIZE, 0xC, 3);
@@ -846,6 +896,12 @@ void kernel_init(void) {
         region_add(m->base + m->text_off, m->ro_off - m->text_off, 3, 5);
         region_add(m->base + m->ro_off, m->data_off - m->ro_off, 3, 1);
         region_add(m->base + m->data_off, m->size - m->data_off, 4, 3);
+    }
+    static double hang_every;
+    static bool hang_started;
+    if (!hang_started && getenv("LARECOMP_HANG_DUMP") && (hang_every = atof(getenv("LARECOMP_HANG_DUMP"))) > 0) {
+        pthread_t th;
+        hang_started = !pthread_create(&th, NULL, hang_watch, &hang_every);
     }
 }
 

@@ -7,7 +7,7 @@ typedef struct {
 } IpcBuf;
 
 typedef struct IpcReq {
-    uint32_t type;      // 4 = request, 5 = control, 2 = close, 6/7 = with context
+    uint32_t type;      // 4 = request, 5 = control, 2 = close, 6/7 = with context; TIPC: 15 close, 16 + cmd
     uint32_t cmd;
     const uint8_t *data;  // payload after the SFCI header
     uint32_t data_size;

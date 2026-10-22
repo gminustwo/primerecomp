@@ -26,6 +26,10 @@ static void applet_resource(Service *s, IpcReq *req, IpcResp *resp) {
 
 SERVICE("hid", hid) {
     (void)s;
+    if (ENV("LARECOMP_LOG_HID")) {  // (each command the first few times)
+        static int seen[1024];
+        if (req->cmd < 1024 && seen[req->cmd]++ < 3) LOG("[hid] cmd %u (in %u bytes)\n", req->cmd, req->data_size);
+    }
     switch (req->cmd) {
     case 0: ipc_return_object(resp, service_new("IAppletResource", applet_resource, NULL)); break;
     case 40: case 106: resp->copy_handles[resp->ncopy++] = new_event_handle(); break;

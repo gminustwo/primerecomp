@@ -5,12 +5,14 @@
 
 extern const uint64_t main_fn_addrs[], sdk_fn_addrs[], main_fn_count, sdk_fn_count;
 extern const GuestFn main_fn_ptrs[], sdk_fn_ptrs[];
+extern const unsigned char main_fn_resumable[], sdk_fn_resumable[];
 
 GAMELIB_EXPORT const GameLibTables *lasgame_tables(void) {
     static const char *const names[] = {"main", "sdk"};
     static const uint64_t *const addrs[] = {main_fn_addrs, sdk_fn_addrs};
     static const GuestFn *const fns[] = {main_fn_ptrs, sdk_fn_ptrs};
     static const uint64_t *const counts[] = {&main_fn_count, &sdk_fn_count};
-    static const GameLibTables t = {GAMELIB_ABI, GAMELIB_ID, 2, names, addrs, fns, counts};
+    static const unsigned char *const resumable[] = {main_fn_resumable, sdk_fn_resumable};
+    static const GameLibTables t = {GAMELIB_ABI, GAMELIB_ID, 2, names, addrs, fns, counts, resumable};
     return &t;
 }

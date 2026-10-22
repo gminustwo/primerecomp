@@ -24,7 +24,7 @@
 #ifndef GAMELIB_ID
 #define GAMELIB_ID "dev"
 #endif
-#define GAMELIB_ABI 2
+#define GAMELIB_ABI 3
 
 typedef struct {
     uint32_t abi;    // GAMELIB_ABI
@@ -34,6 +34,7 @@ typedef struct {
     const uint64_t *const *addrs;  // per module: sorted guest addresses
     const GuestFn *const *fns;     // the functions at them
     const uint64_t *const *counts;
+    const unsigned char *const *resumable;  // per function: can be entered at any instruction (Cpu.resume)
 } GameLibTables;
 
 // The library's one exported function (tools/gamelib_entry.c).

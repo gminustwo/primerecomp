@@ -18,10 +18,12 @@ import unicorn as uc
 from unicorn import arm64_const as A
 
 from analyze import eh_frame_functions
+import capstone as _capstone
 from lifter import Insn, Lifter, Unsupported, bits, emit_asm_batch, hx, sext
 from nso import Nso, R_AARCH64_RELATIVE
 
 SCRATCH_MEM = 0x7300000000
+_CS = _capstone.Cs(_capstone.CS_ARCH_ARM64, _capstone.CS_MODE_ARM)
 
 
 def sext26(w):
@@ -50,9 +52,24 @@ class Module:
         self.cache = {}
         self.stats = Counter()
         self.mu = None
+        self.eh = sorted(base + a for a in eh_frame_functions(n))  # real function starts (unwind info)
+        self.unresolved_split = set()  # computed jumps that may land in a later piece (logged)
+        self.resumable = set()  # pieces that can be entered at any instruction (see emit_function)
 
     def in_text(self, a):
         return self.lo <= a < self.hi and a % 4 == 0
+
+    def real_start(self, pc, entry):
+        """Start of the real function holding pc (unwind info), or the piece's entry if that is earlier."""
+        i = bisect.bisect_right(self.eh, pc) - 1
+        return min(entry, self.eh[i]) if i >= 0 else entry
+
+    def table_range(self, br_pc, entry):
+        """Where a jump table's targets may lie: the real function holding the br (by unwind info). Pieces split
+        off at code pointers inside a function (a switch's `adr` base looks like one) leave case targets in
+        other pieces, before or after; those become entries of their own."""
+        i = bisect.bisect_right(self.eh, br_pc)
+        return self.real_start(br_pc, entry), self.eh[i] if i < len(self.eh) else self.hi
 
     def word(self, a):
         return self.words[(a - self.lo) // 4]
@@ -96,42 +113,78 @@ class Module:
         return self.mu
 
     def jump_table(self, br_pc, entry, end):
-        """Resolve `br xN` targets from a bounds-checked jump table, or None."""
+        """Resolve `br xN` targets from a bounds-checked jump table, or None. The recognizers look at the whole
+        real function (unwind info), not just this piece: later rounds split functions at other tables' cases,
+        sometimes between a table's bounds check and its br."""
+        entry, end = self.table_range(br_pc, entry)[0], max(end, self.table_range(br_pc, entry)[1])
         r = self._jump_table_fallthrough(br_pc, entry, end)
         if r is None:
             r = self._jump_table_taken(br_pc, entry, end)
+        if r is None:
+            r = self._jump_table_masked(br_pc, entry, end)
         return r
+
+    def _jump_table_masked(self, br_pc, entry, end):
+        """Form: and idx, src, #(2^k - 1) ; <table math> ; br -- no bounds check, the mask bounds the index
+        (memcpy-style alignment dispatch)."""
+        a = br_pc - 4
+        while a >= entry and br_pc - a <= 4 * 12:
+            if self.lift(a).kind not in ('op', 'asm'):
+                return None
+            w = self.word(a)
+            if (w & 0x7F800000) == 0x12000000:  # AND (imm)
+                ins = next(_CS.disasm(struct.pack('<I', w), a), None)
+                imm = ins.op_str.rsplit('#', 1)[-1] if ins else ''
+                mask = int(imm, 0) if imm[:2] == '0x' or imm.isdigit() else 0
+                if 0 < mask < 4096 and mask & (mask + 1) == 0:
+                    r = self._emulate_table(br_pc, entry, end, a + 4, w & 31, mask + 1, a + 4)
+                    if r:
+                        return r
+            elif (w & 0x7F800000) == 0x53000000 and bits(w, 10, 6) >= bits(w, 16, 6):  # UBFX: a field bounds it too
+                width = bits(w, 10, 6) - bits(w, 16, 6) + 1
+                if width <= 12:
+                    r = self._emulate_table(br_pc, entry, end, a + 4, w & 31, 1 << width, a + 4)
+                    if r:
+                        return r
+            a -= 4
+        return None
 
     def _index_regs(self, start, at, idx):
         """The index register plus registers holding the same value in start..at: sources it was
-        copied/masked from, and copies of those (the table lookup sometimes recomputes the index
-        from another copy after the bounds check)."""
-        def copy_src(w):
+        copied/masked/extracted from, and copies of those (the table lookup sometimes recomputes the index
+        from another copy after the bounds check), with each one's shift: register r holds index << shift
+        (a bitfield extract `ubfx rd, src, #8, #8` means src holds the index at bit 8)."""
+        def copy_src(w):  # (source, the bit the destination's value starts at in the source)
             if (w & 0x7F800000) == 0x12000000:  # AND (imm)
-                return bits(w, 5, 5)
+                return bits(w, 5, 5), 0
             if (w & 0x7FE0FFE0) == 0x2A0003E0:  # MOV (ORR with zr)
-                return bits(w, 16, 5)
-            if (w & 0x7F800000) in (0x53000000, 0x13000000):  # UBFM/SBFM (uxtb, uxth, sxtw...)
-                return bits(w, 5, 5)
-            return None
-        regs = {idx}
+                return bits(w, 16, 5), 0
+            if (w & 0x7F800000) in (0x53000000, 0x13000000):  # UBFM/SBFM (uxtb, uxth, sxtw, ubfx...)
+                immr, imms = bits(w, 16, 6), bits(w, 10, 6)
+                return bits(w, 5, 5), (immr if imms >= immr else 0)
+            return None, 0
+        regs = {idx: 0}
         changed = True
         while changed:
             changed = False
-            for a in range(start, at, 4):
+            for a in range(start, at + 4 * 8, 4):  # (and the few instructions after the bounds check)
+                if a >= at + 4 * 8 or not self.in_text(a):
+                    break
                 w = self.word(a)
-                rd, src = w & 31, copy_src(w)
-                if src is None or src >= 31 or rd >= 31:
+                rd, (src, lsb) = w & 31, copy_src(w)
+                if src is None or src >= 31 or rd >= 31 or rd == src:
                     continue
-                for x, y in ((rd, src), (src, rd)):
-                    if x in regs and y not in regs:
-                        regs.add(y)
-                        changed = True
-        return sorted(regs)
+                if rd in regs and src not in regs:
+                    regs[src] = regs[rd] + lsb
+                    changed = True
+                elif src in regs and rd not in regs and regs[src] >= lsb:
+                    regs[rd] = regs[src] - lsb
+                    changed = True
+        return regs
 
     def _set_index(self, mu, regs, i):
-        for r in regs:
-            mu.reg_write(A.UC_ARM64_REG_X0 + r if r < 29 else A.UC_ARM64_REG_X29, i)
+        for r, shift in (regs.items() if isinstance(regs, dict) else ((r, 0) for r in regs)):
+            mu.reg_write(A.UC_ARM64_REG_X0 + r if r < 29 else A.UC_ARM64_REG_X29, i << shift)
 
     def _emulate_table(self, br_pc, entry, end, start, idx, count, set_at):
         """Run start..br for each index value (set at address set_at), collect targets."""
@@ -153,7 +206,7 @@ class Module:
                 for r in range(29):
                     mu.reg_write(A.UC_ARM64_REG_X0 + r, SCRATCH_MEM + 0x80000)
                 mu.reg_write(A.UC_ARM64_REG_SP, SCRATCH_MEM + 0x80000)
-                a2 = entry
+                a2 = self.real_start(br_pc, entry)
                 while a2 < start:
                     w2 = self.word(a2)
                     if (w2 & 0x1F000000) == 0x10000000 or (w2 & 0xFF800000) == 0x91000000:
@@ -166,7 +219,8 @@ class Module:
                     return None
                 t = mu.reg_read(A.UC_ARM64_REG_X0 + rn if rn < 29 else
                                 (A.UC_ARM64_REG_X29 if rn == 29 else A.UC_ARM64_REG_X30))
-                if not (entry <= t < end) or t % 4:
+                lo, hi = self.table_range(br_pc, entry)
+                if not (min(lo, entry) <= t < max(end, hi)) or t % 4:
                     return None
                 targets.append(t)
         except uc.UcError:
@@ -235,6 +289,15 @@ class Module:
         start = cmp
         while start - 4 >= entry and cmp - (start - 4) <= 4 * 12 and self.lift(start - 4).kind in ('op', 'asm'):
             start -= 4
+        # the window from `start` first (registers the table math uses besides the index); when replaying it
+        # faults (a load through a pointer only known at run time), from the cmp alone: the index is set there
+        for s in (start, cmp) if start != cmp else (cmp,):
+            r = self._emulate_fallthrough(br_pc, entry, end, s, cmp, idx, count, rn)
+            if r is not None:
+                return r
+        return None
+
+    def _emulate_fallthrough(self, br_pc, entry, end, start, cmp, idx, count, rn):
         idx_regs = self._index_regs(start, cmp, idx)
         mu = self.emu()
         targets = []
@@ -256,7 +319,7 @@ class Module:
                 mu.reg_write(A.UC_ARM64_REG_SP, SCRATCH_MEM + 0x80000)
                 # replay address materialization (ADRP/ADR/ADD-imm) from the function entry, so table
                 # bases computed before loops or branches are known
-                a2 = entry
+                a2 = self.real_start(br_pc, entry)
                 while a2 < start:
                     w2 = self.word(a2)
                     if (w2 & 0x1F000000) == 0x10000000 or (w2 & 0xFF800000) == 0x91000000:
@@ -269,7 +332,8 @@ class Module:
                     return None
                 t = mu.reg_read(A.UC_ARM64_REG_X0 + rn if rn < 29 else
                                 (A.UC_ARM64_REG_X29 if rn == 29 else A.UC_ARM64_REG_X30))
-                if not (entry <= t < end) or t % 4:
+                lo, hi = self.table_range(br_pc, entry)
+                if not (min(lo, entry) <= t < max(end, hi)) or t % 4:
                     return None
                 targets.append(t)
         except uc.UcError:
@@ -314,12 +378,17 @@ class Module:
                 jt = self.jump_table(a, entry, end)
                 if jt:
                     tables[a] = jt
-                    labels.update(jt)
+                    labels.update(t for t in jt if entry <= t < end)
+                    ext.update(t for t in jt if not entry <= t < end)  # (cases in other pieces: their entries)
                     self.stats['jumptables'] += 1
-                elif self.computed_target(a, entry):
+                elif self.computed_target(a, self.real_start(a, entry)):
                     # unresolved table jump: allow jumping to any instruction of the function
                     tables[a] = 'all'
                     self.stats['br_all_labels'] += 1
+                    lo, hi = self.table_range(a, entry)
+                    if hi > end or lo < entry:  # (the real function goes on past this piece)
+                        self.stats['br_unresolved_split'] += 1
+                        self.unresolved_split.add(a)
                 else:
                     self.stats['br_dispatch'] += 1
             terminated = ins.kind in ('b', 'br', 'ret', 'trap')
@@ -359,6 +428,9 @@ class Module:
             out.append('}')
             return out
         out.append(f'    FN_ENTER({hx(entry)});')
+        resumable = entry in self.resumable
+        if resumable:  # (a jump into the middle of this piece from another one: runtime/dispatch.c dispatch_slow)
+            out.append('    if (__builtin_expect(c->resume != 0, 0)) { c->pc = c->resume; c->resume = 0; goto L_dispatch; }')
         batch = []
         refs = set()
 
@@ -377,7 +449,7 @@ class Module:
 
         # Functions with jump tables also get the all-instruction fallback: a table whose emulation
         # missed some cases then still reaches the right instruction instead of aborting.
-        all_labels = bool(tables)
+        all_labels = bool(tables) or resumable
         if all_labels:
             labels = set(range(entry, end, 4))
         last = None
@@ -426,7 +498,7 @@ class Module:
                     out.append(f'    c->pc = {ins.target}; goto L_dispatch;')
                     continue
                 if jt:
-                    cases = ' '.join(f'case {hx(t)}: goto L_{t:x};' for t in jt)
+                    cases = ' '.join(f'case {hx(t)}: {jump(t)}' for t in jt)  # (a later piece: tail call)
                     out.append(f'    switch ({ins.target}) {{ {cases} default: break; }}')
                     out.append(f'    c->pc = {ins.target}; goto L_dispatch;')
                     continue
@@ -537,6 +609,22 @@ def main():
         end = order[i + 1] if i + 1 < len(order) else m.hi
         labels, ext, tables = scanned[(a, end)]
         entries[a] = (end, labels, tables)
+    # Computed jumps whose real function was split into several pieces may land in another piece, at any
+    # instruction: unresolved ones, and resolved tables too (an emulated table can miss cases; within a piece the
+    # all-instruction fallback catches those). Every piece of such a function can be entered anywhere (the runtime
+    # finds the piece).
+    spans = []
+    for a, (end, labels, tables) in entries.items():
+        for br, t in tables.items():
+            lo, hi = m.table_range(br, a)
+            if lo < a or hi > end:
+                spans.append((lo, hi))
+    for lo, hi in spans:
+        i = bisect.bisect_left(order, lo)
+        while i < len(order) and order[i] < hi:
+            m.resumable.add(order[i])
+            i += 1
+    print(f'{args.name}: {len(m.resumable)} resumable functions', file=sys.stderr)
     print(f'{args.name}: {len(starts)} boundaries, {len(entries)} functions, {rounds} rounds, {dict(m.stats)}, '
           f'{time.time() - t0:.0f}s', file=sys.stderr)
 
@@ -595,6 +683,9 @@ def main():
         f.write(',\n'.join(fname(a) for a in order))
         f.write('};\n')
         f.write(f'const uint64_t {args.name}_fn_count = {len(order)};\n')
+        f.write(f'const unsigned char {args.name}_fn_resumable[] = {{\n')
+        f.write(','.join('1' if a in m.resumable else '0' for a in order))
+        f.write('};\n')
         write_if_changed(os.path.join(args.outdir, f'{args.name}_table.c'), f.getvalue())
     print(f'{args.name}: wrote {nchunks} chunks, {time.time() - t0:.0f}s total', file=sys.stderr)
 

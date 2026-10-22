@@ -37,6 +37,7 @@ struct KThread {
     jmp_buf unwind;
     bool started, finished;
     KThread *anext;        // every thread of this boot (g_klock)
+    uint64_t last_fn, last_fn_lr;  // (debug, with the function profiler on: the last guest function entered)
 };
 
 typedef struct KSharedMem {
