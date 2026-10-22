@@ -8,7 +8,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   autosave was forced with `LARECOMP_AUTOSAVE_AT`, then reloaded after a restart.
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it contains the game library), started
   with `Play Metroid Prime Remastered.bat`. Their notes go in `ISSUES.md` there and their log is
-  `lasrecomp.log`. It holds build c923318 (2026-10-22): everything below is in it. No issues written there yet.
+  `lasrecomp.log`. It holds build 2ec3f75 (2026-10-22): everything below is in it. No issues written there yet.
 - **User-reported open bugs:**
   - ~~The star backdrop and Tallon IV are missing in space.~~ Fixed (CC tests, below).
   - Samus renders wrong. Not reproduced or identified yet: ask which view (first-person arm cannon, the
@@ -28,7 +28,16 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   Now textures with the same address and shape share one refcounted TexBackend (textures.c `share_find`), but only
   uncompressed formats, and never joining an image that holds CPU-uploaded contents. Sharing everything broke
   the room after the first door (stale and half-updated textures). `LARECOMP_NO_TEX_SHARE=1` turns it off.
-- Debug frame: texture and attachment lines show the guest address (`@addr`).
+- **Garbage colours over the room after the first door** (walk on past the door, frame ~13800): MPR builds its
+  reflection probe (a 128x128 RGBA16F cube, one draw per mip covering all six faces) with a passthrough geometry
+  shader that only sets the layer. Geometry shaders aren't translated, so faces 1-5 were never written; once the
+  probe's objects shared one image, the sampled faces were uninitialized memory. Now `gs_layer_attr` (exec.c)
+  recognises "layer = F2I(vertex output)" geometry shaders and the vertex shader writes gl_Layer
+  (`ShaderKey.layer_attr`, `shaderOutputLayer`); array / cube render targets bind all their layers
+  (`vk_render_layers`). New uncompressed colour images also start zeroed. Reflections show on the arm cannon and
+  floors now.
+- Debug: texture and attachment lines show the guest address (`@addr`), flags and refs; `LARECOMP_LOG_TEX_SHARE`
+  logs each shared image join; draws with untranslated stages say so; the stats line counts textures / images.
 
 ## Open
 
@@ -41,7 +50,12 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
    log time, after the transient ring was reused, so it shows other draws' values (cb4 read 0 0 0 there).
 3. Frame 7000 of the intro replay is black (a fade between shots?): not checked.
 4. Save slot area name `<ERROR>` with a forced autosave: check with a save made at a real save station.
-5. Suspects for other black objects: more image stores through the driver handle table, other
+5. **Two other geometry shaders are still dropped** (`gs 729c002100`, `729c004100`, logged once per program as
+   "not supported, drawn without it"): passthrough shaders that read all three vertices and exit early for some
+   primitives (culling, probably). Drawn without them: no culling. Their code: `LARECOMP_SAVE_MSL=1` writes
+   `build/build/glsl/<addr>_stage2.bin` (0x30 NVN header, 0x50 SPH, then instructions).
+6. Uploads: 50-170 MB every 2 s in gameplay, 500 MB at the title (the video?). Frame rate holds; not looked at.
+7. Suspects for other black objects: more image stores through the driver handle table, other
    rasterizer-discard producers, `nvnCommandBufferDiscardColor` treated as a clear to 0 (an LA assumption,
    `cmdbuf.c`).
 
