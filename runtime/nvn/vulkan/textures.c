@@ -403,8 +403,16 @@ static TexBackend *share_tab[SHARE_TAB];
 static uint32_t share_slot(uint64_t addr) { return (uint32_t)((addr >> 9) * 0x9E3779B97F4A7C15ull >> 52) & (SHARE_TAB - 1); }
 
 static TexBackend *share_find(const NvnTexture *t, TexBackend *key_out) {
+    static int off = -1;
+    if (off < 0) off = getenv("LARECOMP_NO_TEX_SHARE") != NULL;  // (debug) every texture object its own image
     memset(&key_out->key, 0, sizeof key_out->key);  // (compared with memcmp)
-    if (!t->addr || t->target == 10 || (t->flags & 2) || (t->pool && (t->pool->flags & NVN_POOL_VIRTUAL))) return NULL;
+    key_out->shared = false;
+    if (off || !t->addr || t->target == 10 || (t->flags & 2) || (t->pool && (t->pool->flags & NVN_POOL_VIRTUAL))) return NULL;
+    // GPU-written images only: a texture loaded from disc into memory an older texture object of the same shape
+    // still covers must get its own image and upload (sharing left stale and half-updated texels: garbage
+    // textures in the room after the first door). Compressed formats are never render targets.
+    const FormatInfo *fi = nvn_format_info(t->format);
+    if (!fi || fi->bw > 1 || fi->bh > 1) return NULL;
     key_out->key.addr = t->addr;
     key_out->key.stride = t->stride;
     key_out->key.target = t->target;
@@ -417,7 +425,7 @@ static TexBackend *share_find(const NvnTexture *t, TexBackend *key_out) {
     key_out->key.samples = t->samples;
     key_out->shared = true;
     for (TexBackend *b = share_tab[share_slot(t->addr)]; b; b = b->share_next)
-        if (!memcmp(&b->key, &key_out->key, sizeof b->key)) return b;
+        if (!memcmp(&b->key, &key_out->key, sizeof b->key) && !(b->uploaded && !b->gpu_owned)) return b;
     return NULL;
 }
 static void share_unlink(TexBackend *b) {
