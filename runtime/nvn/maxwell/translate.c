@@ -79,6 +79,7 @@ typedef struct {
     bool uses_gmem_store;    // STG present: the gmem buffer is not readonly
     uint32_t cbuf_need[18];  // highest constant vec4 index + 1 per cbuf (array size of the GLSL block)
     uint32_t reg_cbuf[256];  // a register last set from a constant buffer word: 1 + (cbuf << 16 | byte offset), else 0
+    int cc_write;            // the instruction being translated writes CC from its result (set_reg): 1 integer, 2 float
 } Ctx;
 
 static uint64_t bits(uint64_t w, int lo, int n) { return (w >> lo) & ((n == 64) ? ~0ull : ((1ull << n) - 1)); }
@@ -169,6 +170,12 @@ static const char *operand_c_for_ffma(Ctx *c, uint64_t w, char *buf, const char 
 }
 
 static void set_reg(Ctx *c, int r, const char *expr) {
+    if (c->cc_write) {  // (before the RZ check: "OP RZ.CC" is a compare)
+        c->uses_cc = true;
+        sp(&c->body, c->cc_write == 2 ? "    { uint ccv = %s; ccz = (ccv & 0x7FFFFFFFu) == 0u; ccs = int(ccv) < 0; }\n"
+                                      : "    { uint ccv = %s; ccz = ccv == 0u; ccs = int(ccv) < 0; }\n", expr);
+        c->cc_write = 0;
+    }
     if (r == RZ) return;
     c->reg_used[r] = 1;
     c->reg_cbuf[r] = 0;
@@ -1013,6 +1020,37 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
     if (guarded) sp(&c->body, "  if (%s) {\n", P(pr, prn));
 
 #define OPM(val, mask) ((w & (uint64_t)(mask)) == (uint64_t)(val))
+    // .CC (bit 47) on ALU ops without flag code of their own: set_reg derives the zero / sign flags from the result
+    c->cc_write = 0;
+    if (bits(w, 47, 1)) {
+        static const struct { uint64_t val, mask; int kind; } ccops[] = {
+            {0x5c40000000000000ull, 0xfff8000000000000ull, 1}, {0x4c40000000000000ull, 0xfff8000000000000ull, 1},  // LOP
+            {0x3840000000000000ull, 0xfef8000000000000ull, 1},
+            {0x5be0000000000000ull, 0xfff8000000000000ull, 1}, {0x3c00000000000000ull, 0xfc00000000000000ull, 1},  // LOP3
+            {0x5c48000000000000ull, 0xfff8000000000000ull, 1}, {0x4c48000000000000ull, 0xfff8000000000000ull, 1},  // SHL
+            {0x3848000000000000ull, 0xfef8000000000000ull, 1},
+            {0x5c28000000000000ull, 0xfff8000000000000ull, 1}, {0x4c28000000000000ull, 0xfff8000000000000ull, 1},  // SHR
+            {0x3828000000000000ull, 0xfef8000000000000ull, 1},
+            {0x5c20000000000000ull, 0xfff8000000000000ull, 1}, {0x4c20000000000000ull, 0xfff8000000000000ull, 1},  // IMNMX
+            {0x3820000000000000ull, 0xfef8000000000000ull, 1},
+            {0x5c00000000000000ull, 0xfff8000000000000ull, 1}, {0x4c00000000000000ull, 0xfff8000000000000ull, 1},  // BFE
+            {0x3800000000000000ull, 0xfef8000000000000ull, 1},
+            {0x5cb0000000000000ull, 0xfff8000000000000ull, 1}, {0x4cb0000000000000ull, 0xfff8000000000000ull, 1},  // F2I
+            {0x38b0000000000000ull, 0xfef8000000000000ull, 1},
+            {0x5980000000000000ull, 0xff80000000000000ull, 2}, {0x4980000000000000ull, 0xff80000000000000ull, 2},  // FFMA (before FSET: 0x49)
+            {0x5180000000000000ull, 0xff80000000000000ull, 2}, {0x3280000000000000ull, 0xfe80000000000000ull, 2},
+            {0x5800000000000000ull, 0xff00000000000000ull, 1}, {0x4800000000000000ull, 0xfe00000000000000ull, 1},  // FSET
+            {0x3000000000000000ull, 0xfe00000000000000ull, 1},
+            {0x5cb8000000000000ull, 0xfff8000000000000ull, 2}, {0x4cb8000000000000ull, 0xfff8000000000000ull, 2},  // I2F
+            {0x38b8000000000000ull, 0xfef8000000000000ull, 2},
+            {0x5c58000000000000ull, 0xfff8000000000000ull, 2}, {0x4c58000000000000ull, 0xfff8000000000000ull, 2},  // FADD
+            {0x3858000000000000ull, 0xfef8000000000000ull, 2},
+            {0x5c68000000000000ull, 0xfff8000000000000ull, 2}, {0x4c68000000000000ull, 0xfff8000000000000ull, 2},  // FMUL
+            {0x3868000000000000ull, 0xfef8000000000000ull, 2},
+        };
+        for (size_t i = 0; i < sizeof ccops / sizeof ccops[0]; i++)
+            if (OPM(ccops[i].val, ccops[i].mask)) { c->cc_write = ccops[i].kind; break; }
+    }
     if (OPM(0xe300000000000000ull, 0xfff0000000000000ull)) {  // EXIT
         int test = (int)bits(w, 0, 5);  // CC test: T (15) unless it follows a .CC write
         if (test != 15) { c->uses_cc = true; sp(&c->body, "    if (%s) {\n", cc_cond(c, test)); }
