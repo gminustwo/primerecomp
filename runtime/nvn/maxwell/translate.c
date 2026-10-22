@@ -578,7 +578,9 @@ static const char *RSC2(Ctx *c, int slot, const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(inner, sizeof inner, fmt, ap);
     va_end(ap);
-    if (c->stage == STAGE_VERTEX) { snprintf(o, 1024, "%s", inner); return o; }
+    // (vertex: GLSL only - MPR's fog volume writer fetches texels of a scaled render target from its vertex
+    // shader; the MSL renderer binds no vertex scale table)
+    if (c->stage == STAGE_VERTEX && !c->glsl) { snprintf(o, 1024, "%s", inner); return o; }
     c->uses_rscale = true;
     snprintf(o, 1024, "rsc(%s, rscale[%d])", inner, slot + 1);
     return o;
@@ -1156,15 +1158,11 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         uint32_t mask = (uint32_t)bits(w, 31, 4);
         int slot = tex_slot(c, index, -1, false, false);  // the type comes from a sample, if any
         if (qt == 1 && c->glsl) {  // tsize<slot>() is emitted with the slot's final type
-            if (c->stage != STAGE_VERTEX) {
-                c->uses_rscale = true;
-                sp(&c->body, "    { uint lv = %s; uvec4 q = uvec4(uint(floor(float(tsize%d(int(lv)).x) / rscale[%d].x + 0.5f)), "
-                   "uint(floor(float(tsize%d(int(lv)).y) / rscale[%d].y + 0.5f)), 1u, uint(textureQueryLevels(t%d)));\n",
-                   R(a), slot, slot + 1, slot, slot + 1, slot);
-            } else {
-                sp(&c->body, "    { uint lv = %s; uvec4 q = uvec4(uint(tsize%d(int(lv)).x), uint(tsize%d(int(lv)).y), 1u, uint(textureQueryLevels(t%d)));\n",
-                   R(a), slot, slot, slot);
-            }
+            // the guest size of scaled allocations (every stage: texel fetches use guest coordinates, RSC2)
+            c->uses_rscale = true;
+            sp(&c->body, "    { uint lv = %s; uvec4 q = uvec4(uint(floor(float(tsize%d(int(lv)).x) / rscale[%d].x + 0.5f)), "
+               "uint(floor(float(tsize%d(int(lv)).y) / rscale[%d].y + 0.5f)), 1u, uint(textureQueryLevels(t%d)));\n",
+               R(a), slot, slot + 1, slot, slot + 1, slot);
             int n = 0;
             for (int i = 0; i < 4; i++)
                 if (mask & (1u << i)) { c->reg_used[d + n] = 1; sp(&c->body, "      r%d = q[%d];\n", d + n, i); n++; }
@@ -2073,7 +2071,7 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         sp(&s, "uint gfind(uint g) { uint n = gmap[%d].x; for (uint i = 0u; i < n; i++) { uint o = g - gmap[i].x; "
                "if (g >= gmap[i].x && o < gmap[i].y) return gmap[i].z + (o >> 2); } return 0xFFFFFFFFu; }\n", GMAP_MAX);
     }
-    if (c->uses_rscale && stage != STAGE_VERTEX) {
+    if (c->uses_rscale) {
         sp(&s, "layout(std140, set = %d, binding = 18) uniform RScale { vec4 rscale[%d]; };\n", set,
            key && key->flip_x ? 66 : 65);  // ([65]: mirror mode's render target width)
         info->uses_rscale = true;

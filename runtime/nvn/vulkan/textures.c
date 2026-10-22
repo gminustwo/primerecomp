@@ -850,7 +850,13 @@ VkImageView vk_view(NvnTexture *t, const NvnTextureView *v, bool has_view, bool 
     if (ly0 + nly > b->layers) nly = b->layers - ly0;
     if (render) {
         VkImageViewType type = b->base_type == VK_IMAGE_VIEW_TYPE_3D ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-        if (b->base_type == VK_IMAGE_VIEW_TYPE_3D) return VK_NULL_HANDLE;  // (3D render targets: not used by the game)
+        // 3D: storage images only (exec.c image_view asks with the shader's type) - the volumetric fog volume. It got
+        // no view before, so its descriptor was never written and the writer stored through whatever a recycled set
+        // held: the fog worked by luck, and in the intro's first shot every froxel stayed zero (a black screen).
+        // (3D render targets: not used by the game)
+        if (b->base_type == VK_IMAGE_VIEW_TYPE_3D)
+            return want_textype == TEXTYPE_3D ? vk_image_view(b, VK_IMAGE_VIEW_TYPE_3D, fmt, lv0, 1, 0, 1, IDENTITY, b->aspect)
+                                              : VK_NULL_HANDLE;
         uint32_t rl = vk_render_layers(t, v, v != NULL);
         if (rl > 1) return vk_image_view(b, VK_IMAGE_VIEW_TYPE_2D_ARRAY, fmt, lv0, 1, ly0, rl, IDENTITY, b->aspect);
         return vk_image_view(b, type, fmt, lv0, 1, ly0, 1, IDENTITY, b->aspect);

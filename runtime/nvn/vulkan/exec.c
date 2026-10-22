@@ -1218,6 +1218,25 @@ static void save_glsl(const char *src, uint64_t addr, const char *suffix) {
     if (f) { fputs(src, f); fclose(f); }
 }
 
+// (debug) LARECOMP_GLSL_OVERRIDE=<dir>: <dir>/<code addr>_vs.glsl / _fs.glsl, when present, replaces the
+// translation (experiments on one shader without rebuilding; the directory is relative to build/)
+static void override_glsl(char **src, uint64_t addr, const char *suffix) {
+    const char *dir = getenv("LARECOMP_GLSL_OVERRIDE");
+    if (!dir) return;
+    char path[512];
+    snprintf(path, sizeof path, "%s/%llx_%s.glsl", dir, (unsigned long long)addr, suffix);
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *s = malloc((size_t)n + 1);
+    s[fread(s, 1, (size_t)n, f)] = 0;
+    fclose(f);
+    *src = s;  // (the translation's string is leaked: debug only)
+    LOG("[shader] %s overridden from %s\n", suffix, path);
+}
+
 static void compile_program(void *arg) {
     Prog *p = arg;
     size_t nv = 0, nf = 0;
@@ -1270,6 +1289,8 @@ static void translate_program(void *arg) {
         atomic_store(&p->state, 2);
         return;
     }
+    override_glsl(&p->vi->msl, p->code[0], "vs");
+    override_glsl(&p->fi->msl, p->code[1], "fs");
     p->vs_uses_vid = strstr(p->vi->msl, "gl_VertexIndex") != NULL;
     save_glsl(p->vi->msl, p->code[0], "vs");
     save_glsl(p->fi->msl, p->code[1], "fs");
@@ -3126,12 +3147,33 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
             for (int k = 0; k < 16; k++) LOG(" %.4g", v[k]);
             LOG("\n");
         }
-        for (int c = 0; c < 18; c++) {
-            if (!((pr->fi->cbuf_mask >> c) & 1) || !st.ubuf[1][c].addr) continue;
-            const float *u = (const float *)(uintptr_t)st.ubuf[1][c].addr;
-            LOG("[draw]   fcb%d %llx size %u:", c, (unsigned long long)st.ubuf[1][c].addr, (unsigned)st.ubuf[1][c].size);
-            for (int k = 0; k < 96 && k * 4 < (int)st.ubuf[1][c].size; k++) LOG(" %.6g", u[k]);
+        // (hardware cbuf c is st.ubuf[stage][c - 3]: 0 is the driver table, 1 the shader's constants - cbuf_info)
+        for (int c = 3; c < 18; c++) {  // vertex cbufs: the same, as integers (the fog writer's grid sizes)
+            if (!((pr->vi->cbuf_mask >> c) & 1) || !st.ubuf[0][c - 3].addr) continue;
+            const uint32_t *u = (const uint32_t *)(uintptr_t)st.ubuf[0][c - 3].addr;
+            LOG("[draw]   vcb%d %llx size %u:", c, (unsigned long long)st.ubuf[0][c - 3].addr, (unsigned)st.ubuf[0][c - 3].size);
+            for (int k = 0; k < 32 && k * 4 < (int)st.ubuf[0][c - 3].size; k++) LOG(" %#x", u[k]);
             LOG("\n");
+        }
+        for (int c = 3; c < 18; c++) {
+            if (!((pr->fi->cbuf_mask >> c) & 1) || !st.ubuf[1][c - 3].addr) continue;
+            const float *u = (const float *)(uintptr_t)st.ubuf[1][c - 3].addr;
+            LOG("[draw]   fcb%d %llx size %u:", c, (unsigned long long)st.ubuf[1][c - 3].addr, (unsigned)st.ubuf[1][c - 3].size);
+            for (int k = 0; k < 96 && k * 4 < (int)st.ubuf[1][c - 3].size; k++) LOG(" %.6g", u[k]);
+            LOG("\n");
+        }
+    }
+    for (int i = 0; i < pr->vi->ntex && i < 64; i++) {  // vertex textures (the same, shorter)
+        NvnTexture *t = shader_texture_object(0, &pr->vi->tex[i]);
+        const TexBackend *b = t ? (const TexBackend *)t->backend : NULL;
+        if (!t) { LOG("[draw]   vtex%d: none\n", i); continue; }
+        LOG("[draw]   vtex%d: %p @%llx %ux%u f%#x flags %#x -> %ux%u scale %.4f%s (target %u, %s)\n", i, (void *)t,
+            (unsigned long long)t->addr, t->width, t->height, t->format, t->flags, b ? b->width : 0, b ? b->height : 0,
+            b ? b->sx : 0, b && b->scalable ? " scalable" : "", t->target, b && b->gpu_owned ? "gpu" : "uploaded");
+        if (b && b->gpu_owned && b->image && t->layout.fmt && getenv("LARECOMP_DUMP_3D")) {  // (debug) its texels too
+            char path[160];
+            snprintf(path, sizeof path, "build/gpuv_%ux%ux%u_f%x.bin", b->width, b->height, b->depth, t->format);
+            dump_gpu_3d(b, t->layout.fmt->bpb, path);
         }
     }
     for (int i = 0; i < pr->fi->ntex && i < 64; i++) {  // fragment textures: guest size / format, allocation, scale
