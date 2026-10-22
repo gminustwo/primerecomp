@@ -7,7 +7,7 @@ import sys
 import capstone
 from nso import Nso
 
-MODS = [('main', 0x7000000000), ('sdk', 0x7004000000)]
+MODS = [('main', 0x7000000000), ('sdk', 0x7006000000)]
 _cache = {}
 
 

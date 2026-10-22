@@ -17,3 +17,7 @@ tools/venv/
 venv/
 __pycache__/
 .DS_Store
+
+# MPR Recomp: game files, keys and everything derived from them
+/private/
+.venv/

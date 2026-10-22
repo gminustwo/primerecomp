@@ -24,14 +24,16 @@
 #ifndef GAMELIB_ID
 #define GAMELIB_ID "dev"
 #endif
-#define GAMELIB_ABI 1
+#define GAMELIB_ABI 2
 
 typedef struct {
     uint32_t abi;    // GAMELIB_ABI
     const char *id;  // GAMELIB_ID
-    const uint64_t *main_addrs, *sdk_addrs;  // sorted guest addresses
-    const GuestFn *main_fns, *sdk_fns;       // the functions at them
-    const uint64_t *main_count, *sdk_count;
+    uint32_t nmods;  // GAME_NMODULES, in its order (rt.h)
+    const char *const *names;
+    const uint64_t *const *addrs;  // per module: sorted guest addresses
+    const GuestFn *const *fns;     // the functions at them
+    const uint64_t *const *counts;
 } GameLibTables;
 
 // The library's one exported function (tools/gamelib_entry.c).

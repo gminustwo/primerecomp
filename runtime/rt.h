@@ -16,7 +16,11 @@
 #define GUEST_LO     0x7000000000ull
 #define GUEST_HI     0x7320000000ull
 #define MAIN_BASE    0x7000000000ull
-#define SDK_BASE     0x7004000000ull
+#define SDK_BASE     0x7006000000ull   // (main is ~75 MB in memory: past LA's 0x7004000000)
+// The code modules, in Horizon's load (and symbol lookup) order. subsdk0 (nnMedia, the movie:: library) is not
+// loaded: movie:: is host code on FFmpeg (runtime/hle/movie.c), as in LAS Recomp; 0x7005000000 is kept for it.
+#define GAME_NMODULES 2
+#define GAME_MODULES {{"main", MAIN_BASE}, {"sdk", SDK_BASE}}
 #define HLE_BASE     0x7080000000ull   // fake addresses for host-implemented functions
 #define HLE_SIZE     0x0000100000ull
 #define TLS_BASE     0x7090000000ull

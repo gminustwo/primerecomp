@@ -31,7 +31,10 @@ static void module_init(Cpu *c, Module *m) {
     else run_array(c, m->init_array, m->init_array_sz);
 }
 
-static void rtld_init_sdk(Cpu *c) { module_init(c, &g_modules[1]); }
+// Every module but main, last loaded first (the SDK before any subsdk linking against it)
+static void rtld_init_sdk(Cpu *c) {
+    for (int i = g_nmodules - 1; i > 0; i--) module_init(c, &g_modules[i]);
+}
 static void rtld_init_main(Cpu *c) { module_init(c, &g_modules[0]); }
 
 // Claim the guest address range before anything else can map there. The host allocator places
