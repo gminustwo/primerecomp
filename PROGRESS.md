@@ -99,3 +99,20 @@ were edited the same way but not compiled (needs macOS). Not linked or run yet.
    go through the stubbed services and imports one by one from the log.
 5. **Graphics.** The 32 missing NVN functions, compute first. MPR's shaders and texture formats are untested
    against the Maxwell translator.
+
+## 2026-10-21 (later): boots, menus, intro at 60 fps
+
+Working: boot to title (intro movies via movie:: over the game's ClientStreamReader), title / main menu, new game
+starts, frame pacing locked at 60 (or 120 / uncapped: Video tab "Frame rate", `LARECOMP_FPS`), 3D scene renders.
+
+Open, in order:
+1. **Post-processing goes black.** Debug frame 7200 of the intro: pass 2 draws the scene into the HDR target
+   correctly; pass 4 samples it and gets black, and pass 15 finds the target black. Suspect: `upload_texture`
+   (runtime/nvn/vulkan/textures.c) re-uploading the render target from guest memory (zeros) - render targets need to
+   be exempt from CPU-side hashing/upload once the GPU has written them.
+2. Shaders still rejected: `SUST` (image store, one vertex shader), `TLD4` (full gather form, one fragment shader).
+3. 120 fps: simulation step patched at 19 sites (tools/patches.py); needs gameplay verification.
+4. Not yet reached: controls in gameplay, saves, the rest of the game.
+
+Debug recipe: `LARECOMP_DEBUG_FRAME=<n>` (pass images in build/build/, draw log), `LARECOMP_GPUPROF_AT`,
+`LARECOMP_VK_PROF=1` (waits by cause), `LARECOMP_HANG_DUMP`, `LARECOMP_FNTRACE_THREAD` (with `LARECOMP_FNPROF=0:999999999`).
