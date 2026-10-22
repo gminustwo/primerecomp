@@ -14,9 +14,12 @@ uint32_t tegra_default_block_height_log2(uint32_t height_in_blocks) {
     return log2;
 }
 
+// The driver's blocks hold at most 16 GOBs. 3D textures spend them on depth first (up to 16 slices), the height
+// gets the rest: Metroid Prime Remastered's 33x33x33 color grading LUTs are laid out with block depth 16 and block
+// height 1 GOB (found by decoding them every possible way: only that one is a smooth gradient).
 static uint32_t block_depth_for(uint32_t depth) {
     uint32_t log2 = 0;
-    while ((1u << log2) < depth && log2 < 5) log2++;
+    while ((1u << log2) < depth && log2 < 4) log2++;
     return log2;
 }
 
@@ -24,6 +27,7 @@ void tegra_layout_init(TexLayout *t) {
     uint32_t hb = div_up(t->height, t->fmt->bh);
     t->block_height_log2 = tegra_default_block_height_log2(hb);
     t->block_depth_log2 = t->depth > 1 ? block_depth_for(t->depth) : 0;
+    if (t->block_height_log2 + t->block_depth_log2 > 4) t->block_height_log2 = 4 - t->block_depth_log2;
 }
 
 // Block height shrinks with the level so a block never exceeds the level height.

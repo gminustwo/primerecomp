@@ -77,7 +77,13 @@ typedef struct {
     uint32_t local_mem;     // bytes of local memory
     uint32_t num_insts;
     char error[256];        // set when translation fails
+    // (GLSL) images written with SUST: storage image i at binding IMAGE_BINDING + i. Bound: the handle in the image
+    // bindings (handle_offset as for textures); bindless: in cbuf bindless_cbuf at bindless_offset.
+    int nimg;
+    ShaderTexture img[8];
 } ShaderInfo;
+
+#define IMAGE_BINDING 100
 
 // Global memory (LDG/STG) is addressed through one buffer that wraps the guest heap.
 #define GMEM_BUFFER_INDEX 17

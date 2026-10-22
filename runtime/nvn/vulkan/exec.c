@@ -2365,6 +2365,25 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
     *out = (VkDescriptorImageInfo){smp, view, VK_IMAGE_LAYOUT_GENERAL};
 }
 
+// A storage image (SUST): its handle from the image bindings or (bindless) from a constant buffer word; the handle's
+// low 20 bits index the texture pool, as for textures. Written by the GPU from now on (no uploads over it).
+static VkImageView image_view(int stage, const ShaderTexture *im) {
+    uint64_t h = 0;
+    if (im->bindless) {
+        Range u = st.ubuf[stage][im->bindless_cbuf];
+        if (u.addr && im->bindless_offset + 4 <= u.size) h = *(const uint32_t *)(uintptr_t)(u.addr + im->bindless_offset);
+    } else {
+        int slot = ((int)im->handle_offset - 0x20) / 8;
+        if (slot >= 0 && slot < 8) h = st.img[stage][slot];
+    }
+    uint32_t tic = h & 0xFFFFF;
+    if (!h || !st.tpool || tic >= (uint32_t)st.tpool->count) return VK_NULL_HANDLE;
+    NvnTexEntry *e = &((NvnTexEntry *)st.tpool->entries)[tic];
+    if (!e->tex) return VK_NULL_HANDLE;
+    renderer_mark_gpu_owned(e->tex);
+    return vk_view(e->tex, &e->view, e->has_view, true, im->type);
+}
+
 // Writes the descriptor set of one stage. gx..gz: compute group counts (driver constants).
 // pre_ii: texture descriptors already resolved by the caller (draw: fragment textures, needed earlier for the
 // viewport decision), or NULL.
@@ -2386,7 +2405,13 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
         if (b->set != set) continue;
         w[n] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = b->binding,
                                       .descriptorCount = 1, .descriptorType = b->type};
-        if (b->type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && b->binding >= 32) {
+        if (b->type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE && b->binding >= IMAGE_BINDING) {
+            int ii_ = (int)b->binding - IMAGE_BINDING;
+            VkImageView v = ii_ < si->nimg ? image_view(stage, &si->img[ii_]) : VK_NULL_HANDLE;
+            if (!v) continue;  // (no image found: the binding stays unwritten)
+            ii[n] = (VkDescriptorImageInfo){VK_NULL_HANDLE, v, VK_IMAGE_LAYOUT_GENERAL};
+            w[n].pImageInfo = &ii[n];
+        } else if (b->type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && b->binding >= 32) {
             int ti = (int)b->binding - 32;
             float sc[2]; uint32_t wh[2];
             if (ti < si->ntex && pre_ii && ti < 64) { ii[n] = pre_ii[ti]; sc[0] = tex_sc[sg][ti][0]; sc[1] = tex_sc[sg][ti][1]; wh[0] = tex_wh[sg][ti][0]; wh[1] = tex_wh[sg][ti][1]; }
@@ -2585,7 +2610,14 @@ static void draw_(CmdRec *r, bool indexed) {
     for (int i = 0; i < st.nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(st.attrib[i] & 0xFF);
     for (int i = 0; i < st.rt.ncolor; i++) if (st.rt.color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(st.rt.color[i]->format);
     Prog *pr = get_program(st.program, &vkey, &fkey);
-    if (!pr || atomic_load(&pr->state) != 1) SKIP(SKIP_PROG);
+    if (!pr || atomic_load(&pr->state) != 1) {
+        if (g_debug_frame)
+            LOG("[draw] SKIPPED (program %s) mode %llu count %llu prog vs=%llx fs=%llx | rt %d %p\n",
+                !pr ? "missing" : atomic_load(&pr->state) == 2 ? "failed" : "compiling", (unsigned long long)r->x[0],
+                (unsigned long long)r->x[2], (unsigned long long)st.program->stages[0].code_addr,
+                (unsigned long long)st.program->stages[1].code_addr, st.rt.ncolor, st.rt.ncolor ? (void *)st.rt.color[0] : NULL);
+        SKIP(SKIP_PROG);
+    }
     g_mirror_w = 0;
     {   // fragment-shader hash: skip lists, logs
         static uint64_t last_fs, last_hash;
@@ -2958,6 +2990,10 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
     LOG(" | vp %.0f %.0f %.0f %.0f | attrs %#x blend %#x ds %02x%02x%02x poly %02x%02x chmask %08x\n", st.viewport[0][0], st.viewport[0][1],
         st.viewport[0][2], st.viewport[0][3], pr->vi->attr_mask, st.color_state[0], st.ds[0], st.ds[1], st.ds[2], st.poly[0], st.poly[1],
         st.channel_mask);
+    if (st.color_state[0] & 1) {  // blending on target 0: its state (target, src/dst color, src/dst alpha, eq color/alpha, advanced)
+        const uint8_t *bl = st.blend[0];
+        LOG("[draw]   blend0: %u | c %u %u a %u %u | eq %u %u | adv %u\n", bl[0], bl[1], bl[2], bl[3], bl[4], bl[5], bl[6], bl[7]);
+    }
     if (getenv("LARECOMP_DEBUG_DATA")) {  // vertex streams 0-1 and fragment cbufs: the first floats
         for (int s = 0; s < 2; s++) {
             if (!st.vbuf[s].addr) continue;
@@ -2978,8 +3014,44 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
         NvnTexture *t = shader_texture_object(1, &pr->fi->tex[i]);
         const TexBackend *b = t ? (const TexBackend *)t->backend : NULL;
         if (!t) { LOG("[draw]   tex%d: none\n", i); continue; }
-        LOG("[draw]   tex%d: %p %ux%u f%#x lv %u -> %ux%u scale %.4f %.4f%s\n", i, (void *)t, t->width, t->height, t->format,
-            b ? b->levels : 0, b ? b->width : 0, b ? b->height : 0, b ? b->sx : 0, b ? b->sy : 0, b && b->scalable ? " scalable" : "");
+        LOG("[draw]   tex%d: %p %ux%u f%#x lv %u -> %ux%u scale %.4f %.4f%s (target %u depth %u levels %u, image depth %u, %s)\n", i,
+            (void *)t, t->width, t->height, t->format, b ? b->levels : 0, b ? b->width : 0, b ? b->height : 0, b ? b->sx : 0,
+            b ? b->sy : 0, b && b->scalable ? " scalable" : "", t->target, t->depth, t->levels, b ? b->depth : 0,
+            b && b->gpu_owned ? "gpu" : "uploaded");
+        if (t->target == 2 && t->addr && getenv("LARECOMP_DUMP_3D")) {  // (debug) a 3D texture's guest memory, raw
+            char path[160];
+            snprintf(path, sizeof path, "build/tex3d_%llx_%ux%ux%u_f%x.bin", (unsigned long long)t->addr, t->width, t->height,
+                     t->depth, t->format);
+            FILE *f = fopen(path, "wb");
+            if (f) { fwrite((const void *)(uintptr_t)t->addr, 1, (size_t)tegra_total_size(&t->layout), f); fclose(f); }
+            LOG("[draw]     dumped %s (%llu bytes, bh %u bd %u)\n", path, (unsigned long long)tegra_total_size(&t->layout),
+                t->layout.block_height_log2, t->layout.block_depth_log2);
+        }
+        if (b && getenv("LARECOMP_DEBUG_SAMPLED")) {  // (debug) each sampled texture as the draw sees it
+            static int nsaved;
+            char path[128];
+            snprintf(path, sizeof path, "build/sampled_%03d_tex%d.png", nsaved++, i);
+            renderer_save_texture_tex((TexBackend *)b, path);
+        }
+        {   // its sampler (the handle's upper bits index the sampler pool) and the pool entry's view
+            ShaderTexture *stx = &pr->fi->tex[i];
+            int sl = ((int)stx->handle_offset - 0x20) / 8;
+            uint64_t h = sl >= 0 && sl < 32 ? st.tex[1][sl] : 0;
+            uint32_t tic = h & 0xFFFFF, tsc = (uint32_t)(h >> 20) & 0xFFF;
+            if (h && st.spool && tsc < (uint32_t)st.spool->count) {
+                const NvnSamplerDesc *sd = &((NvnSamplerDesc *)st.spool->entries)[tsc];
+                LOG("[draw]     sampler %u: filter %u/%u wrap %u %u %u compare %u/%u lod %.2f..%.2f bias %.2f aniso %.1f reduction %u\n",
+                    tsc, sd->min_filter, sd->mag_filter, sd->wrap[0], sd->wrap[1], sd->wrap[2], sd->compare_mode,
+                    sd->compare_func, sd->lod_min, sd->lod_max, sd->lod_bias, sd->max_aniso, sd->reduction);
+            }
+            if (h && st.tpool && tic < (uint32_t)st.tpool->count) {
+                const NvnTexEntry *e = &((NvnTexEntry *)st.tpool->entries)[tic];
+                if (e->has_view)
+                    LOG("[draw]     view: set %#x levels %u+%u layers %u+%u format %#x target %u swizzle %u %u %u %u\n", e->view.setmask,
+                        e->view.base_level, e->view.num_levels, e->view.min_layer, e->view.num_layers, e->view.format,
+                        e->view.target, e->view.swizzle[0], e->view.swizzle[1], e->view.swizzle[2], e->view.swizzle[3]);
+            }
+        }
     }
 }
 

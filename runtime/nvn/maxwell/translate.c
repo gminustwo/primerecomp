@@ -78,6 +78,7 @@ typedef struct {
     bool glsl;               // emit Vulkan GLSL: dialect-specific constructs here, the rest via glsl_rewrite()
     bool uses_gmem_store;    // STG present: the gmem buffer is not readonly
     uint32_t cbuf_need[18];  // highest constant vec4 index + 1 per cbuf (array size of the GLSL block)
+    uint32_t reg_cbuf[256];  // a register last set from a constant buffer word: 1 + (cbuf << 16 | byte offset), else 0
 } Ctx;
 
 static uint64_t bits(uint64_t w, int lo, int n) { return (w >> lo) & ((n == 64) ? ~0ull : ((1ull << n) - 1)); }
@@ -170,6 +171,7 @@ static const char *operand_c_for_ffma(Ctx *c, uint64_t w, char *buf, const char 
 static void set_reg(Ctx *c, int r, const char *expr) {
     if (r == RZ) return;
     c->reg_used[r] = 1;
+    c->reg_cbuf[r] = 0;
     sp(&c->body, "    r%d = %s;\n", r, expr);
 }
 
@@ -874,6 +876,107 @@ static void emit_tex(Ctx *c, uint64_t w, bool bindless) {
     write_tex_result(c, slot, call, mask, d, RZ, false, false);
 }
 
+// TLD4 (full form): gather one channel of the four texels around the coordinate. Registers as TEX: coordinates at
+// gpr8 (the layer first for arrays), at gpr20 the offset (.AOFFI: 6-bit signed x, y) then the depth reference (.DC);
+// the results in mask order from d. Component in bits 56-57; per-texel offsets (.PTP) are not supported.
+static void emit_tld4(Ctx *c, uint64_t w) {
+    int d = (int)bits(w, 0, 8), a = (int)bits(w, 8, 8), b = (int)bits(w, 20, 8);
+    uint32_t index = (uint32_t)bits(w, 36, 13);
+    int target = (int)bits(w, 29, 2), offmode = (int)bits(w, 54, 2), comp = (int)bits(w, 56, 2);
+    bool array = bits(w, 28, 1), dc = bits(w, 50, 1);
+    uint32_t mask = (uint32_t)bits(w, 31, 4);
+    if (target != 1) { fail(c, "tld4 target %d", target); return; }
+    if (offmode == 2) { fail(c, "tld4 ptp"); return; }
+    int slot = tex_slot(c, index, array ? TEXTYPE_2D_ARRAY : TEXTYPE_2D, dc, array);
+    int ar = a, p = b;
+    char lay[96] = "", off[160] = "", dref[48] = "", x[48], y[48], call[1024];
+    if (array) {
+        c->reg_used[a] = 1;
+        snprintf(lay, sizeof lay, c->glsl ? "min(uint(r%d), uint(tsize%d(0).z) - 1u)" : "min(uint(r%d), t%d.get_array_size() - 1u)",
+                 a, slot);
+        ar = a + 1;
+    }
+    c->reg_used[ar] = c->reg_used[ar + 1] = 1;
+    snprintf(x, sizeof x, "as_type<float>(r%d)", ar);
+    snprintf(y, sizeof y, "as_type<float>(r%d)", ar + 1);
+    if (offmode == 1) {
+        c->reg_used[p] = 1;
+        snprintf(off, sizeof off, c->glsl ? "ivec2(int(r%d << 26) >> 26, int(r%d << 18) >> 26)" : "int2(int(r%d << 26) >> 26, int(r%d << 18) >> 26)", p, p);
+        p++;
+    }
+    if (dc) { c->reg_used[p] = 1; snprintf(dref, sizeof dref, "as_type<float>(r%d)", p); }
+    if (c->glsl) {
+        char P[300];
+        if (array) snprintf(P, sizeof P, "vec3(%s, %s, float(%s))", x, y, lay);
+        else snprintf(P, sizeof P, "vec2(%s, %s)", x, y);
+        char tail[64];
+        if (dc) snprintf(tail, sizeof tail, ", %s", dref);
+        else snprintf(tail, sizeof tail, ", %d", comp);
+        if (offmode == 1) {
+            if (dc) snprintf(call, sizeof call, "textureGatherOffset(t%d, %s, %s, %s)", slot, P, dref, off);
+            else snprintf(call, sizeof call, "textureGatherOffset(t%d, %s, %s, %d)", slot, P, off, comp);
+        } else {
+            snprintf(call, sizeof call, "textureGather(t%d, %s%s)", slot, P, tail);
+        }
+    } else {
+        static const char *const comps[] = {"x", "y", "z", "w"};
+        char lp[110] = "";
+        if (array) snprintf(lp, sizeof lp, ", %s", lay);
+        const char *o = offmode == 1 ? off : "int2(0)";
+        if (dc) snprintf(call, sizeof call, "t%d.gather_compare(s%d, float2(%s, %s)%s, %s, %s)", slot, slot, x, y, lp, dref, o);
+        else snprintf(call, sizeof call, "t%d.gather(s%d, float2(%s, %s)%s, %s, component::%s)", slot, slot, x, y, lp, o, comps[comp]);
+    }
+    write_tex_result(c, slot, call, mask, d, RZ, false, false);
+}
+
+// SUST: typed store to an image (GLSL imageStore). Data in the masked components from gpr0, coordinates from gpr8
+// (x[, y][, z or layer]). Bound images take their handle from the image bindings, bindless ones from a register that
+// was loaded from a constant buffer (the runtime reads that word at draw time). Raw (.BA) stores are not supported.
+static void emit_sust(Ctx *c, uint64_t w) {
+    int data = (int)bits(w, 0, 8), coord = (int)bits(w, 8, 8), type = (int)bits(w, 33, 3);
+    bool bound = bits(w, 51, 1), ba = bits(w, 52, 1);
+    uint32_t mask = (uint32_t)bits(w, 20, 4);
+    if (!c->glsl) { fail(c, "sust (msl)"); return; }
+    if (ba) { fail(c, "sust.ba"); return; }
+    static const uint8_t types[6] = {TEXTYPE_1D, TEXTYPE_1D, TEXTYPE_1D_ARRAY, TEXTYPE_2D, TEXTYPE_2D_ARRAY, TEXTYPE_3D};
+    if (type > 5 || type == 1) { fail(c, "sust type %d", type); return; }
+    ShaderTexture im = {.type = types[type], .is_image = true};
+    if (bound) {
+        im.handle_offset = (uint32_t)bits(w, 36, 13) * 4;
+    } else {
+        int hr = (int)bits(w, 39, 8);
+        uint32_t src = hr == RZ ? 0 : c->reg_cbuf[hr];
+        if (!src) { fail(c, "sust: bindless handle not from a cbuf"); return; }
+        im.bindless = true;
+        im.bindless_cbuf = (src - 1) >> 16;
+        im.bindless_offset = (src - 1) & 0xFFFF;
+        c->info->cbuf_mask |= 1u << im.bindless_cbuf;  // (the runtime reads the handle from it)
+    }
+    int slot = -1;
+    for (int i = 0; i < c->info->nimg; i++) {
+        ShaderTexture *o = &c->info->img[i];
+        if (o->type == im.type && o->bindless == im.bindless && o->handle_offset == im.handle_offset &&
+            o->bindless_cbuf == im.bindless_cbuf && o->bindless_offset == im.bindless_offset) slot = i;
+    }
+    if (slot < 0) {
+        if (c->info->nimg == 8) { fail(c, "too many images"); return; }
+        slot = c->info->nimg++;
+        c->info->img[slot] = im;
+    }
+    int ncoord = im.type == TEXTYPE_1D ? 1 : im.type == TEXTYPE_1D_ARRAY || im.type == TEXTYPE_2D ? 2 : 3;
+    char co[160], v[4][48];
+    if (ncoord == 1) snprintf(co, sizeof co, "int(r%d)", coord);
+    else if (ncoord == 2) snprintf(co, sizeof co, "ivec2(int(r%d), int(r%d))", coord, coord + 1);
+    else snprintf(co, sizeof co, "ivec3(int(r%d), int(r%d), int(r%d))", coord, coord + 1, coord + 2);
+    for (int i = 0; i < ncoord; i++) c->reg_used[coord + i] = 1;
+    int k = 0;
+    for (int i = 0; i < 4; i++) {
+        if (mask & (1u << i)) { snprintf(v[i], sizeof v[i], "uintBitsToFloat(r%d)", data + k); c->reg_used[data + k] = 1; k++; }
+        else strcpy(v[i], i == 3 ? "1.0f" : "0.0f");
+    }
+    sp(&c->body, "    imageStore(img%d, %s, vec4(%s, %s, %s, %s));\n", slot, co, v[0], v[1], v[2], v[3]);
+}
+
 // ------------------------------------------------------------------ instruction translation
 static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
     char t[2048], u[2048];
@@ -968,6 +1071,7 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
             if (!dyn && (off + 4 * i) & 0) {}
             if (dyn) c->info->cbuf_size[idx] = 0x10000;
             set_reg(c, d + i, cb);
+            if (!dyn && d + i != RZ) c->reg_cbuf[d + i] = 1 + ((uint32_t)idx << 16 | (uint32_t)(off + 4 * i));
         }
     } else if (OPM(0xdf00000000000000ull, 0xff40000000000000ull)) {  // TLD4S
         emit_tld4s(c, w);
@@ -975,6 +1079,10 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         emit_texs(c, w, false);
     } else if (OPM(0xd200000000000000ull, 0xf600000000000000ull)) {  // TLDS
         emit_texs(c, w, true);
+    } else if (OPM(0xeb20000000000000ull, 0xffe0000000000000ull)) {  // SUST
+        emit_sust(c, w);
+    } else if (OPM(0xc838000000000000ull, 0xfc38000000000000ull)) {  // TLD4
+        emit_tld4(c, w);
     } else if (OPM(0xc038000000000000ull, 0xfc38000000000000ull)) {  // TEX
         emit_tex(c, w, false);
     } else if (OPM(0xdeb8000000000000ull, 0xfff8000000000000ull)) {  // TEX.B (bindless)
@@ -1101,6 +1209,8 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
     } else if (OPM(0x5c98000000000000ull, 0xfff8000000000000ull) || OPM(0x4c98000000000000ull, 0xfff8000000000000ull) ||
                OPM(0x3898000000000000ull, 0xfef8000000000000ull)) {  // MOV
         set_reg(c, d, B(false));
+        if (OPM(0x4c98000000000000ull, 0xfff8000000000000ull) && d != RZ)  // (from a cbuf word: a handle, maybe)
+            c->reg_cbuf[d] = 1 + ((uint32_t)bits(w, 34, 5) << 16 | (uint32_t)bits(w, 20, 14) * 4);
     } else if (OPM(0x0100000000000000ull, 0xfff0000000000000ull)) {  // MOV32I
         sprintf(t, "0x%08xu", (uint32_t)bits(w, 20, 32));
         set_reg(c, d, t);
@@ -1899,6 +2009,11 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     if (tint) {
         sp(&s, "layout(std140, set = %d, binding = 19) uniform Tint { vec4 ltint[2]; };\n", set);
         info->uses_tint = true;
+    }
+    for (int i = 0; i < info->nimg; i++) {
+        static const char *const names[] = {[TEXTYPE_1D] = "image1D", [TEXTYPE_1D_ARRAY] = "image1DArray", [TEXTYPE_2D] = "image2D",
+                                            [TEXTYPE_2D_ARRAY] = "image2DArray", [TEXTYPE_3D] = "image3D"};
+        sp(&s, "layout(set = %d, binding = %d) writeonly uniform %s img%d;\n", set, IMAGE_BINDING + i, names[info->img[i].type], i);
     }
     for (int i = 0; i < info->ntex; i++) {
         ShaderTexture *t = &info->tex[i];
