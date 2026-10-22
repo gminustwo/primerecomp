@@ -1367,8 +1367,9 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
             (unsigned long long)p->code[0], (unsigned long long)p->code[1], (unsigned long long)np->stages[2].code_addr,
             vkey->layer_attr);
     else if (np->stage_mask & 0x1C)
-        LOG("[vk] program vs %llx fs %llx has a geometry / tessellation stage (gs %llx tcs %llx tes %llx): not supported, "
-            "drawn without it\n", (unsigned long long)p->code[0], (unsigned long long)p->code[1],
+        LOG("[vk] frame %llu: program vs %llx fs %llx has a geometry / tessellation stage (gs %llx tcs %llx tes %llx): not "
+            "supported, drawn without it\n", (unsigned long long)renderer_present_count(), (unsigned long long)p->code[0],
+            (unsigned long long)p->code[1],
             (unsigned long long)np->stages[2].code_addr, (unsigned long long)np->stages[3].code_addr,
             (unsigned long long)np->stages[4].code_addr);
     for (int s = 2; s < 5 && getenv("LARECOMP_SAVE_MSL"); s++) {  // (debug) their code: NVN header + SPH + instructions
@@ -3126,7 +3127,7 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
         (unsigned long long)(indexed ? r->x[6] : r->x[4]), (unsigned long long)r->x[0], (unsigned long long)r->x[2],
         (unsigned long long)st.program->stages[0].code_addr, (unsigned long long)st.program->stages[1].code_addr,
         pr->vi->cbuf_mask, pr->fi->cbuf_mask, st.rt.ncolor);
-    if (st.program->stage_mask & 0x1C)  // geometry / tessellation: not translated, the draw runs without them
+    if ((st.program->stage_mask & 0x1C) && !pr->vkey.layer_attr)  // geometry / tessellation: not translated
         LOG(" [UNSUPPORTED gs=%llx tcs=%llx tes=%llx]", (unsigned long long)st.program->stages[2].code_addr,
             (unsigned long long)st.program->stages[3].code_addr, (unsigned long long)st.program->stages[4].code_addr);
     for (int i = 0; i < st.rt.ncolor; i++)
