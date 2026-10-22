@@ -936,8 +936,8 @@ static void begin_pass(void) {
         uint32_t lv = st.rt.has_cview[i] && (st.rt.cview[i].setmask & 1) ? st.rt.cview[i].base_level : 0;
         uint32_t ew = level_extent(b->width, lv), eh = level_extent(b->height, lv);
         if (g_debug_frame)
-            LOG("[pass] color%d %p %ux%u f%#x: image %ux%u lv %u -> %ux%u, %s\n", i, (void *)t, t->width, t->height, t->format,
-                b->width, b->height, lv, ew, eh, ca[i].loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ? "CLEAR" : "load");
+            LOG("[pass] color%d %p @%llx %ux%u f%#x: image %ux%u lv %u -> %ux%u, %s\n", i, (void *)t,
+                (unsigned long long)t->addr, t->width, t->height, t->format, b->width, b->height, lv, ew, eh, ca[i].loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ? "CLEAR" : "load");
         if (!w) { renderer_texture_scale(t, &pass_sx, &pass_sy); w = ew; }
         if (ew < minw) minw = ew;
         if (eh < minh) minh = eh;
@@ -1788,6 +1788,7 @@ static NvnTexture *alias_read(NvnTexture *t) {
 // copy_texture: a whole-image copy that can be an alias instead (true: done)
 static bool alias_make(NvnTexture *src, NvnTexture *dst, TexBackend *s, TexBackend *d) {
     if (!copy_opt() || src == dst) return false;
+    if (s == d && s->image) return true;  // (two texture objects over one image, textures.c: nothing to copy)
     if (!(s->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) return false;
     if (s->format != d->format || s->width != d->width || s->height != d->height || s->aspect != d->aspect || s->levels != 1 ||
         d->levels != 1 || s->layers != 1 || d->layers != 1 || s->depth != 1 || d->depth != 1 || s->samples != 1 || d->samples != 1 ||
@@ -3068,8 +3069,8 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
         NvnTexture *t = shader_texture_object(1, &pr->fi->tex[i]);
         const TexBackend *b = t ? (const TexBackend *)t->backend : NULL;
         if (!t) { LOG("[draw]   tex%d: none\n", i); continue; }
-        LOG("[draw]   tex%d: %p %ux%u f%#x lv %u -> %ux%u scale %.4f %.4f%s (target %u depth %u levels %u, image depth %u, %s)\n", i,
-            (void *)t, t->width, t->height, t->format, b ? b->levels : 0, b ? b->width : 0, b ? b->height : 0, b ? b->sx : 0,
+        LOG("[draw]   tex%d: %p @%llx %ux%u f%#x lv %u -> %ux%u scale %.4f %.4f%s (target %u depth %u levels %u, image depth %u, %s)\n",
+            i, (void *)t, (unsigned long long)t->addr, t->width, t->height, t->format, b ? b->levels : 0, b ? b->width : 0, b ? b->height : 0, b ? b->sx : 0,
             b ? b->sy : 0, b && b->scalable ? " scalable" : "", t->target, t->depth, t->levels, b ? b->depth : 0,
             b && b->gpu_owned ? "gpu" : "uploaded");
         if (t->target == 2 && b && b->gpu_owned && b->depth > 1 && getenv("LARECOMP_DUMP_3D") && t->layout.fmt) {
@@ -3267,6 +3268,8 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
             (void *)st_, st_->width, st_->height, st_->format, slv, sr[0], sr[1], sr[3], sr[4], s->width, s->height, (void *)dt, dt->width,
             dt->height, dt->format, dlv, dr[0], dr[1], dr[3], dr[4], d->width, d->height, sx0, sy0, sw, sh, dx0, dy0, dw, dh,
             (unsigned long long)flags);
+    // two texture objects over one image (textures.c): a copy onto the same texels changes nothing
+    if (s == d && slv == dlv && sly == dly && sx0 == dx0 && sy0 == dy0 && sw == dw && sh == dh) return;
     if (copy_opt() && sx0 == 0 && sy0 == 0 && dx0 == 0 && dy0 == 0 && sw == (int)s->width && sh == (int)s->height && dw == (int)d->width &&
         dh == (int)d->height && slv == 0 && dlv == 0 && sly == 0 && dly == 0 && alias_make(st_, dt, s, d)) {
         if (ct_on()) LOG("[ct] alias made %p -> %p\n", (void *)st_, (void *)dt);

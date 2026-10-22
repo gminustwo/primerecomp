@@ -34,7 +34,8 @@ typedef struct NvnTexture {
     uint64_t addr;  // guest address of texel storage
     NvnPool *pool;
     uint64_t pool_offset;
-    void *backend;  // renderer-side texture
+    void *backend;  // renderer-side texture (shared by textures over the same storage: vulkan/textures.c)
+    int live_slot;  // renderer's list of textures with a backend: slot + 1
     uint64_t debug_id;
     char label[64];
 } NvnTexture;

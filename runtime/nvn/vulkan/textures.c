@@ -381,17 +381,50 @@ static void destroy_image(TexBackend *b) {
 // Live game textures: an in-place reboot (vk_textures_reset) destroys them all.
 static NvnTexture **g_live;
 static int g_nlive, g_cap_live;
-static void live_add(NvnTexture *t, TexBackend *b) {
+static void live_add(NvnTexture *t) {
     if (g_nlive == g_cap_live) { g_cap_live = g_cap_live ? g_cap_live * 2 : 1024; g_live = realloc(g_live, g_cap_live * sizeof *g_live); }
     g_live[g_nlive++] = t;
-    b->reg = g_nlive;
+    t->live_slot = g_nlive;
 }
-static void live_remove(TexBackend *b) {
-    if (!b->reg) return;
+static void live_remove(NvnTexture *t) {
+    if (!t->live_slot) return;
     NvnTexture *last = g_live[--g_nlive];
-    g_live[b->reg - 1] = last;
-    if (last->backend) ((TexBackend *)last->backend)->reg = b->reg;
-    b->reg = 0;
+    g_live[t->live_slot - 1] = last;
+    last->live_slot = t->live_slot;
+    t->live_slot = 0;
+}
+
+// The game makes several texture objects over one allocation: MPR renders its refraction mip chain (the blue doors'
+// shield samples it) one level per object and samples it through yet another. Each with an image of its own, the
+// levels never met. Objects with the same storage and shape now share one image; other aliasing (another format or
+// size over the same memory) still gets separate images.
+#define SHARE_TAB 4096
+static TexBackend *share_tab[SHARE_TAB];
+static uint32_t share_slot(uint64_t addr) { return (uint32_t)((addr >> 9) * 0x9E3779B97F4A7C15ull >> 52) & (SHARE_TAB - 1); }
+
+static TexBackend *share_find(const NvnTexture *t, TexBackend *key_out) {
+    memset(&key_out->key, 0, sizeof key_out->key);  // (compared with memcmp)
+    if (!t->addr || t->target == 10 || (t->flags & 2) || (t->pool && (t->pool->flags & NVN_POOL_VIRTUAL))) return NULL;
+    key_out->key.addr = t->addr;
+    key_out->key.stride = t->stride;
+    key_out->key.target = t->target;
+    key_out->key.scalable = tex_scalable(t);  // (flags differ between the objects; only this depends on them)
+    key_out->key.width = t->width;
+    key_out->key.height = t->height;
+    key_out->key.depth = t->depth;
+    key_out->key.levels = t->levels;
+    key_out->key.format = t->format;
+    key_out->key.samples = t->samples;
+    key_out->shared = true;
+    for (TexBackend *b = share_tab[share_slot(t->addr)]; b; b = b->share_next)
+        if (!memcmp(&b->key, &key_out->key, sizeof b->key)) return b;
+    return NULL;
+}
+static void share_unlink(TexBackend *b) {
+    if (!b->shared) return;
+    for (TexBackend **p = &share_tab[share_slot(b->key.addr)]; *p; p = &(*p)->share_next)
+        if (*p == b) { *p = b->share_next; break; }
+    b->shared = false;
 }
 
 static TexBackend *tex_backend(NvnTexture *t) {
@@ -404,11 +437,25 @@ static TexBackend *tex_backend(NvnTexture *t) {
         return b;
     }
     vk_collect_dead();
-    b = calloc(1, sizeof *b);
-    b->scalable = tex_scalable(t);
-    create_image(t, b);
+    TexBackend key;
+    b = share_find(t, &key);
+    if (b) {
+        b->refs++;
+    } else {
+        b = calloc(1, sizeof *b);
+        b->scalable = tex_scalable(t);
+        create_image(t, b);
+        b->refs = 1;
+        if (key.shared) {
+            b->key = key.key;
+            b->shared = true;
+            uint32_t s = share_slot(t->addr);
+            b->share_next = share_tab[s];
+            share_tab[s] = b;
+        }
+    }
     t->backend = b;
-    live_add(t, b);
+    live_add(t);
     return b;
 }
 
@@ -417,11 +464,14 @@ void backend_texture_destroyed(NvnTexture *t) {
     if (b) {
         extern void vk_alias_texture_destroyed(NvnTexture *t);  // (exec.c copy aliases: a source's contents handed over)
         vk_alias_texture_destroyed(t);
-        live_remove(b);
-        destroy_image(b);
-        free(b->pending_rgba);
-        free(b->sparse);
-        free(b);
+        live_remove(t);
+        if (--b->refs == 0) {
+            share_unlink(b);
+            destroy_image(b);
+            free(b->pending_rgba);
+            free(b->sparse);
+            free(b);
+        }
     }
     t->backend = NULL;
 }

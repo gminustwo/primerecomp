@@ -87,7 +87,11 @@ typedef struct TexBackend {
     uint32_t tp_gen;     // texpatch_generation() it was last uploaded with
     uint8_t *sparse;     // sparse textures: their bytes gathered from the virtual pool's mapped pages
     uint32_t sparse_gen; // the pool's mapping generation those bytes reflect
-    int reg;  // slot in textures.c's live list + 1 (a reboot destroys them all)
+    // textures.c: NVN textures over the same storage with the same shape share this image
+    int refs;
+    bool shared;  // listed in the share table under key
+    struct { uint64_t addr, stride; uint32_t target, scalable, width, height, depth, levels, format, samples; } key;
+    struct TexBackend *share_next;
 } TexBackend;
 
 TexBackend *vk_tex(NvnTexture *t, bool for_render);  // backend image (uploads CPU contents unless for_render)
