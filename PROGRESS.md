@@ -105,14 +105,24 @@ were edited the same way but not compiled (needs macOS). Not linked or run yet.
 Working: boot to title (intro movies via movie:: over the game's ClientStreamReader), title / main menu, new game
 starts, frame pacing locked at 60 (or 120 / uncapped: Video tab "Frame rate", `LARECOMP_FPS`), 3D scene renders.
 
+## 2026-10-21 (evening): in-game, playable start
+
+Working: the intro flyby renders with correct lighting and color grading; the landing on the Orpheon hands over
+control; first-person HUD, walking, firing and the in-game tutorial prompts work. 60 fps locked; 120 fps locked with
+the game running at the same speed (4 s of walking covers the same ground at 60 and at 120).
+
+What fixed the black screen: the exposure data comes from a vertex shader that stores to an image (SUST), and
+the color grading LUTs are 3D textures whose tiling the runtime guessed wrong (see tegra.c).
+
 Open, in order:
-1. **Post-processing goes black.** Debug frame 7200 of the intro: pass 2 draws the scene into the HDR target
-   correctly; pass 4 samples it and gets black, and pass 15 finds the target black. Suspect: `upload_texture`
-   (runtime/nvn/vulkan/textures.c) re-uploading the render target from guest memory (zeros) - render targets need to
-   be exempt from CPU-side hashing/upload once the GPU has written them.
-2. Shaders still rejected: `SUST` (image store, one vertex shader), `TLD4` (full gather form, one fragment shader).
-3. 120 fps: simulation step patched at 19 sites (tools/patches.py); needs gameplay verification.
-4. Not yet reached: controls in gameplay, saves, the rest of the game.
+1. **Graphics glitches:** the arm cannon renders as a dark silhouette; black diagonal streaks (shadows?) at the
+   lower left of the landing site.
+2. **Not verified yet:** audio output (the renderer runs, unheard here), saving and loading, rooms beyond the first,
+   bosses, every upgrade, the ending. A full playthrough needs a person at the controls.
+3. Shader instructions still unhandled: `SUST.BA` (raw image stores), `TLD4.PTP`, gather on cube textures - none
+   seen so far.
+4. LA leftovers: texpatch.c and LA-only options (blur removal, Hero Mode icon, 360-degree movement, tunic colors),
+   names (`lasrecomp.exe`, `LARECOMP_*`), launcher text.
 
 Debug recipe: `LARECOMP_DEBUG_FRAME=<n>` (pass images in build/build/, draw log), `LARECOMP_GPUPROF_AT`,
 `LARECOMP_VK_PROF=1` (waits by cause), `LARECOMP_HANG_DUMP`, `LARECOMP_FNTRACE_THREAD` (with `LARECOMP_FNPROF=0:999999999`).
