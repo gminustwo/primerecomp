@@ -718,13 +718,14 @@ const char *renderer_stats(void) {
         LOG("\n");
     }
     snprintf(stats_text, sizeof stats_text,
-             "%llu draws, %llu skipped [cs %llu noprog %llu prog %llu topo %llu pipe %llu list %llu], %llu passes, %llu dispatches, %llu flushes, wait %.0fms, compile %d, fbcopy %llu, upload %.1fMB",
+             "%llu draws, %llu skipped [cs %llu noprog %llu prog %llu topo %llu pipe %llu list %llu], %llu passes, %llu dispatches, %llu flushes, wait %.0fms, compile %d, fbcopy %llu, upload %.1fMB, textures %d / images %d",
              (unsigned long long)stat_draws, (unsigned long long)stat_skipped, (unsigned long long)stat_skip[SKIP_CS],
              (unsigned long long)stat_skip[SKIP_NOPROG], (unsigned long long)stat_skip[SKIP_PROG],
              (unsigned long long)stat_skip[SKIP_TOPO], (unsigned long long)stat_skip[SKIP_PIPE],
              (unsigned long long)stat_skip[SKIP_LIST], (unsigned long long)stat_passes,
              (unsigned long long)stat_dispatches, (unsigned long long)stat_flushes, (double)stat_wait_ns / 1e6,
-             atomic_exchange(&stat_compiles, 0), (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0);
+             atomic_exchange(&stat_compiles, 0), (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0,
+             vk_live_textures(), vk_live_images());
     stat_feedback_copies = stat_upload_bytes = 0;
     {
         extern void vk_alias_stats(void);

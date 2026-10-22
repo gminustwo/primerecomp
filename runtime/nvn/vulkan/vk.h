@@ -101,6 +101,8 @@ bool vk_format_alpha_one(uint32_t nvn_format);
 // View of t (optionally through an NVN texture view) for rendering or sampling.
 VkImageView vk_view(NvnTexture *t, const NvnTextureView *v, bool has_view, bool render, int want_textype);
 uint32_t vk_render_layers(NvnTexture *t, const NvnTextureView *v, bool has_view);  // layers a render view binds
+int vk_live_textures(void);  // NVN textures with a backend (stats)
+int vk_live_images(void);    // their images (shared ones count once)
 VkImageView vk_image_view(TexBackend *b, VkImageViewType type, VkFormat fmt, uint32_t lv0, uint32_t nlv, uint32_t ly0,
                           uint32_t nly, VkComponentMapping sw, VkImageAspectFlags aspect);
 VkImageView vk_dummy_view(int textype);

@@ -339,16 +339,29 @@ static void create_image(NvnTexture *t, TexBackend *b) {
                  : type == VK_IMAGE_TYPE_3D ? VK_IMAGE_VIEW_TYPE_3D
                  : t->target == 8 ? VK_IMAGE_VIEW_TYPE_CUBE : t->target == 9 ? VK_IMAGE_VIEW_TYPE_CUBE_ARRAY
                  : layers > 1 || t->target == 4 || t->target == 6 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-    vk_image_init_layout(vk_upload_cmd(), b->image, b->aspect);
+    VkCommandBuffer icb = vk_upload_cmd();
+    vk_image_init_layout(icb, b->image, b->aspect);
+    bool cleared = false;
     if (depthfmt) {
         // New depth / stencil images start zeroed (as fresh memory reads on Apple GPUs). The game builds its depth
         // pyramid with depth-only copies, so the stencil of those images was never written: whatever the memory
         // held, different per image and per run, then failed or passed the depth-of-field passes' stencil test in
         // patches (flicker that came and went between runs, every other frame, below 1x internal resolution).
-        VkCommandBuffer cb = vk_upload_cmd();
         VkClearDepthStencilValue zero = {0.0f, 0};
         VkImageSubresourceRange rg = {b->aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
-        vkCmdClearDepthStencilImage(cb, b->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &rg);
+        vkCmdClearDepthStencilImage(icb, b->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &rg);
+        cleared = true;
+    } else if (!(vf >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && vf <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK) && samples == 1) {
+        // Colour images too: a level or layer nothing writes (the cube faces a geometry shader picks, before that
+        // was emulated) read uninitialized memory - garbage colours over whole rooms. (Compressed formats can't
+        // be cleared; they are uploaded whole.)
+        VkClearColorValue zero = {0};
+        VkImageSubresourceRange rg = {VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
+        vkCmdClearColorImage(icb, b->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &rg);
+        cleared = true;
+    }
+    if (cleared) {
+        VkCommandBuffer cb = icb;
         VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                                .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                                .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT};
@@ -381,6 +394,10 @@ static void destroy_image(TexBackend *b) {
 // Live game textures: an in-place reboot (vk_textures_reset) destroys them all.
 static NvnTexture **g_live;
 static int g_nlive, g_cap_live;
+static int g_nimages;  // TexBackends (images) alive
+int vk_live_textures(void) { return g_nlive; }
+int vk_live_images(void) { return g_nimages; }
+
 static void live_add(NvnTexture *t) {
     if (g_nlive == g_cap_live) { g_cap_live = g_cap_live ? g_cap_live * 2 : 1024; g_live = realloc(g_live, g_cap_live * sizeof *g_live); }
     g_live[g_nlive++] = t;
@@ -460,6 +477,7 @@ static TexBackend *tex_backend(NvnTexture *t) {
         b->scalable = tex_scalable(t);
         create_image(t, b);
         b->refs = 1;
+        g_nimages++;
         if (key.shared) {
             b->key = key.key;
             b->shared = true;
@@ -480,6 +498,7 @@ void backend_texture_destroyed(NvnTexture *t) {
         vk_alias_texture_destroyed(t);
         live_remove(t);
         if (--b->refs == 0) {
+            g_nimages--;
             share_unlink(b);
             destroy_image(b);
             free(b->pending_rgba);
