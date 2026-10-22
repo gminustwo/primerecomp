@@ -192,7 +192,7 @@ void vk_level_change_check(void) {
     const char *lv = game_level_name();
     if (strncmp(lv, last, sizeof last - 1) != 0) {
         strlcpy(last, lv, sizeof last);
-        if (!strncmp(lv, "TelephoneBox", 12) || getenv("LARECOMP_CLEAR_ALL_LEVELS")) g_level_gen++;
+        if (getenv("LARECOMP_CLEAR_ALL_LEVELS")) g_level_gen++;
     }
 }
 

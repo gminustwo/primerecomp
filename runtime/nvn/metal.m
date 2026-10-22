@@ -247,7 +247,7 @@ static void level_change_check(void) {
         strlcpy(last, lv, sizeof last);
         // only levels that never draw their surroundings: clearing everywhere also wipes targets other rooms
         // carry over (a house lost a band of its walls)
-        if (!strncmp(lv, "TelephoneBox", 12) || getenv("LARECOMP_CLEAR_ALL_LEVELS")) g_level_gen++;
+        if (getenv("LARECOMP_CLEAR_ALL_LEVELS")) g_level_gen++;
     }
 }
 // Scene render targets are cleared to transparent black at their first use in each frame (LARECOMP_NO_FRAME_CLEAR=1
@@ -976,10 +976,7 @@ void backend_present(NvnTexture *t) {
         id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rp];
         // Next frame's render resolution follows the window: the 1920x1080 image scaled to fit.
         double dw = drawable.texture.width, dh = drawable.texture.height;
-        extern void widescreen_frame_end(uint64_t frame);
-        widescreen_frame_end(total_frames);
-        extern void widescreen_set_factor(float f);
-        extern bool widescreen_allowed(void);
+        extern bool widescreen_allowed(void);  // runtime/hle/game.c
         // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Internal resolution")
         extern uint64_t g_gpu_total_ns;
         static uint64_t gpu_prev;
@@ -990,11 +987,7 @@ void backend_present(NvnTexture *t) {
         output_scale(dw, dh, widescreen_allowed(), SDL_GetTicksNS() / 1e9, gpu_ms, &os);
         double sx = os.sx, sy = os.sy, vx = os.vx, vy = os.vy, vw = os.vw, vh = os.vh, shape = os.shape;
         bool reshape = shape != 1.0;
-        // interiors / dungeons: their 16:9 centre, or the part inside a room wider than one screen
-        extern void widescreen_present_crop(uint64_t, double, float *, double *, double *, double *, double *);
-        float crop[4];  // uv origin and size
-        widescreen_present_crop(total_frames, shape, crop, &vx, &vy, &vw, &vh);
-        widescreen_set_factor((float)shape);
+        float crop[4] = {0, 0, 1, 1};  // uv origin and size (the whole image)
         {   // (diagnostics) log output scale / drawable changes
             static double psx, psy, pdw, pdh;
             static int nlog;
@@ -1049,7 +1042,7 @@ void backend_present(NvnTexture *t) {
         static long win_shot = -1;  // LARECOMP_WINDOW_SHOT=<frame>: save the final window image (game + menu)
         if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
         id<MTLTexture> shot_tex = nil;
-        extern char g_window_shot_request[256];  // test hooks (runtime/hle/hookshot.c): save the next frame here
+        extern char g_window_shot_request[256];  // test hooks (runtime/hle/input.c): save the next frame here
         if ((win_shot && (long)total_frames + 1 == win_shot) || g_window_shot_request[0]) {
             MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:drawable.texture.pixelFormat
                                          width:drawable.texture.width height:drawable.texture.height mipmapped:NO];
@@ -1085,12 +1078,8 @@ void backend_present(NvnTexture *t) {
     if (slow_ms > 0 && total_frames > 2600) usleep((useconds_t)slow_ms * 1000);
     extern void fnprof_frame(uint64_t frame);
     fnprof_frame(total_frames);
-    extern void warp_frame(uint64_t frame);
-    warp_frame(total_frames);
     extern void reboot_test_frame(uint64_t frame);  // runtime/main.c (LARECOMP_REBOOT_AT)
     reboot_test_frame(total_frames);
-    extern void save_editor_frame(uint64_t frame);
-    save_editor_frame(total_frames);
     static long shot_every = -1;
     if (shot_every < 0) { const char *e = getenv("LARECOMP_SCREENSHOT_EVERY"); shot_every = e ? atol(e) : 0; }
     extern bool g_debug_frame;

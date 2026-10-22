@@ -27,13 +27,6 @@ extern "C" {
 #include "../settings.h"
 #include "menu.h"
 void input_reset(void);
-void save_editor_draw(float scale);  // save_editor.mm
-extern "C" int game_in_play(void);  // hle/warp.c
-void save_editor_on_open(void);
-void rando_tab_draw(float scale);
-bool warp_tab_draw(float scale);  // warp_tab.mm: true when a warp started
-extern "C" void cheats_draw(float scale);  // cheats.mm
-extern "C" void difficulty_draw(float scale);  // difficulty.mm
 void controls_bindings_draw(float scale);  // controls_ui.mm
 #include "../input_bind.h"
 #include "../paths.h"
@@ -76,7 +69,6 @@ static void set_open(bool open) {
     input_reset();  // nothing held while the menu had focus leaks into the game
     bind_capture_cancel();
     if (open) {
-        save_editor_on_open();
         static bool opened;  // the controller's cursor: the first tab (Controls) the first time this session, later the
         menu_tabs_focus(!opened);  // selected one
         opened = true;
@@ -603,13 +595,6 @@ static void tab_about(void) {
     ImGui::TextUnformatted("Fullscreen:  F11 / Alt+Enter");
 }
 
-extern "C" bool inventory_overlay_wanted(void);
-extern "C" bool tracker_overlay_wanted(void);
-extern "C" void tracker_overlay_draw(ImVec2 display, ImFont *font);
-extern "C" bool chaos_overlay_wanted(void);
-extern "C" void chaos_overlay_draw(ImVec2 display, ImFont *font);
-extern "C" void inventory_overlay_draw(ImVec2 display, ImFont *font);
-
 // Reboot (runtime/main.c): the game is gone - menu and name dialog close; the ImGui context stays.
 RT_ON_RESET(menu_reset) {
     set_open(false);
@@ -683,12 +668,11 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     Tab tabs[11];
     int ntabs = 0;
     if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
-    static const char *names[] = {"Video", "Audio", "Save Editor", "Randomizer", "Warp", "Cheats", "Gameplay",
-                                  "Cosmetics", "Controls", "Quit"};
-    static const int order[] = {8, 0, 1, 6, 7, 3, 5, 4, 2, 9};  // Controls, Video, Audio, Gameplay, Cosmetics, Randomizer,
-                                                                // Cheats, Warp, Save Editor, Quit (ids stay: test hooks)
-    for (int i : order)  // (Quit: in game only - the start screen has its own QUIT, and an eleventh tab cut names short)
-        if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, in_game || (i != 2 && i != 4 && i != 5)};
+    // (ids 2-6 were LAS Recomp's Save Editor, Randomizer, Warp, Cheats and Gameplay; ids stay: test hooks)
+    static const char *names[] = {"Video", "Audio", "", "", "", "", "", "Cosmetics", "Controls", "Quit"};
+    static const int order[] = {8, 0, 1, 7, 9};  // Controls, Video, Audio, Cosmetics, Quit
+    for (int i : order)  // (Quit: in game only - the start screen has its own QUIT)
+        if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
     for (int i = 0; i < ntabs; i++) if (tabs[i].id == g_tab) cur = i;
     if (!tabs[cur].on) cur = 0;
@@ -754,16 +738,16 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 ImGui::Spacing();
                 ImGui::BeginChild("##page", ImVec2(0, 0), ImGuiChildFlags_None,  // (the rest of the window: no hint line)
                                   ImGuiWindowFlags_NavFlattened);
-                // Down from the tab bar, pages that aren't option rows (Prelaunch, Controls, Warp): their first control
+                // Down from the tab bar, pages that aren't option rows (Prelaunch, Controls): their first control
                 // (option-row pages: opt_focus_first)
-                if (down_from_tab && (t.id == -1 || t.id == 8 || t.id == 4)) {
+                if (down_from_tab && (t.id == -1 || t.id == 8)) {
                     opt_focus_first(false);
                     ImGui::SetKeyboardFocusHere();
                     ImGui::SetNavCursorVisible(true);
                 }
-                // Down from the tab bar, pages that aren't option rows (Prelaunch, Controls, Warp): their first control
+                // Down from the tab bar, pages that aren't option rows (Prelaunch, Controls): their first control
                 // (option-row pages: opt_focus_first)
-                if (down_from_tab && (t.id == -1 || t.id == 8 || t.id == 4)) {
+                if (down_from_tab && (t.id == -1 || t.id == 8)) {
                     opt_focus_first(false);
                     ImGui::SetKeyboardFocusHere();
                     ImGui::SetNavCursorVisible(true);
@@ -772,14 +756,6 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case -1: prelaunch(scale); break;
                 case 0: tab_display(); break;
                 case 1: tab_audio(); break;
-                case 2:
-                    if (game_in_play()) save_editor_draw(scale);
-                    else ImGui::TextDisabled("Load a save file and get into the game to edit it.");
-                    break;
-                case 3: rando_tab_draw(scale); break;
-                case 4: if (warp_tab_draw(scale)) set_open(false); break;
-                case 5: cheats_draw(scale); break;
-                case 6: difficulty_draw(scale); break;
                 case 7: tab_cosmetics(); break;
                 case 8: tab_about(); break;
                 case 9: tab_quit(scale, in_game); break;
@@ -815,11 +791,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     const double tw = target_w, th = target_h;
 #endif
     bool open = g_open.load();
-    bool inv = !open && inventory_overlay_wanted();
-    bool trk = !open && tracker_overlay_wanted();
-    bool chaos = !open && chaos_overlay_wanted();
     bool kbd = g_kbd.load() == 1;
-    if (!open && !kbd && !g_settings.show_fps && !inv && !trk && !chaos) {
+    if (!open && !kbd && !g_settings.show_fps) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         return;
     }
@@ -871,12 +844,6 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
                                         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
         ImGui::Text("%.0f fps", io.Framerate);
         ImGui::End();
-    }
-
-    if (trk) tracker_overlay_draw(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont());
-    if (chaos) chaos_overlay_draw(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont());
-    if (inv) {
-        inventory_overlay_draw(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont());
     }
 
     if (open) {

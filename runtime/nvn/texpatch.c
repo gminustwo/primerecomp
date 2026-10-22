@@ -26,7 +26,6 @@
 
 #include "../hle.h"
 #include "../input_bind.h"
-#include "../rando.h"
 #include "../settings.h"
 #include "astc.h"
 #include "tegra.h"
@@ -202,37 +201,6 @@ static int ref_of(int role) {
     return -1;
 }
 
-// A seed made with a tunic colour (older seeds: tools/rando/cosmetics.py) ships its own recoloured Playerlink.bfres:
-// its tunic map is recognised too, so the Cosmetics tab's colour wins over it. Read again when the seed changes
-// (seeds switch in place).
-static uint8_t *g_seed_tunic;
-static uint32_t g_seed_tunic_size;
-static char g_seed_tunic_dir[300] = "\1";
-static const uint8_t *seed_tunic(uint32_t *size) {
-    const char *dir = rando_seed_dir();
-    if (strcmp(dir ? dir : "", g_seed_tunic_dir)) {
-        strlcpy(g_seed_tunic_dir, dir ? dir : "", sizeof g_seed_tunic_dir);
-        free(g_seed_tunic);
-        g_seed_tunic = NULL;
-        char p[600];
-        size_t len;
-        uint8_t *f = NULL;
-        if (dir) snprintf(p, sizeof p, "%s/romfs/region_common/actor/Playerlink.bfres", dir), f = read_file(p, &len);
-        int n0 = g_nrefs;
-        for (size_t i = 0; f && i + 8 < len; i += 4)  // (a copy only differing from the game's adds a ref: taken out)
-            if (!memcmp(f + i, "BNTX\0\0\0\0", 8)) { scan_bntx(f + i, len - i, false); break; }
-        free(f);
-        for (int i = n0; i < g_nrefs; i++) {
-            if (g_refs[i].role == R_TUNIC && !g_seed_tunic) { g_seed_tunic = g_refs[i].data; g_seed_tunic_size = g_refs[i].size; }
-            else free(g_refs[i].data);
-        }
-        g_nrefs = n0;
-        if (g_seed_tunic) LOG("[texpatch] seed tunic map (%s)\n", dir);
-    }
-    *size = g_seed_tunic_size;
-    return g_seed_tunic;
-}
-
 static TexLayout g_tunic_layout;  // (the game's tunic texture: its levels' places in the map's data)
 static bool g_tunic_layout_ok;
 bool texpatch_is_item_cursor(int id) { return id >= 0 && id < g_nrefs && g_refs[id].role == R_ITEM_CURSOR; }
@@ -253,17 +221,6 @@ int texpatch_identify(const NvnTexture *t) {
             if (nlog++ < 64) LOG("[texpatch] %s (%ux%u fmt %#x) uploaded\n", r->name, r->w, r->h, t->format);
             if (tunic) { g_tunic_layout = t->layout; g_tunic_layout_ok = true; }  // (all three: the same layout)
             return i;
-        }
-    }
-    int tu = ref_of(R_TUNIC);
-    if (tu >= 0 && t->levels > 1 && t->width == g_refs[tu].w && t->height == g_refs[tu].h) {
-        uint32_t n;
-        const uint8_t *s = seed_tunic(&n);
-        if (s && n == g_refs[tu].size && n <= total && !memcmp((const void *)(uintptr_t)t->addr, s, n)) {
-            LOG("[texpatch] seed's tunic map uploaded\n");
-            g_tunic_layout = t->layout;
-            g_tunic_layout_ok = true;
-            return tu;
         }
     }
     return -1;

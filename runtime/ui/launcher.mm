@@ -503,7 +503,7 @@ void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, v
 void menu_tabs_focus(bool first_tab);
 extern int g_tab_request_ext;
 extern "C" void menu_apply_window_requests(void *sdl_window);
-extern "C" int g_start_screen;  // runtime/hle/warp.c: the start screen is up (no game loaded: don't read its memory)
+extern "C" int g_start_screen;  // runtime/hle/game.c: the start screen is up (no game loaded: don't read its memory)
 // The Randomizer tab's Play / Play Now on the start screen (rando_tab.mm): start the game with that seed
 static std::string g_play_seed;
 static bool g_play_seed_req, g_play_pending;

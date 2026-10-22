@@ -1,7 +1,6 @@
 # PyInstaller spec: the game code generator (tools/gen.py and its modules) as a standalone onedir helper, so the start
 # screen's setup can build the game code on the player's machine without Python (runtime/gamebuild.c).
 # `make gen-helper` -> build/helper/lasgen/ (lasgen[.exe] + _internal/). Same command line as gen.py. Inside the
-# bundle (sys._MEIPASS) tools/rando/patch_variants.json sits at rando/ (gen.py finds it via __file__).
 import glob
 import importlib.util
 import os
@@ -24,7 +23,7 @@ a = Analysis(
     pathex=[TOOLS],
     binaries=collect_dynamic_libs('capstone') + collect_dynamic_libs('unicorn')
              + [(p, 'unicorn/lib') for p in _uc_versioned],
-    datas=[(os.path.join(TOOLS, 'rando', 'patch_variants.json'), 'rando')],
+    datas=[],
     hiddenimports=collect_submodules('unicorn'),  # (it imports its arch modules by name at run time)
     excludes=['tkinter', 'pydoc', 'doctest', 'unittest', 'pdb', 'IPython', 'numpy', 'setuptools', '_distutils_hack',
               'pkg_resources', 'ssl', '_ssl', '_hashlib', '_multibytecodec', '_codecs_cn', '_codecs_hk',

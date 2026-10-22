@@ -9,7 +9,6 @@
 #include "settings.h"
 #include "hle.h"
 #include "kernel.h"
-#include "rando.h"
 
 const char *g_romfs_dir;
 
@@ -136,7 +135,6 @@ static void boot(const char *root) {
     char why[512];
     if (!gamelib_load(root, why, sizeof why)) FATAL("%s\n", why);
     loader_load(exefs);
-    rando_boot();  // the chosen seed's data patches go into the freshly loaded module
     { extern void settings_load(void); settings_load(); }
     kernel_init();
     dispatch_init();

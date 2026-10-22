@@ -19,8 +19,9 @@ generator (`tools/gen.py`, `tools/lifter.py`), the Horizon kernel and services, 
 renderer come from there, and the full upstream history is kept. Upstream is the `lasrecomp` git remote, so its
 fixes can be cherry-picked.
 
-Code that only made sense for Link's Awakening (its instruction patches, game hooks under `runtime/hle/`, the
-randomizer and its UI) is being removed or replaced. Until that's done, parts of the tree still name LA.
+Link's Awakening's game code (its instruction patches, the hooks into its memory under `runtime/hle/`, the
+randomizer and its UI) has been removed. Some of LA's presentation features (button prompt textures, cosmetics) and
+its names (`lasrecomp`, `LARECOMP_*`) are still in the tree; see [PROGRESS.md](PROGRESS.md).
 
 ## Layout
 
@@ -29,6 +30,7 @@ randomizer and its UI) is being removed or replaced. Until that's done, parts of
       generated/        tools/gen.py output
     tools/              generator, lifter, analysis scripts
     runtime/            kernel, services, loader, dispatcher, NVN renderer, UI
+      hle/game.c        what the runtime asks about the running game (this is where MPR-specific code goes)
 
 ## Generating the game code
 

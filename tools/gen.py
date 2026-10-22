@@ -380,31 +380,12 @@ class Module:
         all_labels = bool(tables)
         if all_labels:
             labels = set(range(entry, end, 4))
-        rando_here = [a for a in range(entry, end, 4) if a - self.base in RANDO_CODE]
-        if rando_here:
-            labels = set(labels)
-            for a in rando_here:
-                for w in RANDO_CODE[a - self.base]:
-                    v = self.lifter.lift(w, a)
-                    if v.kind in ('b', 'bcond') and isinstance(v.target, int) and entry <= v.target < end:
-                        labels.add(v.target)
         last = None
         for a in range(entry, end, 4):
             ins = self.lift(a)
             if a in labels:
                 flush()
                 out.append(f'L_{a:x}:;')
-            if a - self.base in RANDO_CODE:  # randomizer patch site: the active seed picks the instruction
-                flush()
-                out.append(f'    {{ extern uint32_t rando_word(uint64_t); uint32_t rw = rando_word({hx(a)});')
-                first = True
-                for w in RANDO_CODE[a - self.base]:
-                    v = self.lifter.lift(w, a)
-                    out.append(f'    {"if" if first else "else if"} (rw == {hx(w)}) {{ ' + ' '.join(self.render_single(v, a, jump, refs)) + ' }')
-                    first = False
-                out.append('    else { ' + ' '.join(self.render_single(ins, a, jump, refs)) + ' } }')
-                last = 'op'
-                continue
             if a in PATCHES:  # hand-written replacement for one instruction (tools/patches.py)
                 flush()
                 out.append('    ' + PATCHES[a](self, a))
@@ -467,14 +448,6 @@ class Module:
 
 
 from patches import PATCHES
-
-import json as _json
-import os as _os
-_rv = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'rando', 'patch_variants.json')
-RANDO_CODE = {}
-if _os.path.exists(_rv):
-    for _a, _ws in _json.load(open(_rv))['code'].items():
-        RANDO_CODE[int(_a, 16)] = [int(_w, 16) for _w in _ws]
 
 
 def write_if_changed(path, text):

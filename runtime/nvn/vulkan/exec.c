@@ -2564,23 +2564,7 @@ static void draw_(CmdRec *r, bool indexed) {
     Prog *pr = get_program(st.program, &vkey, &fkey);
     if (!pr || atomic_load(&pr->state) != 1) { stat_skipped++; return; }
     g_mirror_w = 0;
-    {   // mirror mode (runtime/hle/mirror.c; as renderer.m): the scene's composite into the window image is mirrored
-        extern bool mirror_draw(bool composite);
-        bool composite = false;
-        if (st.rt.ncolor && st.rt.color[0] && renderer_texture_presented(st.rt.color[0]) && !(st.color_state[0] & 1) &&
-            r->x[2] <= 6 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
-            st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height && pr->fi->ntex) {
-            NvnTexture *t0 = shader_texture_object(1, &pr->fi->tex[0]);
-            composite = t0 && t0->width == st.rt.color[0]->width && t0->height == st.rt.color[0]->height;
-        }
-        if (mirror_draw(composite)) {
-            vkey.flip_x = fkey.flip_x = true;
-            pr = get_program(st.program, &vkey, &fkey);
-            if (!pr || atomic_load(&pr->state) != 1) { stat_skipped++; return; }
-            g_mirror_w = (float)st.rt.color[0]->width;
-        }
-    }
-    {   // fragment-shader hash: interior backdrop detection (widescreen), skip lists, item twinkle (renderer.m)
+    {   // fragment-shader hash: skip lists, logs
         static uint64_t last_fs, last_hash;
         uint64_t fs = st.program->stages[1].code_addr;
         if (fs != last_fs) {
@@ -2597,14 +2581,8 @@ static void draw_(CmdRec *r, bool indexed) {
             }
         }
         for (int i = 0; i < nskip; i++) if (last_hash == skip[i]) { stat_skipped++; return; }
-        extern bool pot_level_active(void);
-        if (last_hash == 0xa2177dbb72197bd9ull && pot_level_active()) { stat_skipped++; return; }
         if (g_debug_frame && getenv("LARECOMP_LOG_FSHASH")) LOG("[fshash] fs=%llx hash %016llx\n", (unsigned long long)fs, (unsigned long long)last_hash);
         g_cur_fs_hash = last_hash;
-        extern void widescreen_backdrop_seen(uint64_t hash);
-        if (last_hash) widescreen_backdrop_seen(last_hash);
-        extern void widescreen_scene_ubo(const float *u, uint64_t size);  // (the camera's view-projection)
-        if (st.ubuf[0][5].addr) widescreen_scene_ubo((const float *)(uintptr_t)st.ubuf[0][5].addr, st.ubuf[0][5].size);
     }
     if (g_debug_frame) debug_draw(pr, r, indexed);
     if (ct_on()) ct_draw(pr, "draw");
@@ -2756,40 +2734,17 @@ static void draw_(CmdRec *r, bool indexed) {
     float *vp = st.viewport[0];
     float zn = st.depth_range[0][0], zf = st.depth_range[0][1];
     vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
-    {   // the Items page's cursor brackets while the cursor is on the companion card (runtime/hle/pets.c)
-        extern bool pets_hide_item_cursor(void);
-        extern bool texpatch_is_item_cursor(int id);
-        if (pets_hide_item_cursor())
-            for (int i = 0; i < pr->fi->ntex; i++) {
-                NvnTexture *t = shader_texture_object(1, &pr->fi->tex[i]);
-                const TexBackend *b = t ? (const TexBackend *)t->backend : NULL;
-                if (b && b->tp > 0 && texpatch_is_item_cursor(b->tp - 1)) { stat_skipped++; return; }
-            }
-    }
     float tint[8] = {0};
-    if (pr->fi->uses_tint) {
-        extern bool pot_tint(const float *m, float tint[8], uint64_t mesh);
-        extern bool pot_glow_active(void);
-        if (st.ubuf[0][2].addr && st.ubuf[0][2].size >= 48 && pot_glow_active())
-            pot_tint((const float *)(uintptr_t)st.ubuf[0][2].addr, tint, st.vbuf[0].addr);
-        // the gold Escape Bottle (runtime/hle/escape.c): draws sampling the bottle's item icon / model map
-        // and the HUD hearts (heart colour, Cosmetics tab)
-        extern int texpatch_bottle_kind(int id);
+    if (pr->fi->uses_tint) {  // the HUD hearts' colour (Cosmetics tab)
         extern int texpatch_heart_kind(int id);
         extern void texpatch_heart_tint(int kind, float tint[8]);
-        int bottle = 0, heart = 0;
+        int heart = 0;
         for (int i = 0; i < pr->fi->ntex; i++) {
             NvnTexture *t = shader_texture_object(1, &pr->fi->tex[i]);
             const TexBackend *b = t ? (const TexBackend *)t->backend : NULL;
-            if (b && b->tp > 0 && !bottle) bottle = texpatch_bottle_kind(b->tp - 1);
             if (b && b->tp > 0 && !heart) heart = texpatch_heart_kind(b->tp - 1);
         }
         if (heart) texpatch_heart_tint(heart, tint);
-        if (bottle) {
-            extern void escape_bottle_tint(int kind, const float *ui, uint32_t ui_size, float tint[8]);
-            int u = bottle == 3 ? 3 : 0;  // (the fairy model: its bone matrices, for where it stands - souls.c)
-            escape_bottle_tint(bottle, (const float *)(uintptr_t)st.ubuf[0][u].addr, (uint32_t)st.ubuf[0][u].size, tint);
-        }
     }
     // fragment textures are bound before deciding the viewport (tex_sc / tex_wh), rscale depends on the decision:
     // build the vertex set now and the fragment set after the decision (stage_set fills tex_sc for stage 1).
@@ -2835,16 +2790,13 @@ static void draw_(CmdRec *r, bool indexed) {
             vp_oy = (ph - st.rt.color[0]->height * u) * 0.5f;
         }
     }
-    {   // camera-attached effects sized for 16:9 are widened with the view (runtime/hle/widescreen.c)
-        extern float widescreen_effect_stretch(uint64_t fs_hash);
-        float k = widescreen_effect_stretch(g_cur_fs_hash);
+    {
         float vx = vp[0] * vp_sx + vp_ox, vw = vp[2] * vp_sx;
-        if (k > 1.0f) { vx -= vw * (k - 1) / 2; vw *= k; }
         set_viewport(vx, vp[1] * vp_sy + vp_oy, vw, vp[3] * vp_sy, zn, zf);
         if (g_debug_frame) {
             VkRect2D sr = scissor_rect();
-            LOG("[draw]   vp %.2f %.2f %.2f %.2f (stretch %.3f, fs hash %016llx) scissor %d %d %u %u | guest sc %d %d %d %d | pass %ux%u s %.4f %.4f\n",
-                vx, vp[1] * vp_sy + vp_oy, vw, vp[3] * vp_sy, k, (unsigned long long)g_cur_fs_hash, sr.offset.x, sr.offset.y,
+            LOG("[draw]   vp %.2f %.2f %.2f %.2f (fs hash %016llx) scissor %d %d %u %u | guest sc %d %d %d %d | pass %ux%u s %.4f %.4f\n",
+                vx, vp[1] * vp_sy + vp_oy, vw, vp[3] * vp_sy, (unsigned long long)g_cur_fs_hash, sr.offset.x, sr.offset.y,
                 sr.extent.width, sr.extent.height, st.scissor[0][0], st.scissor[0][1], st.scissor[0][2], st.scissor[0][3], pass_w, pass_h,
                 vp_sx, vp_sy);
         }
@@ -2959,40 +2911,8 @@ static void draw_(CmdRec *r, bool indexed) {
 
     if (prof) prof_vtx += SDL_GetTicksNS() - prof_t2_;
     // ---- draw
-    // Instanced draws with item spots among their instances (bushsanity: bushes are drawn in batches, each instance's
-    // model matrix in vertex storage buffer 0, indexed by instance id): drawn as runs of instances, gold runs tinted
-    // (as renderer.m; gl_InstanceIndex includes the base instance, so a run [b + k, b + k + n) draws exactly those).
-    enum { MAX_RUNS = 64 };
-    uint32_t run_at[MAX_RUNS], run_n[MAX_RUNS];
-    bool run_gold[MAX_RUNS];
-    int nruns = 0;
-    if (pr->fi->uses_tint && inst > 1 && st.sbuf[0][0].addr) {
-        extern bool pot_glow_active(void);
-        extern bool pot_instance_gold(const float *m);
-        uint64_t recs = st.sbuf[0][0].size / 64;
-        if (pot_glow_active() && (uint64_t)base_inst + inst <= recs) {
-            const float *m = (const float *)(uintptr_t)st.sbuf[0][0].addr;
-            for (uint32_t i = 0; i < inst; i++) {
-                bool g = pot_instance_gold(m + (size_t)(base_inst + i) * 16);
-                if (nruns && run_gold[nruns - 1] == g) { run_n[nruns - 1]++; continue; }
-                if (nruns == MAX_RUNS) { nruns = 0; break; }  // (too fragmented: draw as is)
-                run_at[nruns] = i; run_n[nruns] = 1; run_gold[nruns] = g; nruns++;
-            }
-            if (nruns == 1 && !run_gold[0]) nruns = 0;
-        }
-    }
-    if (!nruns) { run_at[0] = 0; run_n[0] = inst; nruns = 1; run_gold[0] = false; }
-    for (int ri = 0; ri < nruns; ri++) {
-        if (nruns > 1 || run_gold[0]) {  // this run's tint: a fragment set of its own
-            float rtint[8] = {0};
-            extern void pot_gold_tint(float tint[8]);
-            if (run_gold[ri]) pot_gold_tint(rtint);
-            VkDescriptorSet rset = stage_set(pr, pr->set_layout[1], 1, 1, pr->fi, rs0, rtint, 0, 0, 0, fii);
-            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pr->layout, 1, 1, &rset, 0, NULL);
-        }
-        if (!use_index) vkCmdDraw(cb, count, run_n[ri], first, base_inst + run_at[ri]);
-        else vkCmdDrawIndexed(cb, icount, run_n[ri], 0, base_vertex, base_inst + run_at[ri]);
-    }
+    if (!use_index) vkCmdDraw(cb, count, inst, first, base_inst);
+    else vkCmdDrawIndexed(cb, icount, inst, 0, base_vertex, base_inst);
     stat_draws++;
     cum_draws++;
     if (g_gpuprof_frame && gp_n) {

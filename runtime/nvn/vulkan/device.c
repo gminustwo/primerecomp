@@ -491,20 +491,14 @@ void backend_present(NvnTexture *t) {
     }
     if (have) {
         double dw = g_vk.sc_extent.width, dh = g_vk.sc_extent.height;
-        extern void widescreen_frame_end(uint64_t frame);
-        widescreen_frame_end(total_frames);
-        extern void widescreen_set_factor(float f);
-        extern bool widescreen_allowed(void);
+        extern bool widescreen_allowed(void);  // runtime/hle/game.c
         // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Internal resolution");
         // no GPU timer here (-1): dynamic resolution goes by the frame time
         OutScale os;
         output_scale(dw, dh, widescreen_allowed(), SDL_GetTicksNS() / 1e9, -1, &os);
         double sx = os.sx, sy = os.sy, vx = os.vx, vy = os.vy, vw = os.vw, vh = os.vh, shape = os.shape;
-        // interiors / dungeons: their 16:9 centre, or the part inside a room wider than one screen
-        extern void widescreen_present_crop(uint64_t, double, float *, double *, double *, double *, double *);
-        float crop[4];  // uv origin and size
-        widescreen_present_crop(total_frames, shape, crop, &vx, &vy, &vw, &vh);
-        widescreen_set_factor((float)shape);
+        float crop[4] = {0, 0, 1, 1};  // uv origin and size (the whole image)
+        (void)shape;
         renderer_set_scale((float)sx, (float)sy);
         VkCommandBuffer cb = vk_cmd();
         float pv[8] = {renderer_origin_lower_left() ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
@@ -538,12 +532,8 @@ void backend_present(NvnTexture *t) {
     if (slow_ms > 0 && total_frames > 2600 && (!slow_until || (long)total_frames < slow_until)) SDL_Delay((Uint32)slow_ms);
     extern void fnprof_frame(uint64_t frame);
     fnprof_frame(total_frames);
-    extern void warp_frame(uint64_t frame);
-    warp_frame(total_frames);
     extern void reboot_test_frame(uint64_t frame);  // runtime/main.c (LARECOMP_REBOOT_AT)
     reboot_test_frame(total_frames);
-    extern void save_editor_frame(uint64_t frame);
-    save_editor_frame(total_frames);
     extern void vk_level_change_check(void);
     vk_level_change_check();
     static long shot_every = -1;
