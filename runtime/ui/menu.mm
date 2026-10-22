@@ -27,6 +27,7 @@ extern "C" {
 #include "../settings.h"
 #include "menu.h"
 void input_reset(void);
+bool input_gamepad_connected(void);
 void controls_bindings_draw(float scale);  // controls_ui.mm
 #include "../input_bind.h"
 #include "../paths.h"
@@ -157,9 +158,14 @@ bool menu_handle_event(const SDL_Event *e) {
     bool typing = g_kbd.load() == 1 || (g_open.load() && g_text_busy.load());
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN:
+        // Esc opens the menu only without a controller: Steam's desktop mode turns controller buttons into keys
+        // (a Steam Controller's B is Esc), which opened the menu in the middle of play
         if (!e->key.repeat && (e->key.scancode == SDL_SCANCODE_F1 ||
-                               (e->key.scancode == SDL_SCANCODE_ESCAPE && !g_open.load()))) {
-            if (!typing) set_open(!g_open.load());  // (Esc with the menu open goes to ImGui below: it cancels a field)
+                               (e->key.scancode == SDL_SCANCODE_ESCAPE && !g_open.load() && !input_gamepad_connected()))) {
+            if (!typing) {
+                LOG("[menu] %s by key %s\n", g_open.load() ? "closed" : "opened", SDL_GetScancodeName(e->key.scancode));
+                set_open(!g_open.load());  // (Esc with the menu open goes to ImGui below: it cancels a field)
+            }
             return true;
         }
         if (!e->key.repeat && (e->key.scancode == SDL_SCANCODE_F11 ||
@@ -193,6 +199,8 @@ bool menu_handle_event(const SDL_Event *e) {
         if (e->gbutton.button == SDL_GAMEPAD_BUTTON_BACK) back_down = down;
         if (e->gbutton.button == SDL_GAMEPAD_BUTTON_START) start_down = down;
         if (down && !typing && ((back_down && start_down) || e->gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE)) {
+            LOG("[menu] %s by controller %s\n", g_open.load() ? "closed" : "opened",
+                e->gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE ? "Guide" : "Minus+Plus");
             set_open(!g_open.load());
             return true;
         }

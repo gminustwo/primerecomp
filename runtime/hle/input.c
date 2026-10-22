@@ -70,6 +70,10 @@ static void recompute_pad(void) {
 }
 
 // Forget held keys (the menu took focus); the gamepad is re-read on its next event.
+// A controller is connected (runtime/ui/menu.mm: Esc doesn't open the menu then - a Steam Controller in Steam's
+// desktop mode sends Esc for its B button, along with the button itself)
+bool input_gamepad_connected(void) { return pad != NULL; }
+
 void input_reset(void) {
     memset(keys_down, 0, sizeof keys_down);
     recompute_keyboard();
