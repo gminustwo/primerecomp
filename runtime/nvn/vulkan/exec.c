@@ -17,6 +17,11 @@
 #include "../../settings.h"
 
 static uint64_t stat_draws, stat_skipped, stat_passes, stat_dispatches, stat_wait_ns, stat_flushes, stat_feedback_copies;
+// skipped draws / dispatches by reason (the stats line): compute program not ready, no program, graphics program not
+// ready (translation failed or still compiling), topology, pipeline not ready, skip lists
+enum { SKIP_CS, SKIP_NOPROG, SKIP_PROG, SKIP_TOPO, SKIP_PIPE, SKIP_LIST, SKIP_N };
+static uint64_t stat_skip[SKIP_N];
+#define SKIP(r) do { stat_skipped++; stat_skip[r]++; return; } while (0)
 static uint64_t stat_upload_bytes;
 // LARECOMP_VK_PROF=1: render-thread time per category in the fps log (exec = whole command lists, draw = draw(),
 // sets = descriptor sets incl. cbuf copies, vtx = index scan + vertex copies, submit = vkQueueSubmit2)
@@ -712,8 +717,11 @@ const char *renderer_stats(void) {
         LOG("\n");
     }
     snprintf(stats_text, sizeof stats_text,
-             "%llu draws, %llu skipped, %llu passes, %llu dispatches, %llu flushes, wait %.0fms, compile %d, fbcopy %llu, upload %.1fMB",
-             (unsigned long long)stat_draws, (unsigned long long)stat_skipped, (unsigned long long)stat_passes,
+             "%llu draws, %llu skipped [cs %llu noprog %llu prog %llu topo %llu pipe %llu list %llu], %llu passes, %llu dispatches, %llu flushes, wait %.0fms, compile %d, fbcopy %llu, upload %.1fMB",
+             (unsigned long long)stat_draws, (unsigned long long)stat_skipped, (unsigned long long)stat_skip[SKIP_CS],
+             (unsigned long long)stat_skip[SKIP_NOPROG], (unsigned long long)stat_skip[SKIP_PROG],
+             (unsigned long long)stat_skip[SKIP_TOPO], (unsigned long long)stat_skip[SKIP_PIPE],
+             (unsigned long long)stat_skip[SKIP_LIST], (unsigned long long)stat_passes,
              (unsigned long long)stat_dispatches, (unsigned long long)stat_flushes, (double)stat_wait_ns / 1e6,
              atomic_exchange(&stat_compiles, 0), (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0);
     stat_feedback_copies = stat_upload_bytes = 0;
@@ -767,6 +775,7 @@ const char *renderer_stats(void) {
         prof_exec = prof_draw = prof_sets = prof_vtx = prof_submit = prof_pre = prof_key = prof_dyn = prof_tex = prof_up = prof_gpu = 0;
     }
     stat_draws = stat_skipped = stat_passes = stat_dispatches = stat_flushes = stat_wait_ns = 0;
+    memset(stat_skip, 0, sizeof stat_skip);
     return stats_text;
 }
 
@@ -1199,6 +1208,18 @@ static void compile_program(void *arg) {
     atomic_store(&p->state, p->vs && p->fs ? 1 : 2);
 }
 
+// (debug) LARECOMP_DUMP_FAILED_SHADERS: the code of a stage the translator rejects -> build/shaders/<addr>_s<stage>.bin
+static void dump_failed_shader(uint64_t code, uint64_t max, int stage) {
+    if (!getenv("LARECOMP_DUMP_FAILED_SHADERS") || !code) return;
+    mkdir("build/shaders", 0755);
+    char path[128];
+    snprintf(path, sizeof path, "build/shaders/%llx_s%d.bin", (unsigned long long)code, stage);
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    fwrite((const void *)(uintptr_t)code, 1, (size_t)(max && max < 0x10000 ? max : 0x4000), f);
+    fclose(f);
+}
+
 static void translate_program(void *arg) {
     Prog *p = arg;
     maxwell_gmem_base = HEAP_BASE;
@@ -1212,11 +1233,13 @@ static void translate_program(void *arg) {
     pthread_mutex_unlock(&translate_lock);
     if (!p->vi->msl) {
         LOG("[shader] VS translate failed: %s (code %llx)\n", p->vi->error, (unsigned long long)p->code[0]);
+        dump_failed_shader(p->code[0], p->cmax[0], 0);
         atomic_store(&p->state, 2);
         return;
     }
     if (!p->fi->msl) {
-        LOG("[shader] FS translate failed: %s\n", p->fi->error);
+        LOG("[shader] FS translate failed: %s (code %llx)\n", p->fi->error, (unsigned long long)p->code[1]);
+        dump_failed_shader(p->code[1], p->cmax[1], 1);
         atomic_store(&p->state, 2);
         return;
     }
@@ -1530,7 +1553,7 @@ static void build_pipeline(void *arg) {
 static NvnTexture *feedback_tex[4];
 static VkImageView feedback_view[4];
 static int nfeedback;
-static uint64_t g_cur_fs_hash;
+static uint64_t g_cur_fs_hash, g_cur_fs_addr;  // (the fragment shader of the current draw: hash of its code, code address)
 static NvnTexture *snap_tex[8];
 static bool snap_ok[8];
 static const char *snap_why[8];
@@ -2468,11 +2491,11 @@ static void dispatch_compute(uint32_t gx, uint32_t gy, uint32_t gz) {
     snap_reason = "compute"; snapshots_invalidate(NULL);
     if (!st.program || !gx || !gy || !gz) return;
     CsProg *cp = compute_program(st.program);
-    if (!cp || atomic_load(&cp->p.state) != 1) { stat_skipped++; return; }
+    if (!cp || atomic_load(&cp->p.state) != 1) SKIP(SKIP_CS);
     {   // LARECOMP_SKIP_CS=<code address hex> (debug): skip that compute shader's dispatches, to see what it does
         static uint64_t skip = ~0ull;
         if (skip == ~0ull) { const char *e = getenv("LARECOMP_SKIP_CS"); skip = e ? strtoull(e, NULL, 16) : 0; }
-        if (skip && st.program->stages[5].code_addr == skip) { stat_skipped++; return; }
+        if (skip && st.program->stages[5].code_addr == skip) SKIP(SKIP_LIST);
     }
     if (cp->si->uses_gmem && getenv("LARECOMP_LOG_CS_SBUF")) {  // (debug) the storage buffers bound to gmem dispatches
         static uint64_t seen_cs[16];
@@ -2554,7 +2577,7 @@ static void draw(CmdRec *r, bool indexed) {
 static uint64_t prof_tp_;
 static void draw_(CmdRec *r, bool indexed) {
     if (prof) prof_tp_ = SDL_GetTicksNS();
-    if (!st.program) { stat_skipped++; return; }
+    if (!st.program) SKIP(SKIP_NOPROG);
     ShaderKey vkey = {0}, fkey = {0};
     vkey.glsl = fkey.glsl = 1;
     vkey.flip_y = fkey.flip_y = nvn_window_origin() == 0;
@@ -2562,7 +2585,7 @@ static void draw_(CmdRec *r, bool indexed) {
     for (int i = 0; i < st.nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(st.attrib[i] & 0xFF);
     for (int i = 0; i < st.rt.ncolor; i++) if (st.rt.color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(st.rt.color[i]->format);
     Prog *pr = get_program(st.program, &vkey, &fkey);
-    if (!pr || atomic_load(&pr->state) != 1) { stat_skipped++; return; }
+    if (!pr || atomic_load(&pr->state) != 1) SKIP(SKIP_PROG);
     g_mirror_w = 0;
     {   // fragment-shader hash: skip lists, logs
         static uint64_t last_fs, last_hash;
@@ -2580,9 +2603,9 @@ static void draw_(CmdRec *r, bool indexed) {
                 while (*p == ',') p++;
             }
         }
-        for (int i = 0; i < nskip; i++) if (last_hash == skip[i]) { stat_skipped++; return; }
+        for (int i = 0; i < nskip; i++) if (last_hash == skip[i]) SKIP(SKIP_LIST);
         if (g_debug_frame && getenv("LARECOMP_LOG_FSHASH")) LOG("[fshash] fs=%llx hash %016llx\n", (unsigned long long)fs, (unsigned long long)last_hash);
-        g_cur_fs_hash = last_hash;
+        g_cur_fs_hash = last_hash, g_cur_fs_addr = fs;
     }
     if (g_debug_frame) debug_draw(pr, r, indexed);
     if (ct_on()) ct_draw(pr, "draw");
@@ -2600,7 +2623,7 @@ static void draw_(CmdRec *r, bool indexed) {
     VkPrimitiveTopology topo;
     uint8_t cls;
     bool native = topology(mode, &topo, &cls);
-    if (!native && mode != 6 && mode != 7 && mode != 9) { stat_skipped++; return; }
+    if (!native && mode != 6 && mode != 7 && mode != 9) SKIP(SKIP_TOPO);
 
     uint64_t prof_tk_ = prof ? SDL_GetTicksNS() : 0;
     if (prof) prof_pre += prof_tk_ - prof_tp_;
@@ -2660,7 +2683,7 @@ static void draw_(CmdRec *r, bool indexed) {
         pipe_tab[pslot].pipe = pp;
         run_job(build_pipeline, pp);
     }
-    if (atomic_load(&pp->state) != 1) { stat_skipped++; return; }
+    if (atomic_load(&pp->state) != 1) SKIP(SKIP_PIPE);
     ss_enabled();
     if (ss_need(SS_PIPE, ss.pipe == pp->pipe)) { ss.pipe = pp->pipe; vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pp->pipe); }
     uint64_t prof_td_ = prof ? SDL_GetTicksNS() : 0;
@@ -2918,7 +2941,7 @@ static void draw_(CmdRec *r, bool indexed) {
     if (g_gpuprof_frame && gp_n) {
         if (!gp_draws[gp_n - 1]) {  // first draw of the row: its fragment shader hash
             size_t l = strlen(gp_label[gp_n - 1]);
-            snprintf(gp_label[gp_n - 1] + l, sizeof gp_label[0] - l, ", first fs %016llx", (unsigned long long)g_cur_fs_hash);
+            snprintf(gp_label[gp_n - 1] + l, sizeof gp_label[0] - l, ", first fs %016llx (code %llx)", (unsigned long long)g_cur_fs_hash, (unsigned long long)g_cur_fs_addr);
         }
         gp_draws[gp_n - 1]++;
     }

@@ -673,6 +673,8 @@ NVN(nvnQueueAcquireTexture) {
 NVN(nvnQueuePresentTexture) {
     NvnWindow *w = HOST(NvnWindow, A(1));
     int i = (int)A(2);
+    extern void game_pace_present(int interval);  // runtime/hle/game.c: the frame's vsync deadline
+    game_pace_present(w->interval);
     if (i >= 0 && i < w->num) backend_present(HOST(NvnTexture, w->textures[i]));
 }
 

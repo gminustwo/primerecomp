@@ -439,6 +439,16 @@ static void tab_display(void) {
         g_want_fullscreen_apply.store(true);
     }
     opt_toggle("Show FPS", &g_settings.show_fps, false, "Shows the frame rate in the top right corner.");
+    {
+        static const char *const rates[] = {"60 (original)", "120", "Uncapped"};
+        static const int values[] = {60, 120, 0};
+        int i = g_settings.frame_rate == 120 ? 1 : g_settings.frame_rate == 0 ? 2 : 0;
+        if (opt_choice("Frame rate", &i, rates, 3, 0,
+                       "Frames per second. 60 is the game's own rate. 120 also runs the game's simulation twice as "
+                       "often, so motion is smoother; game speed stays the same. Uncapped draws as fast as it can "
+                       "with the simulation at 60.", false))
+            g_settings.frame_rate = values[i];
+    }
 
     opt_section("Rendering");
     // display order -> RES_* (the ini / enum order predates the menu order)

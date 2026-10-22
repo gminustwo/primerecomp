@@ -221,9 +221,31 @@ static void icmp_expr(char *out, int op, const char *a, const char *b, bool is_s
 // ------------------------------------------------------------------ attributes
 // Maxwell attribute space: 0x70 position, 0x80 + 16*i generic attribute i, 0x2F8 instance id,
 // 0x2FC vertex id, 0x3FC front facing, 0x6C point size.
+// An attribute whose address is only known at run time (ALD / IPA with an index register, the address from AL2P):
+// each possible address of the stage's generic attributes is a case - the vertex inputs (16), or the varyings the
+// vertex shader provides - loaded as a fixed address would be.
+static bool attr_candidate(Ctx *c, uint32_t a) {
+    if (c->stage == STAGE_VERTEX) return a >= 0x80 && a < 0x180;
+    if (c->stage != STAGE_FRAGMENT || a < 0x80 || a >= 0x280) return false;
+    int at = (a - 0x80) >> 4;
+    return !(c->key && (c->key->vs_out_mask || c->key->glsl)) || (c->key->vs_out_mask & (1u << at));
+}
+
 static void attr_load(Ctx *c, int dst, uint32_t addr, const char *idx) {
     char e[256];
-    if (idx) { fail(c, "indexed attribute load"); return; }
+    if (idx) {
+        if (dst == RZ) return;
+        sp(&c->body, "    { uint aidx_ = %s + %uu; switch (aidx_) {\n", idx, addr);
+        for (uint32_t a = 0x80; a < 0x280; a += 4) {
+            if (!attr_candidate(c, a)) continue;
+            sp(&c->body, "    case %uu:\n", a);
+            attr_load(c, dst, a, NULL);
+            sp(&c->body, "    break;\n");
+        }
+        sp(&c->body, "    default: r%d = 0u; break; } }\n", dst);
+        c->reg_used[dst] = 1;
+        return;
+    }
     if (c->stage == STAGE_VERTEX) {
         if (addr >= 0x80 && addr < 0x280) {
             int a = (addr - 0x80) >> 4, comp = (addr >> 2) & 3;
@@ -669,6 +691,38 @@ static bool glsl_texs(Ctx *c, uint64_t w, bool fetch, int *slot_out, char *call,
     return true;
 }
 
+// TLD4S: gather (one channel of the four texels around a 2D coordinate). Registers as TEXS: x, y -> d0, d0 + 1 and
+// z, w -> d1, d1 + 1 (or half pairs with .F16). Coordinates (a, b), or (a, a + 1) when b holds the depth reference
+// (.DC) / a register offset (.AOFFI: 6-bit signed x and y, then the reference in b + 1).
+static void emit_tld4s(Ctx *c, uint64_t w) {
+    int d0 = (int)bits(w, 0, 8), d1 = (int)bits(w, 28, 8), a = (int)bits(w, 8, 8), b = (int)bits(w, 20, 8);
+    uint32_t index = (uint32_t)bits(w, 36, 13);
+    bool dc = bits(w, 50, 1), aoffi = bits(w, 51, 1), f16 = bits(w, 55, 1);
+    int comp = (int)bits(w, 52, 2);
+    char ra[16], ra1[16], rb[16], rb1[16];
+    const char *A = reg(c, a, ra), *A1 = reg(c, a == RZ ? RZ : a + 1, ra1), *Bv = reg(c, b, rb),
+               *B1 = reg(c, b == RZ ? RZ : b + 1, rb1);
+    const char *y = dc || aoffi ? A1 : Bv, *off = aoffi ? Bv : NULL, *dref = dc ? (aoffi ? B1 : Bv) : NULL;
+    int slot = tex_slot(c, index, TEXTYPE_2D, dc, false);
+    char call[1024], o[200] = "";
+    if (c->glsl) {
+        if (off) snprintf(o, sizeof o, ", ivec2(int(%s << 26) >> 26, int(%s << 18) >> 26)", off, off);
+        if (dref) snprintf(call, sizeof call, "textureGather%s(t%d, vec2(as_type<float>(%s), as_type<float>(%s)), as_type<float>(%s)%s)",
+                           off ? "Offset" : "", slot, A, y, dref, o);
+        else snprintf(call, sizeof call, "textureGather%s(t%d, vec2(as_type<float>(%s), as_type<float>(%s))%s, %d)",
+                      off ? "Offset" : "", slot, A, y, o, comp);
+    } else {
+        if (off) snprintf(o, sizeof o, "int2(int(%s << 26) >> 26, int(%s << 18) >> 26)", off, off);
+        else strcpy(o, "int2(0)");
+        static const char *const comps[] = {"x", "y", "z", "w"};
+        if (dref) snprintf(call, sizeof call, "t%d.gather_compare(s%d, float2(as_type<float>(%s), as_type<float>(%s)), as_type<float>(%s), %s)",
+                           slot, slot, A, y, dref, o);
+        else snprintf(call, sizeof call, "t%d.gather(s%d, float2(as_type<float>(%s), as_type<float>(%s)), %s, component::%s)",
+                      slot, slot, A, y, o, comps[comp]);
+    }
+    write_tex_result(c, slot, call, 0xF, d0, d1, true, f16);
+}
+
 static void emit_texs(Ctx *c, uint64_t w, bool fetch) {
     int d0 = (int)bits(w, 0, 8), d1 = (int)bits(w, 28, 8), a = (int)bits(w, 8, 8), b = (int)bits(w, 20, 8);
     uint32_t index = (uint32_t)bits(w, 36, 13);
@@ -875,22 +929,28 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         bool idx = bits(w, 38, 1);
         uint32_t addr = (uint32_t)bits(w, 28, 10);
         int mode = (int)bits(w, 54, 2);  // 0 pass, 1 multiply, 2 constant, 3 sc
-        if (idx) { fail(c, "ipa idx"); }
-        if (addr >= 0x80 && addr < 0x280) {
-            int at = (addr - 0x80) >> 4;
-            if (mode == 2) c->flat_mask |= 1u << at;
-        }
+        char ib[16];
+        const char *iv = idx ? reg(c, (int)bits(w, 8, 8), ib) : NULL;  // IPA.IDX: the address + an index register
+        for (uint32_t aa = idx ? 0x80 : addr; aa < (idx ? 0x280u : addr + 1); aa += 4)
+            if (aa >= 0x80 && aa < 0x280 && mode == 2 && (!idx || attr_candidate(c, aa)))
+                c->flat_mask |= 1u << ((aa - 0x80) >> 4);
         c->ipa_mode = mode;
         c->ipa_mul = (int)bits(w, 20, 8);
-        attr_load(c, d, addr, NULL);
+        attr_load(c, d, addr, iv);
         c->ipa_mode = -1;
         if (bits(w, 51, 1) && d != RZ) sp(&c->body, "    r%d = as_type<uint>(saturate(as_type<float>(r%d)));\n", d, d);
     } else if (OPM(0xefd8000000000000ull, 0xfff8000000000000ull)) {  // LD attribute
         int n = 1 + (int)bits(w, 47, 2);
         uint32_t addr = (uint32_t)bits(w, 20, 10);
         int ia = (int)bits(w, 8, 8);
-        if (ia != RZ) { fail(c, "indexed ld a[]"); }
-        for (int i = 0; i < n; i++) attr_load(c, d + i, addr + 4 * i, NULL);
+        if (ia != RZ) {  // a[reg + imm]: the index read once (a destination may be the index register)
+            char ib[16];
+            sp(&c->body, "    { uint ald_idx_ = %s;\n", reg(c, ia, ib));
+            for (int i = 0; i < n; i++) attr_load(c, d + i, addr + 4 * i, "ald_idx_");
+            sp(&c->body, "    }\n");
+        } else {
+            for (int i = 0; i < n; i++) attr_load(c, d + i, addr + 4 * i, NULL);
+        }
     } else if (OPM(0xeff0000000000000ull, 0xfff8000000000000ull)) {  // ST attribute
         int n = 1 + (int)bits(w, 47, 2);
         uint32_t addr = (uint32_t)bits(w, 20, 10);
@@ -909,6 +969,8 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
             if (dyn) c->info->cbuf_size[idx] = 0x10000;
             set_reg(c, d + i, cb);
         }
+    } else if (OPM(0xdf00000000000000ull, 0xff40000000000000ull)) {  // TLD4S
+        emit_tld4s(c, w);
     } else if (OPM(0xd000000000000000ull, 0xf600000000000000ull)) {  // TEXS
         emit_texs(c, w, false);
     } else if (OPM(0xd200000000000000ull, 0xf600000000000000ull)) {  // TLDS
@@ -1243,8 +1305,10 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
                OPM(0x3800000000000000ull, 0xfef8000000000000ull)) {  // BFE
         const char *bv = B(false);
         bool sgn = bits(w, 48, 1);
-        if (bits(w, 40, 1)) fail(c, "bfe brev");
-        sprintf(t, sgn ? "bfe_s(%s, %s)" : "bfe_u(%s, %s)", R(a), bv);
+        char src[96];
+        if (bits(w, 40, 1)) snprintf(src, sizeof src, "brev(%s)", R(a));  // .BREV: the source bit-reversed first
+        else snprintf(src, sizeof src, "%s", R(a));
+        sprintf(t, sgn ? "bfe_s(%s, %s)" : "bfe_u(%s, %s)", src, bv);
         set_reg(c, d, t);
     } else if (OPM(0x5bf0000000000000ull, 0xfff8000000000000ull) || OPM(0x4bf0000000000000ull, 0xfff8000000000000ull) ||
                OPM(0x36f0000000000000ull, 0xfef8000000000000ull) || OPM(0x53f0000000000000ull, 0xfff8000000000000ull)) {  // BFI
@@ -1328,10 +1392,26 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         case 0x00: set_reg(c, d, "0u"); break;
         default: sprintf(t, "0u /* sr %#x */", sr); set_reg(c, d, t);
         }
+    } else if (OPM(0xefa0000000000000ull, 0xfff8000000000000ull)) {  // AL2P: attribute address = register + offset
+        int64_t off = (int64_t)bits(w, 20, 11);
+        if (off & 0x400) off -= 0x800;
+        sprintf(t, "(%s + %uu)", R(a), (uint32_t)off);
+        set_reg(c, d, t);
+    } else if (OPM(0xefe8000000000000ull, 0xfff8000000000000ull)) {  // PIXLD: per-pixel sample information
+        // the render targets here are single-sampled: one sample (index 0, no offset), fully covered
+        int mode = (int)bits(w, 31, 3);  // 0 COUNT, 1 COVMASK, 2 COVERAGE, 3 OFFSET, 4 CENTROID_OFFSET, 5 MY_INDEX, 6 INNER_COVERAGE
+        set_reg(c, d, mode == 0 || mode == 1 || mode == 2 || mode == 6 ? "1u" : "0u");
     } else if (OPM(0x5c30000000000000ull, 0xfff8000000000000ull) || OPM(0x4c30000000000000ull, 0xfff8000000000000ull) ||
                OPM(0x3830000000000000ull, 0xfef8000000000000ull)) {  // FLO
-        const char *bv = B(false);
-        sprintf(t, bits(w, 48, 1) ? "(int(%s) < 0 ? (31u - clz(~%s)) : (31u - clz(%s)))" : "(31u - clz(%s))", bv, bv, bv);
+        // index of the most significant one (signed: of the first bit differing from the sign), ~0 if none.
+        // .INV (bit 40): of the inverted source. .SH (bit 41): as a shift amount, 31 - index (~0 stays) - with
+        // BFE.BREV first that is the index of the lowest one (the "for each set bit" loops)
+        char src[160], msb[600];
+        snprintf(src, sizeof src, bits(w, 40, 1) ? "(~%s)" : "%s", B(false));
+        snprintf(msb, sizeof msb, bits(w, 48, 1) ? "(int(%s) < 0 ? (31u - clz(~%s)) : (31u - clz(%s)))" : "(31u - clz(%s))",
+                 src, src, src);
+        if (bits(w, 41, 1)) snprintf(t, 1600, "(%s == 0xFFFFFFFFu ? 0xFFFFFFFFu : (%s ^ 31u))", msb, msb);
+        else snprintf(t, 1600, "%s", msb);
         set_reg(c, d, t);
     } else if (OPM(0x5c08000000000000ull, 0xfff8000000000000ull) || OPM(0x4c08000000000000ull, 0xfff8000000000000ull) ||
                OPM(0x3808000000000000ull, 0xfef8000000000000ull)) {  // POPC
@@ -1750,6 +1830,7 @@ static const char glsl_prelude[] =
     "uint popcount(uint v) { return uint(bitCount(v)); }\n"
     "uint mulhi(uint a, uint b) { uint hi, lo; umulExtended(a, b, hi, lo); return hi; }\n"
     "int mulhi(int a, int b) { int hi, lo; imulExtended(a, b, hi, lo); return hi; }\n"
+    "uint brev(uint v) { return bitfieldReverse(v); }\n"
     "uint bfe_u(uint v, uint ctl) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u) return 0u; if (pos >= 32u) return 0u; return bitfieldExtract(v, int(pos), int(min(len, 32u - pos))); }\n"
     "uint bfe_s(uint v, uint ctl) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u) return 0u; if (pos >= 32u) return (int(v) < 0) ? 0xFFFFFFFFu : 0u; return uint(bitfieldExtract(int(v), int(pos), int(min(len, 32u - pos)))); }\n"
     "uint bfi(uint ins, uint ctl, uint base) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u || pos >= 32u) return base; return bitfieldInsert(base, ins, int(pos), int(min(len, 32u - pos))); }\n"
@@ -2005,6 +2086,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     Str s = {0};
     sp(&s, "#include <metal_stdlib>\nusing namespace metal;\n");
     sp(&s, "static inline uint cbr(constant uint4 *cb, uint off) { return cb[off >> 4][(off >> 2) & 3]; }\n");
+    sp(&s, "static inline uint brev(uint v) { return reverse_bits(v); }\n");
     sp(&s, "static inline uint bfe_u(uint v, uint ctl) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u) return 0u; if (pos >= 32u) return 0u; return extract_bits(v, pos, min(len, 32u - pos)); }\n");
     sp(&s, "static inline uint bfe_s(uint v, uint ctl) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u) return 0u; if (pos >= 32u) return (int(v) < 0) ? 0xFFFFFFFFu : 0u; return uint(extract_bits(int(v), pos, min(len, 32u - pos))); }\n");
     sp(&s, "static inline uint bfi(uint ins, uint ctl, uint base) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u || pos >= 32u) return base; return insert_bits(base, ins, pos, min(len, 32u - pos)); }\n");
