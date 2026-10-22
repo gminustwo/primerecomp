@@ -66,7 +66,10 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 6. Uploads: 50-170 MB every 2 s in gameplay, 500 MB at the title (the video?). Frame rate holds; not looked at.
 7. Navigating the frigate by script: the door after the landing site is opened by locking on (ZL) to its four
    red lights and firing (ZR); R fires a missile. A 12030 RSTICK_LEFT:5 turn, then ZL/ZR cycles, opens it by
-   frame ~12660 (see the door4 recipe in the 2026-10-22 session).
+   frame ~12660. Appended to the intro replay's LARECOMP_INPUT (PowerShell):
+   `$c = @(); foreach ($b in 12100,12180,12260,12340,12500,12580,12660,12740) { $c += "${b}:ZL:60";
+   foreach ($o in 15,27,39,51) { $c += "$($b + $o):ZR:5" } }; $c += "12430:RSTICK_LEFT:8"`, then walk with
+   `12850:STICK_UP:<frames>`.
 8. Suspects for other black objects: more image stores through the driver handle table, other
    rasterizer-discard producers, `nvnCommandBufferDiscardColor` treated as a clear to 0 (an LA assumption,
    `cmdbuf.c`).
