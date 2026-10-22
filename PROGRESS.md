@@ -136,3 +136,12 @@ Debug recipe: `LARECOMP_DEBUG_FRAME=<n>` (pass images in build/build/, draw log)
   `LARECOMP_SAVE_DIR` (a scratch copy). The slot's area name reads "<ERROR>" for that save, maybe because it
   wasn't made in a save room - to check against a save station save.
 - Menu: Esc no longer opens it while a controller is connected (Steam desktop mode sends Esc for B).
+
+## 2026-10-22: space backdrop, door shields
+
+- Stars and Tallon IV in space: the volumetric fog writer's last slice was never stored (the translator ignored
+  condition-code tests on EXIT / BRA and ISET's .CC), and the sky samples that slice.
+- Blue door shields: the refraction mip chain is rendered through one texture object per level and sampled
+  through another; those objects now share one image (GPU-written, uncompressed textures only: sharing CPU
+  textures broke the next room).
+- Test runs from PowerShell: `tools/run_game.ps1` (Git Bash launches lost the `LARECOMP_*` variables).

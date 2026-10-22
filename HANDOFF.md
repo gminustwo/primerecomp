@@ -1,4 +1,4 @@
-# Handoff: 2026-10-21 (night)
+# Handoff: 2026-10-22
 
 Where the work stopped, and what to do next. Read with PROGRESS.md (history) and the commit log.
 
@@ -8,35 +8,44 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   autosave was forced with `LARECOMP_AUTOSAVE_AT`, then reloaded after a restart.
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it contains the game library), started
   with `Play Metroid Prime Remastered.bat`. Their notes go in `ISSUES.md` there and their log is
-  `lasrecomp.log`. That folder holds build 32af903, and the work below is **not** in it yet.
+  `lasrecomp.log`. It holds build c923318 (2026-10-22): everything below is in it. No issues written there yet.
 - **User-reported open bugs:**
-  - The star backdrop and Tallon IV are missing in space.
-  - Samus renders wrong.
-  - Many objects are black.
+  - ~~The star backdrop and Tallon IV are missing in space.~~ Fixed (CC tests, below).
+  - Samus renders wrong. Not reproduced or identified yet: ask which view (first-person arm cannon, the
+    third-person model in the intro).
+  - Many objects are black. The blue door shields (flat cyan) are fixed; no other black objects found in the
+    first two rooms.
 
-## In progress: black space background (missing stars and planet)
+## Fixed on 2026-10-22
 
-The intro, debug frame 9000 (replay recipe below):
+- **Space backdrop (stars, Tallon IV):** the fog volume's writer ends with `ISET.GE RZ.CC` then `@!P0 EXIT.NEU`.
+  The translator dropped ISET's `.CC` and ignored the CC test on EXIT and BRA, so the writer always exited before
+  its last slice (63), which the sky samples. Now: `cc_cond` (shared with CSETP), CC tests on EXIT / BRA, `.CC` on
+  ISET, and on LOP / LOP3 / SHL / SHR / IMNMX / BFE / F2I / I2F / FSET / FADD / FMUL / FFMA through `set_reg`
+  (`Ctx.cc_write`: not exercised by any shader seen so far).
+- **Blue door shields (flat cyan):** MPR renders its refraction mip chain one level per texture object (eleven
+  objects over one allocation) and the shield samples it through a twelfth. Each object had its own VkImage.
+  Now textures with the same address and shape share one refcounted TexBackend (textures.c `share_find`), but only
+  uncompressed formats, and never joining an image that holds CPU-uploaded contents. Sharing everything broke
+  the room after the first door (stale and half-updated textures). `LARECOMP_NO_TEX_SHARE=1` turns it off.
+- Debug frame: texture and attachment lines show the guest address (`@addr`).
 
-1. Pass 3 draws the scene, planet and stars included, into the HDR target. Pass 5 is fine too.
-2. Pass 6 is the volumetric fog composite: fs `729bffd400`, a full-screen quad.
-   - It blends `dst * src.a + src`.
-   - It samples scene depth and the fog volume, a 100x57x64 RGBA16F 3D texture.
-3. The fog volume is now written by the game's rasterizer-discard draw: 5700 points, vs `729bfea100`, `imageStore`
-   into an image3D.
-4. Readback of the volume (`LARECOMP_DUMP_3D=1` in the debug frame, `build/build/gpu3d_100x57x64_f29.bin`):
-   - Slices 0-62 are correct: alpha (transmittance) about 0.98-0.9995, no NaN.
-   - **Slice 63 is all zeros.** Sky pixels (far depth) sample the last slice, so the background is multiplied by 0.
-     **This is the remaining bug.**
-5. **Next step:** find out why slice 63 is never written.
-   - Read the writer `build/build/glsl/729bfea100_vs.glsl` (run with `LARECOMP_SAVE_MSL=1`). Look at its slice
-     loop: the bound, an off-by-one in a translated branch or predicate, or a store whose z-coordinate is computed
-     as 64 (out of range, so dropped).
-   - Or the composite clamps to slice 63 where the hardware would use the edge differently: compare its
-     coordinate math in `729bffd400`.
-   - A quick test: write slice 62's data into 63 as well (a hack), to confirm the background comes back.
+## Open
 
-## Fixed this session (all uncommitted until the commit that adds this file)
+1. **Intermittent hang:** once in about eight intro replays, the game froze just after frame 9097 (no log
+   output, process alive). Not reproduced with `LARECOMP_HANG_DUMP=30` set. Next time: run with
+   `LARECOMP_HANG_DUMP=30` and look at the guest threads' waits.
+2. **The arm cannon is teal-green.** Its albedo (tex2, ASTC sRGB 8x5) really is grey-teal and the shader multiplies
+   it by `cb4[0].rgb` (a material colour), so the colour must come from that constant. Check against a reference
+   image of the Power Suit in MPR before chasing it. `LARECOMP_DEBUG_DATA` prints constant buffers from memory at
+   log time, after the transient ring was reused, so it shows other draws' values (cb4 read 0 0 0 there).
+3. Frame 7000 of the intro replay is black (a fade between shots?): not checked.
+4. Save slot area name `<ERROR>` with a forced autosave: check with a save made at a real save station.
+5. Suspects for other black objects: more image stores through the driver handle table, other
+   rasterizer-discard producers, `nvnCommandBufferDiscardColor` treated as a clear to 0 (an LA assumption,
+   `cmdbuf.c`).
+
+## Fixed on 2026-10-21 (night)
 
 - **Sparse textures** (lighting volumes in virtual pools): `nvnMemoryPoolMapVirtual` page table, gathered upload,
   sparse 3D tiling. This fixed the black arm cannon and the black pipes.
@@ -60,30 +69,22 @@ The intro, debug frame 9000 (replay recipe below):
 
 ## How to work
 
-- **Replay the intro to frame 9000:**
-  `IN=2500:A:8,2800:A:8,...,5500:A:8` (A every 300 frames), then `LARECOMP_DEBUG_FRAME=9000` with the scratchpad
-  `boot.sh <name> 175`.
-  - The scratchpad scripts (`boot.sh`, `edit.py`) live in the previous session's scratchpad. If they're gone:
-    build with `PATH=/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH make -j16`, then run
-    `LARECOMP_NO_LAUNCHER=1 build/lasrecomp.exe --play private/game` from the repo root.
+- **Build:** `PATH=/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH make -j16` (Git Bash).
+- **Run tests from PowerShell with `tools/run_game.ps1 <log> <seconds> KEY=VALUE...`** (the intro replay example
+  is in the script). Started from Git Bash with the MSYS2 directories first on PATH, the game silently runs
+  without the `LARECOMP_*` variables, and `timeout` misses it after it re-executes itself.
+  - Intro replay: `LARECOMP_INPUT` with A every 300 frames from 2500 to 5500; frame 9000 is in space.
+  - Pictures: `LARECOMP_SHOT_AT=<frame>,...` (the game image, `build/build/frames/`), or
+    `LARECOMP_WINDOW_SHOT=<frame>` with `LARECOMP_EXIT_AFTER_SHOT=1` (the window, then exit).
   - The runtime's cwd is `build/`, so its outputs land in `build/build/`.
 - **Reading a debug frame:**
   - A `[draw] e/a` line is printed **before** its pass begins.
   - The `[pass]` line that follows it, and the `[draw] vp` line, belong to that draw.
   - `saved pass_N` closes pass N.
-- **Gameplay:** frame ~12000 with the same input script. **Saves:** `LARECOMP_SAVE_DIR=<scratch dir>` and
+- **Gameplay:** frame ~12000 with the same input script; add `12100:STICK_UP:200` to walk through the first
+  door (frame 12500 is the next room). **Saves:** `LARECOMP_SAVE_DIR=<scratch dir>` and
   `LARECOMP_AUTOSAVE_AT=<frame>`.
 - **Regenerating game code** (after `tools/patches.py` changes):
   `cd tools && ./venv/Scripts/python gen.py main ../private/exefs/main 0x7000000000 ../generated/main`, then `make`.
 - **Updating the playtest build:** copy `build/lasrecomp.exe`, `build/lasgame.dll` and `build/lasgame.dll.id` into
   `private/playtest/MPRRecomp/`. This only works while the game isn't running.
-
-## After the background
-
-1. Black objects elsewhere and Samus's look: take an F9 / debug frame, then follow the pass-by-pass method above.
-   Suspects:
-   - more image stores through the driver handle table;
-   - other rasterizer-discard producers;
-   - `nvnCommandBufferDiscardColor`, which is treated as a clear to 0 (an LA assumption, `cmdbuf.c:314`).
-2. Save slot area name `<ERROR>` (seen with a forced autosave): check it with a save made at a real save station.
-3. Update the playtest folder and tell the user.
