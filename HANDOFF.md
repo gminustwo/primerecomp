@@ -8,7 +8,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   autosave was forced with `LARECOMP_AUTOSAVE_AT`, then reloaded after a restart.
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it contains the game library), started
   with `Play Metroid Prime Remastered.bat`. Their notes go in `ISSUES.md` there and their log is
-  `lasrecomp.log`. It holds build 2ec3f75 (2026-10-22): everything below is in it. No issues written there yet.
+  `lasrecomp.log`. It holds build 422cc4e (2026-10-22): everything below is in it. No issues written there yet.
 - **User-reported open bugs:**
   - ~~The star backdrop and Tallon IV are missing in space.~~ Fixed (CC tests, below).
   - Samus renders wrong. Not reproduced or identified yet: ask which view (first-person arm cannon, the
@@ -36,6 +36,11 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   (`ShaderKey.layer_attr`, `shaderOutputLayer`); array / cube render targets bind all their layers
   (`vk_render_layers`). New uncompressed colour images also start zeroed. Reflections show on the arm cannon and
   floors now.
+- **The first shot of a new game was black** (nebula, asteroids, Tallon IV; user F9 capture): storage images got
+  their view from `vk_view(render = true)`, which returned none for 3D images, so the fog writer's descriptor was
+  never written and its stores went wherever a recycled set pointed (by luck the volume at frame 9000, nothing in
+  that shot: the composite multiplied everything by 0). 3D images now get a 3D storage view. Vertex shaders also
+  rescale texel fetches of scaled targets now (the fog writer reads one).
 - Debug: texture and attachment lines show the guest address (`@addr`), flags and refs; `LARECOMP_LOG_TEX_SHARE`
   logs each shared image join; draws with untranslated stages say so; the stats line counts textures / images.
 
@@ -46,9 +51,9 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
    `LARECOMP_HANG_DUMP=30` and look at the guest threads' waits.
 2. **The arm cannon is teal-green.** Its albedo (tex2, ASTC sRGB 8x5) really is grey-teal and the shader multiplies
    it by `cb4[0].rgb` (a material colour), so the colour must come from that constant. Check against a reference
-   image of the Power Suit in MPR before chasing it. `LARECOMP_DEBUG_DATA` prints constant buffers from memory at
-   log time, after the transient ring was reused, so it shows other draws' values (cb4 read 0 0 0 there).
-3. Frame 7000 of the intro replay is black (a fade between shots?): not checked.
+   image of the Power Suit in MPR before chasing it. `LARECOMP_DEBUG_DATA` printed the wrong buffers until 422cc4e (hardware cbuf c is
+   `st.ubuf[stage][c - 3]`), so the "cb4 = 0 0 0" reading was wrong: look again.
+3. ~~Frame 7000 of the intro replay is black~~: the fog volume bug, fixed in 422cc4e.
 4. Save slot area name `<ERROR>` with a forced autosave: check with a save made at a real save station.
 5. **Two other geometry shaders are still dropped** (`gs 729c002100`, `729c004100`, logged once per program as
    "not supported, drawn without it"): passthrough shaders that read all three vertices and exit early for some
