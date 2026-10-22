@@ -3140,12 +3140,30 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
         const uint8_t *bl = st.blend[0];
         LOG("[draw]   blend0: %u | c %u %u a %u %u | eq %u %u | adv %u\n", bl[0], bl[1], bl[2], bl[3], bl[4], bl[5], bl[6], bl[7]);
     }
+    if (pr->vi->attr_mask) {  // vertex attributes: NVN format, stream, offset
+        LOG("[draw]   attrs:");
+        for (int i = 0; i < 32; i++) {
+            if (!(pr->vi->attr_mask & (1u << i))) continue;
+            uint32_t a = i < st.nattrib ? st.attrib[i] : 0;
+            LOG(" %d=f%#x/s%u+%u", i, a & 0xFF, (a >> 8) & 0x1F, a >> 13);
+        }
+        LOG("\n");
+    }
+    for (int i = 0; i < 16; i++)  // storage buffers (LDG / STG through the driver table): where, and the heap window
+        if (st.sbuf[0][i].addr || st.sbuf[1][i].addr)
+            LOG("[draw]   sbuf%d: vs %llx+%llu fs %llx+%llu (gmem window %llx+%llx)\n", i,
+                (unsigned long long)st.sbuf[0][i].addr, (unsigned long long)st.sbuf[0][i].size,
+                (unsigned long long)st.sbuf[1][i].addr, (unsigned long long)st.sbuf[1][i].size,
+                (unsigned long long)HEAP_BASE, (unsigned long long)gmem_size);
     if (getenv("LARECOMP_DEBUG_DATA")) {  // vertex streams 0-1 and fragment cbufs: the first floats
-        for (int s = 0; s < 2; s++) {
+        for (int s = 0; s < 4; s++) {  // (the first 32 words, as floats and as raw bits: some attributes carry integers)
             if (!st.vbuf[s].addr) continue;
             const float *v = (const float *)(uintptr_t)st.vbuf[s].addr;
-            LOG("[draw]   vbuf%d %llx size %llu:", s, (unsigned long long)st.vbuf[s].addr, (unsigned long long)st.vbuf[s].size);
-            for (int k = 0; k < 16; k++) LOG(" %.4g", v[k]);
+            LOG("[draw]   vbuf%d %llx size %llu stride %u divisor %u:", s, (unsigned long long)st.vbuf[s].addr,
+                (unsigned long long)st.vbuf[s].size, s < st.nstream ? st.stream[s][0] : 0, s < st.nstream ? st.stream[s][1] : 0);
+            for (int k = 0; k < 32; k++) LOG(" %.4g", v[k]);
+            LOG("\n[draw]   vbuf%d bits:", s);
+            for (int k = 0; k < 32; k++) LOG(" %08x", ((const uint32_t *)v)[k]);
             LOG("\n");
         }
         // (hardware cbuf c is st.ubuf[stage][c - 3]: 0 is the driver table, 1 the shader's constants - cbuf_info)
