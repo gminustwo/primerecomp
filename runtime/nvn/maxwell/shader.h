@@ -45,6 +45,8 @@ typedef struct {
                             // after flip_y: keys without it hash as before - shader caches stay valid.)
     uint32_t vs_out_mask;   // fragment: varyings the vertex shader provides
     uint8_t glsl;           // emit Vulkan GLSL (see the contract above) instead of MSL
+    uint16_t layer_attr;    // vertex, GLSL: gl_Layer = int(the output attribute at this byte offset) - what the
+                            // program's passthrough geometry shader would do (0: none)
 } ShaderKey;
 
 typedef struct {

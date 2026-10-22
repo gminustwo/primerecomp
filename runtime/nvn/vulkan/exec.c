@@ -820,7 +820,7 @@ static uint32_t tex_wh[2][64][2];
 
 // ================================================================== render passes
 static VkFormat pass_color[8], pass_depth, pass_stencil;
-static uint32_t pass_ncolor, pass_samples = 1, pass_w, pass_h;
+static uint32_t pass_ncolor, pass_samples = 1, pass_w, pass_h, pass_layers = 1;
 static int debug_pass_no;
 
 // Redundant-state filter: what draw() last set in the current command buffer, so unchanged pipeline binds, dynamic
@@ -911,6 +911,7 @@ static void begin_pass(void) {
     }
     VkRenderingAttachmentInfo ca[8], da = {0}, sa = {0};
     uint32_t w = 0, minw = UINT32_MAX, minh = UINT32_MAX;  // w: first attachment seen
+    uint32_t layers = UINT32_MAX;  // bound by every attachment (array / cube targets: all theirs, textures.c)
     pass_ncolor = (uint32_t)st.rt.ncolor;
     pass_samples = 1;
     for (int i = 0; i < st.rt.ncolor; i++) {
@@ -941,6 +942,8 @@ static void begin_pass(void) {
         if (!w) { renderer_texture_scale(t, &pass_sx, &pass_sy); w = ew; }
         if (ew < minw) minw = ew;
         if (eh < minh) minh = eh;
+        uint32_t rl = vk_render_layers(t, &st.rt.cview[i], st.rt.has_cview[i]);
+        if (rl < layers) layers = rl;
         pass_samples = b->samples;
     }
     pass_depth = pass_stencil = VK_FORMAT_UNDEFINED;
@@ -963,12 +966,15 @@ static void begin_pass(void) {
             if (!w) { renderer_texture_scale(st.rt.depth, &pass_sx, &pass_sy); w = ew; }
             if (ew < minw) minw = ew;
             if (eh < minh) minh = eh;
+            uint32_t rl = vk_render_layers(st.rt.depth, &st.rt.dview, st.rt.has_dview);
+            if (rl < layers) layers = rl;
             if (!pass_ncolor) pass_samples = b->samples;
         }
     }
     if (!w) { pass_sx = pass_sy = 1; minw = minh = 16; }
     pass_w = minw; pass_h = minh;
-    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {minw, minh}}, .layerCount = 1,
+    pass_layers = layers == UINT32_MAX ? 1 : layers;
+    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {minw, minh}}, .layerCount = pass_layers,
                           .colorAttachmentCount = pass_ncolor, .pColorAttachments = ca,
                           .pDepthAttachment = has_d ? &da : NULL, .pStencilAttachment = has_s ? &sa : NULL};
     vkCmdBeginRendering(cb, &ri);
@@ -1148,7 +1154,7 @@ static void clear(int index, int kind, const void *color, uint32_t mask, bool de
         }
         VkImageAspectFlags dsa = (depth && pass_depth ? VK_IMAGE_ASPECT_DEPTH_BIT : 0) | (stencil && pass_stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0);
         if (dsa) a[n++] = (VkClearAttachment){.aspectMask = dsa, .clearValue.depthStencil = {dval, sval}};
-        VkClearRect cr = {rect, 0, 1};
+        VkClearRect cr = {rect, 0, pass_layers};
         if (n) vkCmdClearAttachments(cb, n, a, 1, &cr);
         return;
     }
@@ -1272,8 +1278,50 @@ static void translate_program(void *arg) {
 #define PROG_TAB 4096
 static struct { uint64_t key; Prog *prog; } prog_tab[PROG_TAB];
 
+// Geometry shaders aren't translated. MPR's cube map passes (one draw renders all six faces) use a passthrough
+// geometry shader that only sets the layer from a vertex output:
+//   ALD R1, a[0x88] (of the primitive's vertex); F2I R1, R1; AST a[0x64] (layer), R1; EXIT
+// The vertex shader writes gl_Layer from that output instead (ShaderKey.layer_attr). Returns the output's byte
+// offset, 0 for any other geometry shader (the program is then drawn without it).
+static uint32_t gs_layer_attr(uint64_t code) {
+    const uint64_t *w = (const uint64_t *)(uintptr_t)(code + 0x80);  // after the NVN header and the SPH
+    int store_reg = -1, conv_src = -1;
+    uint32_t attr = 0;
+    for (int i = 1; i < 64; i++) {
+        if (i % 4 == 0) continue;  // scheduling words
+        uint64_t x = w[i];
+        uint64_t op12 = x >> 52;
+        if (op12 == 0xe30) break;                                // EXIT
+        if (op12 == 0xfbe || op12 == 0xf6e) return 0;            // OUT: emits vertices itself
+        if ((x >> 51) == (0xeff0000000000000ull >> 51)) {        // AST
+            if (store_reg >= 0 || ((x >> 20) & 0x3FF) != 0x64 || ((x >> 47) & 3)) return 0;
+            store_reg = (int)(x & 0xFF);
+        }
+    }
+    if (store_reg < 0) return 0;
+    for (int pass = 0; pass < 2; pass++)  // the value: F2I of an attribute load (or the load itself)
+        for (int i = 1; i < 64; i++) {
+            if (i % 4 == 0) continue;
+            uint64_t x = w[i];
+            if ((x >> 52) == 0xe30) break;
+            int d = (int)(x & 0xFF);
+            if (pass == 0 && (x >> 51) == (0x5cb0000000000000ull >> 51) && d == store_reg)  // F2I R
+                conv_src = (int)((x >> 20) & 0xFF);
+            if (pass == 1 && (x >> 51) == (0xefd8000000000000ull >> 51) && d == (conv_src >= 0 ? conv_src : store_reg) &&
+                !((x >> 47) & 3))  // ALD, one component
+                attr = (uint32_t)((x >> 20) & 0x3FF);
+        }
+    return attr >= 0x80 ? attr : 0;
+}
+
 static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
     if (!(np->stage_mask & 1) || !(np->stage_mask & 2)) return NULL;
+    ShaderKey vk_layer;
+    if ((np->stage_mask & 4) && g_vk.output_layer) {
+        vk_layer = *vkey;
+        vk_layer.layer_attr = (uint16_t)gs_layer_attr(np->stages[2].code_addr);
+        vkey = &vk_layer;
+    }
     uint64_t h = 0xcbf29ce484222325ull;
     for (int i = 0; i < 2; i++) { uint64_t a = np->stages[i].code_addr; for (int k = 0; k < 8; k++) { h ^= (a >> (k * 8)) & 0xFF; h *= 0x100000001B3ull; } }
     const uint8_t *vb = (const uint8_t *)vkey;
@@ -1292,6 +1340,23 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
     }
     p->vkey = *vkey;
     p->fkey = *fkey;
+    if (vkey->layer_attr)
+        LOG("[vk] program vs %llx fs %llx: passthrough geometry shader %llx, the layer from vertex output %#x\n",
+            (unsigned long long)p->code[0], (unsigned long long)p->code[1], (unsigned long long)np->stages[2].code_addr,
+            vkey->layer_attr);
+    else if (np->stage_mask & 0x1C)
+        LOG("[vk] program vs %llx fs %llx has a geometry / tessellation stage (gs %llx tcs %llx tes %llx): not supported, "
+            "drawn without it\n", (unsigned long long)p->code[0], (unsigned long long)p->code[1],
+            (unsigned long long)np->stages[2].code_addr, (unsigned long long)np->stages[3].code_addr,
+            (unsigned long long)np->stages[4].code_addr);
+    for (int s = 2; s < 5 && getenv("LARECOMP_SAVE_MSL"); s++) {  // (debug) their code: NVN header + SPH + instructions
+        uint64_t a = np->stages[s].code_addr;
+        if (!a) continue;
+        char path[96];
+        snprintf(path, sizeof path, "build/glsl/%llx_stage%d.bin", (unsigned long long)a, s);
+        FILE *f = fopen(path, "wb");
+        if (f) { fwrite((const void *)(uintptr_t)a, 1, 0x800, f); fclose(f); }
+    }
     run_translate(translate_program, p);
     return p;
 }
@@ -3039,6 +3104,9 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
         (unsigned long long)(indexed ? r->x[6] : r->x[4]), (unsigned long long)r->x[0], (unsigned long long)r->x[2],
         (unsigned long long)st.program->stages[0].code_addr, (unsigned long long)st.program->stages[1].code_addr,
         pr->vi->cbuf_mask, pr->fi->cbuf_mask, st.rt.ncolor);
+    if (st.program->stage_mask & 0x1C)  // geometry / tessellation: not translated, the draw runs without them
+        LOG(" [UNSUPPORTED gs=%llx tcs=%llx tes=%llx]", (unsigned long long)st.program->stages[2].code_addr,
+            (unsigned long long)st.program->stages[3].code_addr, (unsigned long long)st.program->stages[4].code_addr);
     for (int i = 0; i < st.rt.ncolor; i++)
         if (st.rt.color[i]) LOG(" %ux%u/f%#x %p", st.rt.color[i]->width, st.rt.color[i]->height, st.rt.color[i]->format, (void *)st.rt.color[i]);
     if (st.rt.depth) LOG(" d%#x %p", st.rt.depth->format, (void *)st.rt.depth);
@@ -3069,10 +3137,10 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
         NvnTexture *t = shader_texture_object(1, &pr->fi->tex[i]);
         const TexBackend *b = t ? (const TexBackend *)t->backend : NULL;
         if (!t) { LOG("[draw]   tex%d: none\n", i); continue; }
-        LOG("[draw]   tex%d: %p @%llx %ux%u f%#x lv %u -> %ux%u scale %.4f %.4f%s (target %u depth %u levels %u, image depth %u, %s)\n",
-            i, (void *)t, (unsigned long long)t->addr, t->width, t->height, t->format, b ? b->levels : 0, b ? b->width : 0, b ? b->height : 0, b ? b->sx : 0,
-            b ? b->sy : 0, b && b->scalable ? " scalable" : "", t->target, t->depth, t->levels, b ? b->depth : 0,
-            b && b->gpu_owned ? "gpu" : "uploaded");
+        LOG("[draw]   tex%d: %p @%llx %ux%u f%#x flags %#x lv %u -> %ux%u scale %.4f %.4f%s (target %u depth %u levels %u, image depth %u, %s, refs %d)\n",
+            i, (void *)t, (unsigned long long)t->addr, t->width, t->height, t->format, t->flags, b ? b->levels : 0, b ? b->width : 0,
+            b ? b->height : 0, b ? b->sx : 0, b ? b->sy : 0, b && b->scalable ? " scalable" : "", t->target, t->depth, t->levels,
+            b ? b->depth : 0, b && b->gpu_owned ? "gpu" : "uploaded", b ? b->refs : 0);
         if (t->target == 2 && b && b->gpu_owned && b->depth > 1 && getenv("LARECOMP_DUMP_3D") && t->layout.fmt) {
             char path[160];
             snprintf(path, sizeof path, "build/gpu3d_%ux%ux%u_f%x.bin", b->width, b->height, b->depth, t->format);

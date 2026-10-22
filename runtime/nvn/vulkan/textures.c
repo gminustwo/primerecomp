@@ -448,6 +448,12 @@ static TexBackend *tex_backend(NvnTexture *t) {
     TexBackend key;
     b = share_find(t, &key);
     if (b) {
+        static int log_share = -1;
+        if (log_share < 0) log_share = getenv("LARECOMP_LOG_TEX_SHARE") != NULL;
+        if (log_share)
+            LOG("[share] frame %llu %p joins @%llx %ux%u f%#x flags %#x levels %u: refs %d, %s%s\n",
+                (unsigned long long)renderer_present_count(), (void *)t, (unsigned long long)t->addr, t->width, t->height,
+                t->format, t->flags, t->levels, b->refs, b->gpu_owned ? "gpu" : "", b->uploaded ? " uploaded" : "");
         b->refs++;
     } else {
         b = calloc(1, sizeof *b);
@@ -795,6 +801,18 @@ static const VkComponentMapping IDENTITY = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_CO
 
 // render: attachment view (one level, one layer). Otherwise a sampled view of type want_textype (TEXTYPE_*),
 // with the NVN component swizzle, converting between compatible types the way renderer.m does.
+// Layers a render target binds: all of an array / cube image unless its view picks some (a draw without a layer
+// output writes layer 0; with one, the passthrough geometry shader emulation picks the face).
+uint32_t vk_render_layers(NvnTexture *t, const NvnTextureView *v, bool has_view) {
+    TexBackend *b = t ? t->backend : NULL;
+    if (!b || b->base_type == VK_IMAGE_VIEW_TYPE_3D || b->layers <= 1) return 1;
+    if (!has_view) v = NULL;
+    uint32_t ly0 = v && (v->setmask & 2) ? v->min_layer : 0;
+    if (ly0 >= b->layers) return 1;
+    uint32_t nly = v && (v->setmask & 2) && v->num_layers ? v->num_layers : b->layers - ly0;
+    return ly0 + nly > b->layers ? b->layers - ly0 : nly;
+}
+
 VkImageView vk_view(NvnTexture *t, const NvnTextureView *v, bool has_view, bool render, int want_textype) {
     TexBackend *b = vk_tex(t, render);
     if (!has_view) v = NULL;
@@ -814,6 +832,8 @@ VkImageView vk_view(NvnTexture *t, const NvnTextureView *v, bool has_view, bool 
     if (render) {
         VkImageViewType type = b->base_type == VK_IMAGE_VIEW_TYPE_3D ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
         if (b->base_type == VK_IMAGE_VIEW_TYPE_3D) return VK_NULL_HANDLE;  // (3D render targets: not used by the game)
+        uint32_t rl = vk_render_layers(t, v, v != NULL);
+        if (rl > 1) return vk_image_view(b, VK_IMAGE_VIEW_TYPE_2D_ARRAY, fmt, lv0, 1, ly0, rl, IDENTITY, b->aspect);
         return vk_image_view(b, type, fmt, lv0, 1, ly0, 1, IDENTITY, b->aspect);
     }
     VkImageAspectFlags aspect = b->aspect & VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_ASPECT_DEPTH_BIT : b->aspect;

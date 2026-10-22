@@ -2045,7 +2045,16 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     if (c->fail) { free(body.buf); free(c->body.buf); free(c); return info; }
     int set = stage == STAGE_FRAGMENT ? 1 : 0;
     Str s = {0};
-    sp(&s, "%s", glsl_prelude);
+    // the layer from a vertex output (ShaderKey.layer_attr): a generic attribute the shader writes
+    int layer_out = -1;
+    if (stage == STAGE_VERTEX && key && key->layer_attr >= 0x80 && key->layer_attr < 0x280 &&
+        (c->out_attr_mask & (1u << ((key->layer_attr - 0x80) >> 4))))
+        layer_out = key->layer_attr - 0x80;
+    if (layer_out >= 0)  // (#extension before the prelude's functions)
+        sp(&s, "#version 460\n#extension GL_ARB_shader_viewport_layer_array : require\n%s",
+           glsl_prelude + strlen("#version 460\n"));
+    else
+        sp(&s, "%s", glsl_prelude);
     for (int i = 0; i < 18; i++) {
         if (!(info->cbuf_mask & (1u << i))) continue;
         uint32_t n = info->cbuf_size[i] / 16;
@@ -2146,6 +2155,7 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         if (key && key->flip_y) sp(&s, "  gl_Position.y = -gl_Position.y;\n");
         if (key && key->flip_x) sp(&s, "  gl_Position.x = -gl_Position.x;\n");
         if (key && key->depth_minus_one) sp(&s, "  gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5f;\n");
+        if (layer_out >= 0) sp(&s, "  gl_Layer = int(v%d[%d]);\n", layer_out >> 4, (layer_out >> 2) & 3);
     } else if (stage == STAGE_FRAGMENT) {
         int r = 0;
         for (int rt = 0; rt < 8; rt++) {
