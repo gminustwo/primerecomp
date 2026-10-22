@@ -254,7 +254,9 @@ PLAIN(nvnCommandBufferSetSampleMask, CMD_SET_SAMPLE_MASK)
 PLAIN(nvnCommandBufferSetRenderEnable, CMD_SET_RENDER_ENABLE)
 NVN(nvnCommandBufferSetRenderEnableConditional) { (void)c; }
 NVN(nvnCommandBufferSetDepthClamp) { (void)c; }
-NVN(nvnCommandBufferSetRasterizerDiscard) { (void)c; }
+// Draws with only side effects: Metroid Prime Remastered builds its volumetric fog volume and exposure data with
+// vertex shaders that store to images, rasterizer off. Ignored, those draws painted over the bound target.
+PLAIN(nvnCommandBufferSetRasterizerDiscard, CMD_SET_RASTERIZER_DISCARD)
 NVN(nvnCommandBufferSetConservativeRasterEnable) { (void)c; }
 NVN(nvnCommandBufferSetConservativeRasterDilate) { (void)c; }
 NVN(nvnCommandBufferSetSubpixelPrecisionBias) { (void)c; }

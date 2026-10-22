@@ -1152,21 +1152,27 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
     } else if (OPM(0x5c68000000000000ull, 0xfff8000000000000ull) || OPM(0x4c68000000000000ull, 0xfff8000000000000ull) ||
                OPM(0x3868000000000000ull, 0xfef8000000000000ull)) {  // FMUL
         static const char *const scale[] = {"", " * 0.5f", " * 0.25f", " * 0.125f", " * 8.0f", " * 4.0f", " * 2.0f", ""};
-        sprintf(t, "(%s * %s%s)", F(R(a)), NA(F(B(true)), bits(w, 48, 1), false), scale[bits(w, 41, 3)]);
+        // .FMZ (bits 44-45 = 2): 0 * inf = 0. Without it the game's additive sky / glow draws wrote NaN into the
+        // scene, and the bloom spread it over the whole frame (black space, no stars, no Tallon IV)
+        sprintf(t, bits(w, 44, 2) == 2 ? "(fmz_mul(%s, %s)%s)" : "(%s * %s%s)", F(R(a)),
+                NA(F(B(true)), bits(w, 48, 1), false), scale[bits(w, 41, 3)]);
         set_reg(c, d, FRES(t, bits(w, 50, 1)));
     } else if (OPM(0x1e00000000000000ull, 0xff00000000000000ull)) {  // FMUL32I
-        sprintf(t, "(%s * as_type<float>(0x%08xu))", F(R(a)), (uint32_t)bits(w, 20, 32));
+        sprintf(t, bits(w, 53, 2) == 2 ? "fmz_mul(%s, as_type<float>(0x%08xu))" : "(%s * as_type<float>(0x%08xu))", F(R(a)),
+                (uint32_t)bits(w, 20, 32));
         set_reg(c, d, FRES(t, bits(w, 55, 1)));
     } else if (OPM(0x5980000000000000ull, 0xff80000000000000ull) || OPM(0x4980000000000000ull, 0xff80000000000000ull) ||
                OPM(0x5180000000000000ull, 0xff80000000000000ull) || OPM(0x3280000000000000ull, 0xfe80000000000000ull)) {  // FFMA
         const char *bv;
         char cbuf_c[256], bbuf[256];
         const char *cv = operand_c_for_ffma(c, w, cbuf_c, &bv, bbuf);
-        sprintf(t, "fma(%s, %s, %s)", F(R(a)), NA(F(bv), bits(w, 48, 1), false), NA(F(cv), bits(w, 49, 1), false));
+        sprintf(t, bits(w, 53, 2) == 2 ? "fmz_fma(%s, %s, %s)" : "fma(%s, %s, %s)", F(R(a)), NA(F(bv), bits(w, 48, 1), false),
+                NA(F(cv), bits(w, 49, 1), false));
         set_reg(c, d, FRES(t, bits(w, 50, 1)));
     } else if (OPM(0x0c00000000000000ull, 0xfc00000000000000ull)) {  // FFMA32I
         sprintf(u, "as_type<float>(0x%08xu)", (uint32_t)bits(w, 20, 32));
-        sprintf(t, "fma(%s, %s, %s)", NA(F(R(a)), bits(w, 56, 1), false), u, NA(F(R(d)), bits(w, 57, 1), false));
+        sprintf(t, bits(w, 53, 2) == 2 ? "fmz_fma(%s, %s, %s)" : "fma(%s, %s, %s)", NA(F(R(a)), bits(w, 56, 1), false), u,
+                NA(F(R(d)), bits(w, 57, 1), false));
         set_reg(c, d, FRES(t, bits(w, 55, 1)));
     } else if (OPM(0x5c60000000000000ull, 0xfff8000000000000ull) || OPM(0x4c60000000000000ull, 0xfff8000000000000ull) ||
                OPM(0x3860000000000000ull, 0xfef8000000000000ull)) {  // FMNMX
@@ -1941,6 +1947,9 @@ static const char glsl_prelude[] =
     "uint mulhi(uint a, uint b) { uint hi, lo; umulExtended(a, b, hi, lo); return hi; }\n"
     "int mulhi(int a, int b) { int hi, lo; imulExtended(a, b, hi, lo); return hi; }\n"
     "uint brev(uint v) { return bitfieldReverse(v); }\n"
+    // .FMZ multiplies (DX9 rules): 0 times anything, inf and NaN included, is 0
+    "float fmz_mul(float a, float b) { return (a == 0.0f || b == 0.0f) ? 0.0f : a * b; }\n"
+    "float fmz_fma(float a, float b, float c) { return (a == 0.0f || b == 0.0f) ? c : fma(a, b, c); }\n"
     "uint bfe_u(uint v, uint ctl) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u) return 0u; if (pos >= 32u) return 0u; return bitfieldExtract(v, int(pos), int(min(len, 32u - pos))); }\n"
     "uint bfe_s(uint v, uint ctl) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u) return 0u; if (pos >= 32u) return (int(v) < 0) ? 0xFFFFFFFFu : 0u; return uint(bitfieldExtract(int(v), int(pos), int(min(len, 32u - pos)))); }\n"
     "uint bfi(uint ins, uint ctl, uint base) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u || pos >= 32u) return base; return bitfieldInsert(base, ins, int(pos), int(min(len, 32u - pos))); }\n"
@@ -2103,6 +2112,11 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
                 r++;
             }
         }
+        static int scrub = -1;  // (debug) LARECOMP_NAN_SCRUB: NaN / inf colour outputs written as 0
+        if (scrub < 0) scrub = getenv("LARECOMP_NAN_SCRUB") != NULL;
+        for (int rt = 0; scrub && rt < 8; rt++)
+            if (((c->omap_target >> (rt * 4)) & 0xF) && !(key && key->rt_kind[rt]))
+                sp(&s, "  c%d = mix(c%d, vec4(0.0f), isnan(c%d)); c%d = mix(c%d, vec4(0.0f), isinf(c%d));\n", rt, rt, rt, rt, rt, rt);
         if (tint)
             sp(&s, "  if (ltint[0].w > 0.0f) { vec3 g = c0.rgb; float l = dot(g, vec3(0.299f, 0.587f, 0.114f));\n"
                    "    c0.rgb = mix(g, ltint[0].rgb * pow(l, ltint[1].w) + ltint[1].rgb * l, ltint[0].w); }\n");
@@ -2202,6 +2216,8 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     sp(&s, "#include <metal_stdlib>\nusing namespace metal;\n");
     sp(&s, "static inline uint cbr(constant uint4 *cb, uint off) { return cb[off >> 4][(off >> 2) & 3]; }\n");
     sp(&s, "static inline uint brev(uint v) { return reverse_bits(v); }\n");
+    sp(&s, "static inline float fmz_mul(float a, float b) { return (a == 0.0f || b == 0.0f) ? 0.0f : a * b; }\n");
+    sp(&s, "static inline float fmz_fma(float a, float b, float c) { return (a == 0.0f || b == 0.0f) ? c : fma(a, b, c); }\n");
     sp(&s, "static inline uint bfe_u(uint v, uint ctl) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u) return 0u; if (pos >= 32u) return 0u; return extract_bits(v, pos, min(len, 32u - pos)); }\n");
     sp(&s, "static inline uint bfe_s(uint v, uint ctl) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u) return 0u; if (pos >= 32u) return (int(v) < 0) ? 0xFFFFFFFFu : 0u; return uint(extract_bits(int(v), pos, min(len, 32u - pos))); }\n");
     sp(&s, "static inline uint bfi(uint ins, uint ctl, uint base) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u || pos >= 32u) return base; return insert_bits(base, ins, pos, min(len, 32u - pos)); }\n");

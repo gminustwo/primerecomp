@@ -685,6 +685,7 @@ static struct {
     float blend_color[4];
     uint32_t stencil_ref[2], stencil_mask[2], stencil_vmask[2];
     bool prim_restart;
+    bool raster_discard;  // nvnCommandBufferSetRasterizerDiscard
     uint32_t restart_index;
     uint64_t copy_row_stride, copy_image_stride;
 } st;
@@ -831,12 +832,12 @@ static int debug_pass_no;
 // LARECOMP_VK_STATE_FILTER=0: every draw sets everything, as before.
 enum { SS_PIPE = 1 << 0, SS_DT = 1 << 1, SS_DW = 1 << 2, SS_DOP = 1 << 3, SS_STEN = 1 << 4, SS_SFACE0 = 1 << 5, SS_SFACE1 = 1 << 6,
        SS_BC = 1 << 7, SS_CULL = 1 << 8, SS_FF = 1 << 9, SS_TOPO = 1 << 10, SS_PRE = 1 << 11, SS_DBE = 1 << 12, SS_DB = 1 << 13,
-       SS_VP = 1 << 14, SS_SC = 1 << 15, SS_IB = 1 << 16 };
+       SS_VP = 1 << 14, SS_SC = 1 << 15, SS_IB = 1 << 16, SS_RD = 1 << 17 };
 static struct {
     uint32_t known;  // SS_* bits: the value below is what the command buffer has
     uint32_t vb_known;  // per vertex binding
     VkPipeline pipe;
-    VkBool32 dt, dw, sten, pre, dbe;
+    VkBool32 dt, dw, sten, pre, dbe, rd;
     VkCompareOp dop;
     uint32_t sface[2][7];  // fail, pass, depth fail, compare, compare mask, write mask, reference
     float bc[4], db[3];
@@ -864,12 +865,14 @@ static inline bool ss_need(uint32_t bit, bool same) {
 static void vk_end_pass_at(int line);
 void vk_end_pass(void) { vk_end_pass_at(0); }
 #define vk_end_pass() vk_end_pass_at(__LINE__)
+static NvnTexture *pass_color0;  // (debug frame) the colour target the open pass renders to: st.rt may hold the next
+                                 // pass's targets already when it ends
 static void vk_end_pass_at(int line) {
     if (!in_pass) return;
     if (prof && line < 4096) prof_end_line[line]++;
     vkCmdEndRendering(vk_cmd());
     in_pass = false;
-    if (g_debug_frame && st.rt.ncolor && st.rt.color[0] && st.rt.color[0]->backend) {
+    if (g_debug_frame && pass_color0 && pass_color0->backend) {
         char path[256];
         static uint64_t debug_pass_frame = ~0ull;
         static int multi = -1;
@@ -877,7 +880,7 @@ static void vk_end_pass_at(int line) {
         if (multi && renderer_present_count() != debug_pass_frame) { debug_pass_frame = renderer_present_count(); debug_pass_no = 0; }
         if (multi) snprintf(path, sizeof path, "build/pass_%llu_%03d.png", (unsigned long long)debug_pass_frame, debug_pass_no++);
         else snprintf(path, sizeof path, "build/pass_%03d.png", debug_pass_no++);
-        renderer_save_texture_tex(st.rt.color[0]->backend, path);
+        renderer_save_texture_tex(pass_color0->backend, path);
     }
 }
 
@@ -888,6 +891,12 @@ static void begin_pass(void) {
     vk_end_pass();
     if (dl_on == 2) renderer_flush();  // (LARECOMP_VK_DEVLOST_TRACE=2: each pass its own submission)
     st.rt_dirty = false;
+    if (g_debug_frame && st.rt.ncolor && st.rt.color[0] && st.rt.color[0]->backend && getenv("LARECOMP_DEBUG_PREPASS")) {
+        char path[64];  // (debug) the target as the pass finds it: pre_NNN.png next to pass_NNN.png
+        snprintf(path, sizeof path, "build/pre_%03d.png", debug_pass_no);
+        renderer_save_texture_tex(st.rt.color[0]->backend, path);
+    }
+    pass_color0 = st.rt.ncolor ? st.rt.color[0] : NULL;
     VkCommandBuffer cb = vk_cmd();
     vk_full_barrier(cb);  // passes, copies and dispatches see each other's results
     {
@@ -926,6 +935,9 @@ static void begin_pass(void) {
                       ? vk_format(st.rt.cview[i].format) : b->format;
         uint32_t lv = st.rt.has_cview[i] && (st.rt.cview[i].setmask & 1) ? st.rt.cview[i].base_level : 0;
         uint32_t ew = level_extent(b->width, lv), eh = level_extent(b->height, lv);
+        if (g_debug_frame)
+            LOG("[pass] color%d %p %ux%u f%#x: image %ux%u lv %u -> %ux%u, %s\n", i, (void *)t, t->width, t->height, t->format,
+                b->width, b->height, lv, ew, eh, ca[i].loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ? "CLEAR" : "load");
         if (!w) { renderer_texture_scale(t, &pass_sx, &pass_sy); w = ew; }
         if (ew < minw) minw = ew;
         if (eh < minh) minh = eh;
@@ -945,6 +957,9 @@ static void begin_pass(void) {
             if (b->aspect & VK_IMAGE_ASPECT_STENCIL_BIT) { sa = a; has_s = true; pass_stencil = b->format; }
             uint32_t lv = st.rt.has_dview && (st.rt.dview.setmask & 1) ? st.rt.dview.base_level : 0;
             uint32_t ew = level_extent(b->width, lv), eh = level_extent(b->height, lv);
+            if (g_debug_frame)
+                LOG("[pass] depth %p %ux%u f%#x: image %ux%u lv %u -> %ux%u\n", (void *)st.rt.depth, st.rt.depth->width,
+                    st.rt.depth->height, st.rt.depth->format, b->width, b->height, lv, ew, eh);
             if (!w) { renderer_texture_scale(st.rt.depth, &pass_sx, &pass_sy); w = ew; }
             if (ew < minw) minw = ew;
             if (eh < minh) minh = eh;
@@ -1033,7 +1048,7 @@ static const VkDynamicState DYN[] = {
     VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_FRONT_FACE, VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY,
     VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE, VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
     VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE,
-    VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE};
+    VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE, VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE};
 #define NDYN (sizeof DYN / sizeof DYN[0])
 
 // Fixed-function state that isn't part of a pipeline is set explicitly on every bind (it persists across pipelines).
@@ -1055,6 +1070,7 @@ static void dyn_defaults(VkCommandBuffer cb) {
     vkCmdSetStencilOp(cb, VK_STENCIL_FACE_FRONT_AND_BACK, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP,
                       VK_COMPARE_OP_ALWAYS);
     vkCmdSetPrimitiveRestartEnable(cb, VK_FALSE);
+    vkCmdSetRasterizerDiscardEnable(cb, VK_FALSE);
 }
 
 typedef struct { uint64_t key; VkPipeline pipe; } PipeEnt;
@@ -1111,6 +1127,10 @@ static VkPipeline clear_pipeline(int index, int kind, uint32_t mask, bool depth,
 
 static void clear(int index, int kind, const void *color, uint32_t mask, bool depth, float dval, bool stencil, uint32_t sval,
                   uint32_t smask) {
+    if (g_debug_frame)
+        LOG("[clear] index %d kind %d mask %#x depth %d (%.3f) stencil %d (%u/%#x) | rt %d %p depth %p | scissor %d %d %d %d\n",
+            index, kind, mask, depth, dval, stencil, sval, smask, st.rt.ncolor, st.rt.ncolor ? (void *)st.rt.color[0] : NULL,
+            (void *)st.rt.depth, st.scissor[0][0], st.scissor[0][1], st.scissor[0][2], st.scissor[0][3]);
     begin_pass();
     VkCommandBuffer cb = vk_cmd();
     vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
@@ -2372,14 +2392,29 @@ static VkImageView image_view(int stage, const ShaderTexture *im) {
     if (im->bindless) {
         Range u = st.ubuf[stage][im->bindless_cbuf];
         if (u.addr && im->bindless_offset + 4 <= u.size) h = *(const uint32_t *)(uintptr_t)(u.addr + im->bindless_offset);
+        // Constant buffer 2 past what the game bound there: the driver's handle table (bound textures at 0x20 + 8 *
+        // slot, then bound images at 0x120 + 8 * slot) - the volumetric fog writer reads its image's handle that way
+        else if (im->bindless_cbuf == 2 && im->bindless_offset >= 0x20 && im->bindless_offset < 0x160) {
+            uint32_t off = im->bindless_offset;
+            h = off < 0x120 ? st.tex[stage][(off - 0x20) / 8] : st.img[stage][(off - 0x120) / 8];
+        }
     } else {
         int slot = ((int)im->handle_offset - 0x20) / 8;
         if (slot >= 0 && slot < 8) h = st.img[stage][slot];
     }
     uint32_t tic = h & 0xFFFFF;
+    if (g_debug_frame && (!h || !st.tpool || tic >= (uint32_t)st.tpool->count || !((NvnTexEntry *)st.tpool->entries)[tic].tex))
+        LOG("[draw]   image (stage %d) not found: bindless %d cbuf %d off %#x slot %d handle %llx pool %p | cbuf %llx size %llu"
+            " | images %llx %llx\n", stage, im->bindless, im->bindless_cbuf, im->bindless_offset, ((int)im->handle_offset - 0x20) / 8,
+            (unsigned long long)h, (void *)st.tpool, (unsigned long long)st.ubuf[stage][im->bindless_cbuf].addr,
+            (unsigned long long)st.ubuf[stage][im->bindless_cbuf].size, (unsigned long long)st.img[stage][0],
+            (unsigned long long)st.img[stage][1]);
     if (!h || !st.tpool || tic >= (uint32_t)st.tpool->count) return VK_NULL_HANDLE;
     NvnTexEntry *e = &((NvnTexEntry *)st.tpool->entries)[tic];
     if (!e->tex) return VK_NULL_HANDLE;
+    if (g_debug_frame)
+        LOG("[draw]   image (stage %d): %p %ux%ux%u f%#x target %u addr %llx type %d\n", stage, (void *)e->tex, e->tex->width,
+            e->tex->height, e->tex->depth, e->tex->format, e->tex->target, (unsigned long long)e->tex->addr, im->type);
     renderer_mark_gpu_owned(e->tex);
     return vk_view(e->tex, &e->view, e->has_view, true, im->type);
 }
@@ -2407,6 +2442,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
                                       .descriptorCount = 1, .descriptorType = b->type};
         if (b->type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE && b->binding >= IMAGE_BINDING) {
             int ii_ = (int)b->binding - IMAGE_BINDING;
+            if (g_debug_frame) LOG("[draw]   storage binding %u set %u (stage %d): shader images %d\n", b->binding, set, stage, si->nimg);
             VkImageView v = ii_ < si->nimg ? image_view(stage, &si->img[ii_]) : VK_NULL_HANDLE;
             if (!v) continue;  // (no image found: the binding stays unwritten)
             ii[n] = (VkDescriptorImageInfo){VK_NULL_HANDLE, v, VK_IMAGE_LAYOUT_GENERAL};
@@ -2774,6 +2810,8 @@ static void draw_(CmdRec *r, bool indexed) {
     if (ss_need(SS_TOPO, ss.topo == tp)) { ss.topo = tp; vkCmdSetPrimitiveTopology(cb, tp); }
     VkBool32 pre = st.prim_restart && native && (mode == 3 || mode == 5);
     if (ss_need(SS_PRE, ss.pre == pre)) { ss.pre = pre; vkCmdSetPrimitiveRestartEnable(cb, pre); }
+    VkBool32 rd = st.raster_discard;
+    if (ss_need(SS_RD, ss.rd == rd)) { ss.rd = rd; vkCmdSetRasterizerDiscardEnable(cb, rd); }
     {
         float f[3] = {0, 0, 0};
         static int off = -1;
@@ -2979,6 +3017,22 @@ static void draw_(CmdRec *r, bool indexed) {
     }
 }
 
+// (debug) a GPU-written 3D texture's texels, raw (LARECOMP_DUMP_3D in a debug frame)
+static void dump_gpu_3d(const TexBackend *b, uint32_t bpp, const char *path) {
+    vk_end_pass();
+    VkCommandBuffer cb = vk_cmd();
+    vk_full_barrier(cb);
+    uint64_t size = (uint64_t)b->width * b->height * b->depth * bpp;
+    VkSpan out = vk_readback(size);
+    VkBufferImageCopy c = {.bufferOffset = out.off, .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                           .imageExtent = {b->width, b->height, b->depth}};
+    vkCmdCopyImageToBuffer(cb, b->image, VK_IMAGE_LAYOUT_GENERAL, out.buf, 1, &c);
+    renderer_flush();
+    FILE *f = fopen(path, "wb");
+    if (f) { fwrite(out.ptr, 1, size, f); fclose(f); }
+    LOG("[draw]     GPU texels -> %s (%llu bytes)\n", path, (unsigned long long)size);
+}
+
 static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
     LOG("[draw] %s inst %llu mode %llu count %llu prog vs=%llx fs=%llx | vs cb %#x fs cb %#x | rt %d", indexed ? "e" : "a",
         (unsigned long long)(indexed ? r->x[6] : r->x[4]), (unsigned long long)r->x[0], (unsigned long long)r->x[2],
@@ -2987,9 +3041,9 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
     for (int i = 0; i < st.rt.ncolor; i++)
         if (st.rt.color[i]) LOG(" %ux%u/f%#x %p", st.rt.color[i]->width, st.rt.color[i]->height, st.rt.color[i]->format, (void *)st.rt.color[i]);
     if (st.rt.depth) LOG(" d%#x %p", st.rt.depth->format, (void *)st.rt.depth);
-    LOG(" | vp %.0f %.0f %.0f %.0f | attrs %#x blend %#x ds %02x%02x%02x poly %02x%02x chmask %08x\n", st.viewport[0][0], st.viewport[0][1],
+    LOG(" | vp %.0f %.0f %.0f %.0f | attrs %#x blend %#x ds %02x%02x%02x poly %02x%02x chmask %08x%s\n", st.viewport[0][0], st.viewport[0][1],
         st.viewport[0][2], st.viewport[0][3], pr->vi->attr_mask, st.color_state[0], st.ds[0], st.ds[1], st.ds[2], st.poly[0], st.poly[1],
-        st.channel_mask);
+        st.channel_mask, st.raster_discard ? " RASTERIZER-DISCARD" : "");
     if (st.color_state[0] & 1) {  // blending on target 0: its state (target, src/dst color, src/dst alpha, eq color/alpha, advanced)
         const uint8_t *bl = st.blend[0];
         LOG("[draw]   blend0: %u | c %u %u a %u %u | eq %u %u | adv %u\n", bl[0], bl[1], bl[2], bl[3], bl[4], bl[5], bl[6], bl[7]);
@@ -3018,7 +3072,11 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
             (void *)t, t->width, t->height, t->format, b ? b->levels : 0, b ? b->width : 0, b ? b->height : 0, b ? b->sx : 0,
             b ? b->sy : 0, b && b->scalable ? " scalable" : "", t->target, t->depth, t->levels, b ? b->depth : 0,
             b && b->gpu_owned ? "gpu" : "uploaded");
-        if (t->target == 2 && (t->addr || (b && b->sparse)) && getenv("LARECOMP_DUMP_3D")) {  // (debug) a 3D texture's guest memory, raw
+        if (t->target == 2 && b && b->gpu_owned && b->depth > 1 && getenv("LARECOMP_DUMP_3D") && t->layout.fmt) {
+            char path[160];
+            snprintf(path, sizeof path, "build/gpu3d_%ux%ux%u_f%x.bin", b->width, b->height, b->depth, t->format);
+            dump_gpu_3d(b, t->layout.fmt->bpb, path);
+        } else if (t->target == 2 && (t->addr || (b && b->sparse)) && getenv("LARECOMP_DUMP_3D")) {  // (debug) a 3D texture's guest memory, raw
             char path[160];
             snprintf(path, sizeof path, "build/tex3d_%llx_%ux%ux%u_f%x.bin", (unsigned long long)(t->addr ? t->addr : (uintptr_t)t), t->width, t->height,
                      t->depth, t->format);
@@ -3657,6 +3715,7 @@ static void exec_list(uint64_t handle, int depth) {
         }
         case CMD_SET_POLYGON_OFFSET: memcpy(st.poly_offset, r->f, sizeof st.poly_offset); break;
         case CMD_SET_PRIMITIVE_RESTART: st.prim_restart = r->x[0] != 0; st.restart_index = (uint32_t)r->x[1]; break;
+        case CMD_SET_RASTERIZER_DISCARD: st.raster_discard = r->x[0] != 0; break;
         case CMD_SET_COPY_STRIDES: st.copy_row_stride = r->x[0]; st.copy_image_stride = r->x[1]; break;
         case CMD_CLEAR_COLOR: {
             snap_reason = "clear-color"; snapshots_invalidate(NULL);
