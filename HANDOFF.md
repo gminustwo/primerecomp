@@ -59,9 +59,12 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
    `st.ubuf[stage][c - 3]`), so the "cb4 = 0 0 0" reading was wrong: look again.
 3. ~~Frame 7000 of the intro replay is black~~: the fog volume bug, fixed in 422cc4e.
 4. Save slot area name `<ERROR>` with a forced autosave: check with a save made at a real save station.
-5. **Two other geometry shaders are still dropped** (`gs 729c002100`, `729c004100`, logged once per program as
-   "not supported, drawn without it"): passthrough shaders that read all three vertices and exit early for some
-   primitives (culling, probably). Drawn without them: no culling. Their code: `LARECOMP_SAVE_MSL=1` writes
+5. **Two other geometry shaders are still dropped** (`gs 729c002100`, `729c004100`, logged once per program with
+   the frame: 5131 and 10558 of the intro replay). Full geometry shaders: the vertex shader only outputs world
+   positions (v0), the GS projects the triangle with c[3] matrices, culls (EXIT) and emits (OUT, past the first
+   0x800 bytes - dump more to see it). Their draws are depth-only into the main depth buffer and draw nothing
+   without the GS; no visible difference found. A general GS translator (inputs per vertex via ISBERD/ALD,
+   AST + OUT.EMIT/CUT -> EmitVertex/EndPrimitive, the VMAD/50f0 vertex-index prologue) would cover them. Their code: `LARECOMP_SAVE_MSL=1` writes
    `build/build/glsl/<addr>_stage2.bin` (0x30 NVN header, 0x50 SPH, then instructions).
 6. Uploads: 50-170 MB every 2 s in gameplay, 500 MB at the title (the video?). Frame rate holds; not looked at.
 7. Navigating the frigate by script: the door after the landing site is opened by locking on (ZL) to its four
