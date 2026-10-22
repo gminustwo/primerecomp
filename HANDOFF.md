@@ -109,6 +109,8 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   - Pictures: `LARECOMP_SHOT_AT=<frame>,...` (the game image, `build/build/frames/`), or
     `LARECOMP_WINDOW_SHOT=<frame>` with `LARECOMP_EXIT_AFTER_SHOT=1` (the window, then exit).
   - The runtime's cwd is `build/`, so its outputs land in `build/build/`.
+- The title screen's attract demos (no input, from frame ~6000) are 30 s videos: they test the movie player
+  (fine), not the renderer. Later areas need real play or saves.
 - **Reading a debug frame:**
   - A `[draw] e/a` line is printed **before** its pass begins.
   - The `[pass]` line that follows it, and the `[draw] vp` line, belong to that draw.
