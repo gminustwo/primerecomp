@@ -120,5 +120,8 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   `LARECOMP_AUTOSAVE_AT=<frame>`.
 - **Regenerating game code** (after `tools/patches.py` changes):
   `cd tools && ./venv/Scripts/python gen.py main ../private/exefs/main 0x7000000000 ../generated/main`, then `make`.
-- **Updating the playtest build:** copy `build/lasrecomp.exe`, `build/lasgame.dll` and `build/lasgame.dll.id` into
-  `private/playtest/MPRRecomp/`. This only works while the game isn't running.
+- **Updating the playtest build:** the playtest exe is a release (GUI) build, started by Steam directly (its
+  non-Steam shortcut targets lasrecomp.exe with `--play "D:\Games\pcports\MPRRecomp\private\game"`, so Steam
+  Input applies; it logs to lasrecomp.log itself). Link one with `rm build/lasrecomp.exe && make RELEASE=1
+  build/lasrecomp.exe`, copy it and `build/lasgame.dll` / `.dll.id` into `private/playtest/MPRRecomp/` (only while
+  the game isn't running), then relink the console dev exe (`rm build/lasrecomp.exe && make`).
