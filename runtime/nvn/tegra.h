@@ -31,6 +31,7 @@ typedef struct {
 // Default block height for a texture (what the NVN driver picks), and the full storage layout.
 uint32_t tegra_default_block_height_log2(uint32_t height_in_blocks);
 void tegra_layout_init(TexLayout *t);
+void tegra_layout_sparse_3d(TexLayout *t);
 LevelLayout tegra_level(const TexLayout *t, uint32_t level);
 uint64_t tegra_layer_size(const TexLayout *t);
 uint64_t tegra_total_size(const TexLayout *t);

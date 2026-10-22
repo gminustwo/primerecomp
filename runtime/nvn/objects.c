@@ -190,7 +190,12 @@ NVN(nvnMemoryPoolInitialize) {
     SET_HOST(A(0), p);
     RET(1);
 }
-NVN(nvnMemoryPoolFinalize) { free(HOST(NvnPool, A(0))); SET_HOST(A(0), 0); }
+NVN(nvnMemoryPoolFinalize) {
+    NvnPool *p = HOST(NvnPool, A(0));
+    if (p) free(p->pages);
+    free(p);
+    SET_HOST(A(0), 0);
+}
 NVN(nvnMemoryPoolSetDebugLabel) { (void)c; }
 NVN(nvnMemoryPoolMap) { RET(HOST(NvnPool, A(0))->storage); }
 NVN(nvnMemoryPoolGetBufferAddress) { RET(HOST(NvnPool, A(0))->storage); }  // GPU address == CPU address
@@ -201,7 +206,29 @@ NVN(nvnMemoryPoolFlushMappedRange) {
     backend_pool_written(p->storage + A(1), A(2));
 }
 NVN(nvnMemoryPoolInvalidateMappedRange) { (void)c; }
-NVN(nvnMemoryPoolMapVirtual) { RET(1); }
+// MapVirtual(virtual pool, count, requests): {physical pool*, physical offset, virtual offset, size, storage class}.
+// Sparse textures (the lighting volumes) live in virtual pools; the uploader reads them through the page table.
+NVN(nvnMemoryPoolMapVirtual) {
+    NvnPool *v = HOST(NvnPool, A(0));
+    uint64_t npages = (v->size + NVN_SPARSE_PAGE - 1) / NVN_SPARSE_PAGE;
+    if (!v->pages) v->pages = calloc(npages ? npages : 1, sizeof *v->pages);
+    static int log = -1;
+    if (log < 0) log = getenv("LARECOMP_LOG_SPARSE") != NULL;
+    for (int i = 0; i < (int)A(1); i++) {
+        uint64_t r = A(2) + (uint64_t)i * 0x28;
+        uint64_t phys = G(uint64_t, r, 0), poff = G(uint64_t, r, 8), voff = G(uint64_t, r, 0x10), size = G(uint64_t, r, 0x18);
+        NvnPool *pp = phys ? HOST(NvnPool, phys) : NULL;
+        extern uint64_t vk_frame_counter(void);
+        if (log) LOG("[sparse] f%llu pool %p map %llx+%llx <- %p+%llx\n", (unsigned long long)vk_frame_counter(), (void *)v, (unsigned long long)voff,
+                     (unsigned long long)size, (void *)pp, (unsigned long long)poff);
+        for (uint64_t o = 0; o < size; o += NVN_SPARSE_PAGE) {
+            uint64_t pg = (voff + o) / NVN_SPARSE_PAGE;
+            if (pg < npages) v->pages[pg] = pp && pp->storage ? pp->storage + poff + o : 0;
+        }
+    }
+    v->map_gen++;
+    RET(1);
+}
 
 // ================================================================== buffers
 // Builder: device@0 pool@8 offset@0x10 size@0x18. Buffer: address@0 pool@8 offset@0x10 size@0x18 id@0x20
@@ -352,6 +379,10 @@ static NvnTexture *texture_from_builder(uint64_t b) {
     t->pool_offset = G(uint64_t, b, 0x40);
     t->addr = t->pool ? t->pool->storage + t->pool_offset : 0;
     builder_layout(b, &t->layout);
+    if (t->target == 2 && t->pool && (t->pool->flags & NVN_POOL_VIRTUAL)) tegra_layout_sparse_3d(&t->layout);
+    if (t->pool && (t->pool->flags & NVN_POOL_VIRTUAL) && getenv("LARECOMP_LOG_SPARSE"))
+        LOG("[sparse] texture target %u %ux%ux%u fmt %#x flags %#x levels %u at %llx\n", t->target, t->width, t->height,
+            t->depth, t->format, t->flags, t->levels, (unsigned long long)t->pool_offset);
     t->debug_id = next_debug_id++;
     return t;
 }

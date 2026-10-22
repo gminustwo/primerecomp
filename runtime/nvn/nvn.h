@@ -16,9 +16,14 @@
 #define SET_HOST(guest, p) (*(uint64_t *)(uintptr_t)(guest) = (uint64_t)(uintptr_t)(p))
 #define G(T, base, off) (*(T *)((uint8_t *)(uintptr_t)(base) + (off)))
 
+#define NVN_POOL_VIRTUAL 0x200   // NVN_MEMORY_POOL_FLAGS_VIRTUAL_BIT: no storage, pages mapped in from physical pools
+#define NVN_SPARSE_PAGE 0x10000  // the mapping granularity
+
 typedef struct NvnPool {
     uint64_t storage, size;
     uint32_t flags;
+    uint64_t *pages;   // virtual pools: guest address each 64 KB page maps to (0 = unmapped)
+    uint32_t map_gen;  // virtual pools: bumped on every mapping change
 } NvnPool;
 
 typedef struct NvnTexture {

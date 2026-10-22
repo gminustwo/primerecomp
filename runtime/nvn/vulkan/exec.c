@@ -3018,12 +3018,12 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
             (void *)t, t->width, t->height, t->format, b ? b->levels : 0, b ? b->width : 0, b ? b->height : 0, b ? b->sx : 0,
             b ? b->sy : 0, b && b->scalable ? " scalable" : "", t->target, t->depth, t->levels, b ? b->depth : 0,
             b && b->gpu_owned ? "gpu" : "uploaded");
-        if (t->target == 2 && t->addr && getenv("LARECOMP_DUMP_3D")) {  // (debug) a 3D texture's guest memory, raw
+        if (t->target == 2 && (t->addr || (b && b->sparse)) && getenv("LARECOMP_DUMP_3D")) {  // (debug) a 3D texture's guest memory, raw
             char path[160];
-            snprintf(path, sizeof path, "build/tex3d_%llx_%ux%ux%u_f%x.bin", (unsigned long long)t->addr, t->width, t->height,
+            snprintf(path, sizeof path, "build/tex3d_%llx_%ux%ux%u_f%x.bin", (unsigned long long)(t->addr ? t->addr : (uintptr_t)t), t->width, t->height,
                      t->depth, t->format);
             FILE *f = fopen(path, "wb");
-            if (f) { fwrite((const void *)(uintptr_t)t->addr, 1, (size_t)tegra_total_size(&t->layout), f); fclose(f); }
+            if (f) { fwrite(t->addr ? (const void *)(uintptr_t)t->addr : (const void *)b->sparse, 1, (size_t)tegra_total_size(&t->layout), f); fclose(f); }
             LOG("[draw]     dumped %s (%llu bytes, bh %u bd %u)\n", path, (unsigned long long)tegra_total_size(&t->layout),
                 t->layout.block_height_log2, t->layout.block_depth_log2);
         }

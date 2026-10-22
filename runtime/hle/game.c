@@ -42,6 +42,24 @@ void game_pace_present(int interval) {
     next += period;
 }
 
+// (debug) LARECOMP_AUTOSAVE_AT=<frame>: from that frame on, the next gameplay frame starts the game's autosave
+// (CStateManager::StartAutoSave), which writes the current slot the way a save station does - for testing saves
+// without playing to one. Called at the start of CStateManager::UpdateAutoSave (tools/patches.py), state manager in
+// x0; every register is put back afterwards.
+void rt_debug_autosave(Cpu *c) {
+    static long at = -2;
+    if (at == -2) at = getenv("LARECOMP_AUTOSAVE_AT") ? atol(getenv("LARECOMP_AUTOSAVE_AT")) : -1;
+    extern uint64_t vk_frame_counter(void);
+    if (at < 0 || (long)vk_frame_counter() < at) return;
+    at = -1;
+    LOG("[save] debug autosave (state manager %llx)\n", (unsigned long long)c->x[0]);
+    Cpu *saved = malloc(sizeof *saved);
+    *saved = *c;
+    guest_call(c, guest_sym("_ZN13CStateManager13StartAutoSaveEv"));
+    *c = *saved;
+    free(saved);
+}
+
 // The window may show more than 16:9 (Video tab, aspect ratio unlocked). That needs the game's cameras widened,
 // which isn't done for this game yet: always the original framing.
 bool widescreen_allowed(void) { return false; }

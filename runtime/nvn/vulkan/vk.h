@@ -85,6 +85,8 @@ typedef struct TexBackend {
     bool astc_srgb;
     int tp;              // runtime/nvn/texpatch.c: 0 not checked yet, -1 none, else known UI texture + 1
     uint32_t tp_gen;     // texpatch_generation() it was last uploaded with
+    uint8_t *sparse;     // sparse textures: their bytes gathered from the virtual pool's mapped pages
+    uint32_t sparse_gen; // the pool's mapping generation those bytes reflect
     int reg;  // slot in textures.c's live list + 1 (a reboot destroys them all)
 } TexBackend;
 

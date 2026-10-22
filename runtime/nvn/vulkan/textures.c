@@ -420,6 +420,7 @@ void backend_texture_destroyed(NvnTexture *t) {
         live_remove(b);
         destroy_image(b);
         free(b->pending_rgba);
+        free(b->sparse);
         free(b);
     }
     t->backend = NULL;
@@ -483,9 +484,46 @@ static void upload_pending(TexBackend *b) {
                 vkCmdCopyBufferToImage(cb, s.buf, b->image, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
 }
 
+// Sparse textures (storage in a virtual pool, objects.c nvnMemoryPoolMapVirtual): may the bytes have changed since
+// the last gather? 0 no, 1 yes, -1 unknown (mapped pages the write tracking doesn't cover).
+static int sparse_changed(NvnTexture *t, TexBackend *b, uint64_t total) {
+    extern int vk_pages_changed(uint64_t addr, uint64_t size, uint32_t since, uint32_t *now);
+    NvnPool *p = t->pool;
+    if (!p->pages) return 0;  // nothing mapped yet
+    int ch = b->sparse_gen != p->map_gen;
+    b->sparse_gen = p->map_gen;
+    uint32_t now = b->wgen, since = b->wgen;
+    for (uint64_t o = t->pool_offset & ~(uint64_t)(NVN_SPARSE_PAGE - 1); o < t->pool_offset + total; o += NVN_SPARSE_PAGE) {
+        uint64_t a = p->pages[o / NVN_SPARSE_PAGE];
+        if (!a) continue;
+        int c = vk_pages_changed(a, NVN_SPARSE_PAGE, since, &now);
+        if (c < 0 && ch == 0) ch = -1;
+        if (c > 0) ch = 1;
+    }
+    b->wgen = now;
+    return ch;
+}
+
+// ... and the bytes themselves: mapped pages copied, unmapped ones zero (what the hardware returns for them).
+static const uint8_t *sparse_gather(NvnTexture *t, TexBackend *b, uint64_t total) {
+    NvnPool *p = t->pool;
+    if (!b->sparse) b->sparse = malloc(total);
+    for (uint64_t o = 0; o < total;) {
+        uint64_t v = t->pool_offset + o, in = v % NVN_SPARSE_PAGE, n = NVN_SPARSE_PAGE - in;
+        if (n > total - o) n = total - o;
+        uint64_t a = p->pages ? p->pages[v / NVN_SPARSE_PAGE] : 0;
+        if (a) memcpy(b->sparse + o, (const void *)(uintptr_t)(a + in), n);
+        else memset(b->sparse + o, 0, n);
+        o += n;
+    }
+    return b->sparse;
+}
+
 uint64_t prof_tex_checks, prof_tex_samples, prof_tex_full, prof_tex_full_bytes, prof_tex_dyn, prof_tex_watch_skips;
 static void upload_texture(NvnTexture *t, TexBackend *b) {
-    if (!t->addr || t->target == 10) return;
+    bool sparse = t->pool && (t->pool->flags & NVN_POOL_VIRTUAL);
+    if ((!t->addr && !sparse) || t->target == 10) return;
+    const uint8_t *base = (const uint8_t *)(uintptr_t)t->addr;
     uint64_t frame = vk_frame_counter();
     if (b->uploaded && b->checked_frame == frame) return;
     if (b->uploaded && !b->dynamic && ((frame + ((uintptr_t)b >> 6)) & 7)) return;
@@ -495,6 +533,15 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
     uint64_t total = tegra_total_size(&t->layout);
     b->checked_frame = frame;
     prof_tex_checks++;
+    if (sparse) {
+        if (!sparse_changed(t, b, total) && b->uploaded) return;
+        base = sparse_gather(t, b, total);
+        uint64_t sh = hash_full(base, total);
+        if (b->uploaded && sh == b->data_hash) return;
+        b->data_hash = sh;
+        b->uploaded = true;
+        goto upload;
+    }
     if (t->flags & 0x10) b->dynamic = true;
     if (full_hash_budget_frame != frame) { full_hash_budget_frame = frame; full_hash_budget = 4 << 20; }
     const uint8_t *mem = (const uint8_t *)(uintptr_t)t->addr;
@@ -536,6 +583,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
     if (b->tp > 0) b->tp_gen = texpatch_generation();
     b->data_hash = h;
     b->uploaded = true;
+upload:
     if (b->format != mf.vf && !b->astc_bw) return;  // unsupported format: nothing sensible to copy
     VkCommandBuffer cb = vk_upload_cmd();
     uint32_t layers = t->layout.layers ? t->layout.layers : 1;
@@ -547,7 +595,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
         for (uint32_t lv = 0; lv < levels; lv++) {
             LevelLayout l = tegra_level(&t->layout, lv);
             if (b->astc_bw) {  // blocks -> linear block rows -> RGBA8 texels
-                const uint8_t *src = (const uint8_t *)(uintptr_t)t->addr + layer * layer_size + l.offset;
+                const uint8_t *src = base + layer * layer_size + l.offset;
                 uint8_t *blocks = malloc((uint64_t)l.wb * l.hb * 16);
                 if (linear) for (uint32_t y = 0; y < l.hb; y++) memcpy(blocks + (uint64_t)y * l.wb * 16, src + (uint64_t)y * t->stride, l.wb * 16);
                 else tegra_deswizzle(src, blocks, l.wb, l.hb, 1, 16, l.block_height_log2, l.block_depth_log2);
@@ -568,7 +616,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
             uint32_t out_row = expand ? l.wb * 4 : row;
             VkSpan s = vk_transient((uint64_t)out_row * l.hb * l.d, 16);
             uint8_t *lin = expand ? malloc(sz) : s.ptr;
-            const uint8_t *src = (const uint8_t *)(uintptr_t)t->addr + layer * layer_size + l.offset;
+            const uint8_t *src = base + layer * layer_size + l.offset;
             if (linear) {
                 for (uint32_t y = 0; y < l.hb; y++) memcpy(lin + (uint64_t)y * row, src + (uint64_t)y * t->stride, row);
             } else {

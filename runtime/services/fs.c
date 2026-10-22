@@ -418,6 +418,9 @@ static uint32_t errno_result(void) {
     return MAKE_RESULT(2, 4000);
 }
 
+// files under the host save directory (logged)
+static bool is_save_path(const char *p) { return !strncmp(p, g_save_dir, strlen(g_save_dir)); }
+
 static void file(Service *s, IpcReq *req, IpcResp *resp) {
     HostFile *f = s->state;
     switch (req->cmd) {
@@ -426,7 +429,7 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
         IpcBuf *b = out_buf(req, 0);
         if ((uint64_t)size > b->size) size = (int64_t)b->size;
         ssize_t n = pread(f->fd, (void *)(uintptr_t)b->addr, (size_t)size, off);
-        if (strstr(f->path, "savedata")) {
+        if (is_save_path(f->path)) {
             LOG("[save] read %s off %lld size %lld -> guest %llx\n", f->path, (long long)off, (long long)size, (unsigned long long)b->addr);
         }
         OUT(int64_t, 0) = n < 0 ? 0 : n;
@@ -436,7 +439,7 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
     case 1: {  // Write(option, offset, size) <- A
         int64_t off = IN(int64_t, 8), size = IN(int64_t, 16);
         IpcBuf *a = in_buf(req, 0);
-        if (strstr(f->path, "savedata"))
+        if (is_save_path(f->path))
             LOG("[save] write %s off %lld size %lld <- guest %llx\n", f->path, (long long)off, (long long)size, (unsigned long long)a->addr);
         if (pwrite(f->fd, (void *)(uintptr_t)a->addr, (size_t)size, off) < 0) resp->result = errno_result();
         break;

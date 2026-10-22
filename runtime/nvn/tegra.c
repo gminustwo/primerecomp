@@ -23,6 +23,16 @@ static uint32_t block_depth_for(uint32_t depth) {
     return log2;
 }
 
+// Sparse 3D textures are tiled in 64 KB tiles of the standard sparse block shape (texels or compressed blocks:
+// 64x32x32 at 1 byte, 32x32x32 at 2, 32x32x16 at 4, 32x16x16 at 8, 16x16x16 at 16), and a GOB block is one
+// tile column: its height and depth are the tile's. Metroid Prime Remastered's lighting volumes (512x256x368 BC1 and
+// BC7 in virtual pools) decode smoothly with exactly that (block height 2 GOBs, depth 16) and with nothing else.
+void tegra_layout_sparse_3d(TexLayout *t) {
+    uint32_t bpb = t->fmt ? t->fmt->bpb : 4;
+    t->block_height_log2 = bpb >= 8 ? 1 : 2;      // 16 or 32 rows
+    t->block_depth_log2 = bpb >= 4 ? 4 : 5;       // 16 or 32 slices
+}
+
 void tegra_layout_init(TexLayout *t) {
     uint32_t hb = div_up(t->height, t->fmt->bh);
     t->block_height_log2 = tegra_default_block_height_log2(hb);
