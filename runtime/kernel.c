@@ -349,12 +349,16 @@ static uint32_t svc_arbitrate_unlock(uint64_t addr) {
 static uint32_t svc_wait_process_wide_key(uint64_t mutex, uint64_t key, uint32_t tag, int64_t timeout) {
     pthread_mutex_lock(&g_klock);
     KThread *t = t_cur;
+    // The key ("has waiters") is set before the mutex is released, as Horizon does: a guest thread takes a free
+    // mutex in user mode (no kernel lock), and one that took it in between, changed the state and read the key
+    // as 0 skipped its signal - this thread then slept forever (rare freezes at world transitions: the main
+    // thread in CScopedSceneTransferLock, the graphics thread on a light event).
+    __atomic_store_n(u32p(key), 1, __ATOMIC_SEQ_CST);
     mutex_release(mutex);
     t->wait_kind = WAIT_CONDVAR;
     t->wait_addr = key;
     t->wait_mutex = mutex;
     t->wait_tag = tag;
-    __atomic_store_n(u32p(key), 1, __ATOMIC_SEQ_CST);
     uint32_t r = block_current(timeout);
     if (r != R_OK) {
         // timed out / cancelled: still must reacquire the mutex
