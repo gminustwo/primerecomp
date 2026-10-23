@@ -8,7 +8,8 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   autosave was forced with `LARECOMP_AUTOSAVE_AT`, then reloaded after a restart.
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it contains the game library), started
   with `Play Metroid Prime Remastered.bat`. Their notes go in `ISSUES.md` there and their log is
-  `lasrecomp.log`. It holds build efbe616 (2026-10-22, a release exe): everything below is in it. No issues written there yet.
+  `lasrecomp.log`. It holds build efbe616 (2026-10-22, a release exe); a77199c waits in private/playtest/update/ (the user's game was
+  running) - `Install_update.bat` in the playtest folder copies it in once the game is closed: everything below is in it. No issues written there yet.
 - **User-reported open bugs:**
   - ~~The star backdrop and Tallon IV are missing in space.~~ Fixed (CC tests, below).
   - ~~Samus renders wrong~~: a burst of spikes in the landing cutscene (LDC offsets, fixed in 5c145b5).
@@ -59,6 +60,12 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 - **The user got past the frigate onto Tallon IV** (the elevator scans since the occlusion queries). Still open
   from them: "the door still is black" (which door: unknown - its F9 capture was overwritten; F9 now keeps each
   capture in build/f9_<frame>/).
+- **The main menu stutter** ("very jittery", gameplay fine): one long frame (26 ms, then 7) every 2 s - the stats
+  line: LOG was an unbuffered fprintf, which the Windows CRT writes in pieces (~0.4 ms a line, 8 ms for the stats).
+  LOG now formats then writes once (rt_log). Ruled out on the way: the simulation (one tick every frame), the movies'
+  clock (exactly 1/60 per frame), video decoding (60 fps, ahead of display), texture change detection, the pace
+  mechanism. A "30 fps main menu" option was tried and dropped (its 1/30 step stuck into the game: the state manager
+  logic's constructor reads the step). LARECOMP_TICK_LOG / LARECOMP_MOVIE_TIMING are the tools.
 - **Button glyphs** (fragments of brackets): the default block height is the power of two nearest the height in GOBs
   (tegra.c; LARECOMP_BH_PROBE scored every texture between powers of two: 9 rows 1 GOB, 13 2, 26 4, 52 8).
 - **The map's filled rooms** (wireframe only): geometry shaders are translated now (translate.c: VMAD / VSETP /
