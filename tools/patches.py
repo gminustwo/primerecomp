@@ -54,3 +54,8 @@ PATCHES[0x70003e4bec] = lambda gen, a: ('{ c->x[29] = c->sp; extern void rt_area
 # button counts as pressed, so each cutscene (all skippable then: runtime/hle/game.c) ends on its first frame.
 PATCHES[0x70004bd840] = lambda gen, a: ('{ extern int rt_skip_cinematics(void); if (rt_skip_cinematics()) c->x[0] |= 1; '
                                         'if ((c->x[0] & 1) == 0) goto L_70004bd788; }')
+
+# CWorldStateMP1::SetCurrentArea (each gameplay frame, from GameMainLoop): `stp x1, x2, [x0, #0x10]` after the runtime
+# notes the world state (runtime/hle/game.c rt_world_state: LARECOMP_SAVE_AREA sets its desired area for a save).
+PATCHES[0x7000c82748] = lambda gen, a: ('{ extern void rt_world_state(Cpu *); rt_world_state(c); '
+                                        'ST64(c->x[0] + 0x10, c->x[1]); ST64(c->x[0] + 0x18, c->x[2]); }')

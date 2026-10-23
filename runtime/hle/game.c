@@ -69,15 +69,35 @@ void rt_debug_autosave(Cpu *c) {
     LOG("[save] debug autosave (state manager %llx)\n", (unsigned long long)c->x[0]);
     Cpu *saved = malloc(sizeof *saved);
     *saved = *c;
+    // LARECOMP_SAVE_AREA=<area id, 32 hex digits> or "current": the save's desired area, where loading it starts (the
+    // world state's +0x40, CWorldStateMP1::SetDesiredAreaAssetId; +0x10 is the current area) - by default the
+    // frigate's landing site
+    const char *area = getenv("LARECOMP_SAVE_AREA");
+    extern uint64_t g_world_state;
+    if (area && g_world_state) {
+        uint8_t *ws = (uint8_t *)(uintptr_t)g_world_state;
+        if (!strcmp(area, "current")) memcpy(ws + 0x40, ws + 0x10, 16);
+        else if (strlen(area) == 32)
+            for (int i = 0; i < 16; i++) { unsigned v = 0; sscanf(area + 2 * i, "%2x", &v); ws[0x40 + i] = (uint8_t)v; }
+        char h[33];
+        for (int i = 0; i < 16; i++) snprintf(h + 2 * i, 3, "%02x", ws[0x40 + i]);
+        LOG("[save] desired area %s (world state %llx)\n", h, (unsigned long long)g_world_state);
+    }
     guest_call(c, guest_sym("_ZN13CStateManager13StartAutoSaveEv"));
     *c = *saved;
     free(saved);
 }
 
+uint64_t g_world_state;  // (the running world's CWorldStateMP1)
+void rt_world_state(Cpu *c) { g_world_state = c->x[0]; }
+
 // ---- (debug) areas
 // An area (a room) is a 16-byte CObjectId (GUID); each one the game loads is logged ("[area] load ..."). Called from
 // CGameAreaManager::BeginAreaLoad (tools/patches.py), the ID at [x1], the load type in w2.
+static uint64_t g_area_mgr;  // (the CGameAreaManager of the latest load: the running game's)
+
 void rt_area_load(Cpu *c) {
+    g_area_mgr = c->x[0];
     const uint8_t *id = (const uint8_t *)(uintptr_t)c->x[1];
     char h[33];
     for (int i = 0; i < 16; i++) snprintf(h + 2 * i, 3, "%02x", id[i]);
@@ -93,6 +113,7 @@ void rt_area_load(Cpu *c) {
 // LARECOMP_POS_LOG=<n>: the player's position every n frames ("[pos] frame F x y z").
 // LARECOMP_TELEPORT=<frame>:<x>,<y>,<z>[,<9 rotation values, by rows>]: from that frame on (0: the first gameplay
 // frame), the next gameplay frame teleports the player there (CPlayerMP1::Teleport; without a rotation, facing kept).
+// Rooms away from the landing site need LARECOMP_LOAD_AREAS (below) and a later frame.
 // With LARECOMP_SKIP_CINEMATICS, a new game's first gameplay frame is ~5600.
 static uint64_t g_player, g_player_mgr;
 
@@ -127,8 +148,42 @@ void rt_player_frame(Cpu *c) {
     }
 }
 
+// LARECOMP_LOAD_AREAS=<id>,<id>,... (32 hex digits each, as "[area] load" logs them): at the first gameplay frame,
+// CGameAreaManager::BeginAreaLoad for each (as the room controllers do when a door opens); the teleport (a later
+// LARECOMP_TELEPORT frame) then makes the last one the current area (SetCurrentArea, as walking through its door
+// does). A room away from the landing site is neither drawn nor solid otherwise.
+static uint32_t g_load_vid;  // (the last requested area's runtime id, BeginAreaLoad's result)
+
+static void debug_load_areas(Cpu *c) {
+    static int done;
+    const char *e = getenv("LARECOMP_LOAD_AREAS");
+    if (done || !e || !g_area_mgr || !g_player) return;
+    done = 1;
+    static uint8_t *ids;
+    if (!ids) ids = hle_alloc(16 * 32);
+    int n = 0;
+    for (const char *p = e; n < 32 && strlen(p) >= 32; n++) {
+        for (int i = 0; i < 16; i++) { unsigned v = 0; sscanf(p + 2 * i, "%2x", &v); ids[16 * n + i] = (uint8_t)v; }
+        p += 32;
+        if (*p == ',') p++;
+    }
+    Cpu *saved = malloc(sizeof *saved);
+    for (int k = 0; k < n; k++) {
+        *saved = *c;
+        c->x[0] = g_area_mgr;
+        c->x[1] = (uint64_t)(uintptr_t)(ids + 16 * k);
+        c->x[2] = 1;  // (the load type the doors use)
+        guest_call(c, guest_sym("_ZN16CGameAreaManager13BeginAreaLoadERK9CObjectId13EAreaLoadType"));
+        LOG("[area] LARECOMP_LOAD_AREAS: area %d of %d requested (result %llx)\n", k + 1, n, (unsigned long long)c->x[0]);
+        g_load_vid = (uint32_t)c->x[0];
+        *c = *saved;
+    }
+    free(saved);
+}
+
 // From CStateManager::BeginFrame (rt_debug_autosave): the teleport runs between frames, not inside the player's update
 static void debug_teleport(Cpu *c) {
+    debug_load_areas(c);
     static long at = -2;
     static float to[3], rot[9];
     static int nrot;
@@ -143,6 +198,26 @@ static void debug_teleport(Cpu *c) {
     if (at < 0 || (long)vk_frame_counter() < at || !g_player) return;
     float *m = player_transform(g_player);
     if (!m) return;
+    Cpu *saved = malloc(sizeof *saved);
+    static int made_current;
+    if (g_load_vid && g_area_mgr && !made_current) {
+        // first the room becomes current (its neighbours load, its collision comes up), the teleport 2 s later: in
+        // the same frame the player fell through the floor
+        made_current = 1;
+        static uint32_t *vid;
+        if (!vid) vid = hle_alloc(16);
+        *vid = g_load_vid;
+        *saved = *c;
+        c->x[0] = g_area_mgr;
+        c->x[1] = g_player_mgr;
+        c->x[2] = (uint64_t)(uintptr_t)vid;
+        guest_call(c, guest_sym("_ZN16CGameAreaManager14SetCurrentAreaER13CStateManagerRK15CValueVersionIdIjttLj16ELj16EE"));
+        *c = *saved;
+        free(saved);
+        LOG("[area] current area set to %x, teleport in 120 frames\n", g_load_vid);
+        at = (long)vk_frame_counter() + 120;
+        return;
+    }
     at = -1;
     static float *xf;
     if (!xf) xf = hle_alloc(64);
@@ -150,7 +225,6 @@ static void debug_teleport(Cpu *c) {
     LOG("[pos] teleport from %.2f %.2f %.2f to %.2f %.2f %.2f\n", m[3], m[7], m[11], to[0], to[1], to[2]);
     xf[3] = to[0], xf[7] = to[1], xf[11] = to[2];
     for (int r = 0; r < 3 && nrot; r++) for (int k = 0; k < 3; k++) xf[4 * r + k] = rot[3 * r + k];
-    Cpu *saved = malloc(sizeof *saved);
     *saved = *c;
     c->x[0] = g_player;
     c->x[1] = (uint64_t)(uintptr_t)xf;
