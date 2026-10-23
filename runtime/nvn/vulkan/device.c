@@ -614,9 +614,12 @@ void backend_present(NvnTexture *t) {
     prev_present = now;
     if (now - last_fps_time >= fps_iv) {
         extern const char *game_level_name(void);
+        uint64_t st0 = SDL_GetTicksNS();
         if (last_fps_time > 0)
             LOG("[vk] t=%.1f frame %llu %.1f fps max %.0fms level %s (%s)\n", now, (unsigned long long)total_frames,
                 frames / (now - last_fps_time), max_gap * 1000.0, game_level_name(), renderer_stats());
+        static int ntime;
+        if (getenv("LARECOMP_TICK_LOG") && ntime++ < 20) LOG("[vk] (stats took %.2f ms)\n", (SDL_GetTicksNS() - st0) / 1e6);
         max_gap = 0;
         frames = 0;
         last_fps_time = now;

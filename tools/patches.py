@@ -13,9 +13,9 @@ STEP_SITES = {
     0x70000ff2f8: (9, False),   # CGraphicsServerDevice::TickMainThreadMaintenance
     0x70003c81a0: (8, False),   # CGameArchitectureSupport::GetSimulationTimeStep
     0x70003c81b0: (8, False),   # CGameArchitectureSupport::GetTotalSimulationTimeStep
-    0x70003c8234: (8, False),   # CGameArchitectureSupport::Update: the frame's elapsed time, clamped to one tick
+    # 0x70003c8234 (CGameArchitectureSupport::Update: the frame's elapsed time, clamped to one tick): below
     0x70003c8308: (27, False),  # CGameArchitectureSupport::Update: the tick
-    0x70003c8350: (8, True),    # CGameArchitectureSupport::Update: minus one tick (0xbc888889)
+    # 0x70003c8350 (CGameArchitectureSupport::Update: minus one tick, 0xbc888889, each pass of the tick loop): below
     0x70006ce284: (8, False),   # NPlayerMovementHelpers::ComputeFramesPerBeatForBPM
     0x7000b30424: (8, False),   # CGameRenderJob::RenderGamePass
     0x7000b7c470: (8, False),   # CProjectileWeapon::GetTickTime
@@ -59,3 +59,15 @@ PATCHES[0x70004bd840] = lambda gen, a: ('{ extern int rt_skip_cinematics(void); 
 # notes the world state (runtime/hle/game.c rt_world_state: LARECOMP_SAVE_AREA sets its desired area for a save).
 PATCHES[0x7000c82748] = lambda gen, a: ('{ extern void rt_world_state(Cpu *); rt_world_state(c); '
                                         'ST64(c->x[0] + 0x10, c->x[1]); ST64(c->x[0] + 0x18, c->x[2]); }')
+
+
+# CGameArchitectureSupport::Update's step sites with the frame's timing for the runtime (runtime/hle/game.c
+# rt_frame_step: LARECOMP_TICK_LOG): the elapsed time it measured (s8) and each pass of its tick loop.
+PATCHES[0x70003c8234] = lambda gen, a: '{ extern unsigned rt_frame_step(Cpu *); c->x[8] = rt_frame_step(c); }'
+PATCHES[0x70003c8350] = lambda gen, a: '{ extern unsigned rt_tick_pass(void); c->x[8] = rt_tick_pass(); }'
+# ... and the tick body itself (`fmov s0, w27`: one simulation tick ran)
+PATCHES[0x70003c8328] = lambda gen, a: ('{ extern void rt_tick_body(void); rt_tick_body(); '
+                                        'c->v[0] = (__uint128_t)(uint32_t)c->x[27]; }')
+
+# CMovieList::Update(float dt) (the movies' clock): `mov x29, sp` after the runtime logs dt (s0; LARECOMP_TICK_LOG)
+PATCHES[0x70003669f4] = lambda gen, a: '{ c->x[29] = c->sp; extern void rt_movie_dt(Cpu *); rt_movie_dt(c); }'

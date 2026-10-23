@@ -65,6 +65,7 @@ RT_ON_RESET(vi_reset) {
 
 HLE_FUNC("_ZN2nn2vi20GetDisplayVsyncEventEPNS_2os15SystemEventTypeEPNS0_7DisplayE", vi_get_vsync_event) {
     if (!vsync_event) {
+        LOG("[vi] GetDisplayVsyncEvent: vsync timer started (lr %llx)\n", (unsigned long long)c->x[30]);
         vsync_event = kernel_create_event_pair(&vsync_w, &vsync_r);
         pthread_t t;
         pthread_create(&t, NULL, vsync_thread, NULL);

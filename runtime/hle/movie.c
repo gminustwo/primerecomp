@@ -269,6 +269,8 @@ static void ex_get_track_config(Cpu *c) {
         md_set_int(m, "height", p->height);
         int fps = s->avg_frame_rate.den ? s->avg_frame_rate.num / s->avg_frame_rate.den : 30;
         md_set_int(m, "frame-rate", fps ? fps : 30);
+        static int nlog;
+        if (nlog++ < 8) LOG("[movie] video track %dx%d, %d/%d fps\n", p->width, p->height, s->avg_frame_rate.num, s->avg_frame_rate.den);
     } else {
         md_set_str(m, "mime", p->codec_id == AV_CODEC_ID_VORBIS ? "audio/vorbis" : "audio/mp4a-latm");
         md_set_int(m, "sample-rate", p->sample_rate);
@@ -573,7 +575,14 @@ static void dec_acquire_input(Cpu *c) {
     pthread_mutex_lock(&d->lock);
     int out_free = 0;
     for (int i = 0; i < NOUT; i++) if (!d->out_busy[i]) out_free++;
-    if (out_free < 2 || d->npending) { pthread_mutex_unlock(&d->lock); c->x[0] = 1; return; }  // backpressure
+    if (out_free < 2 || d->npending) {  // backpressure
+        static uint64_t nbp;
+        if (d->video && getenv("LARECOMP_MOVIE_TIMING") && (++nbp % 50) == 1)
+            LOG("[movie] input refused (%llu so far): outputs free %d, pending %d\n", (unsigned long long)nbp, out_free, d->npending);
+        pthread_mutex_unlock(&d->lock);
+        c->x[0] = 1;
+        return;
+    }
     int idx = -1, free_n = 0;
     for (int i = 0; i < NIN; i++)
         if (!d->in_busy[i]) { if (idx < 0) idx = i; else free_n++; }
@@ -659,6 +668,7 @@ static bool flush_pending(Decoder *d) {
 static void dec_send_input(Cpu *c) {
     Decoder *d = self_state(c);
     n_send++;
+    uint64_t send_t0 = plat_now_ns();
     int idx = (int)c->x[1], off = (int)c->x[2], size = (int)c->x[3];
     int64_t time = (int64_t)c->x[4];
     uint32_t flags = (uint32_t)c->x[5];
@@ -689,6 +699,22 @@ static void dec_send_input(Cpu *c) {
     if (flags & MOVIE_EOS) { d->eos_pending = true; d->eos_time = time; }
     produced |= flush_pending(d);
     if (idx >= 0 && idx < NIN) d->in_busy[idx] = false;
+    {   // (debug) LARECOMP_MOVIE_TIMING=<n>: the first n video inputs - decode time, outputs free, queued
+        static long left = -2;
+        if (left == -2) left = getenv("LARECOMP_MOVIE_TIMING") ? atol(getenv("LARECOMP_MOVIE_TIMING")) : 0;
+        static uint64_t last;
+        if (d->video && left > 0) {
+            left--;
+            int free_ = 0;
+            for (int i = 0; i < NOUT; i++) free_ += !d->out_busy[i];
+            uint64_t now = plat_now_ns();
+            extern uint64_t renderer_present_count(void);
+            LOG("[movie] send at frame %llu (+%.1f ms): decode %.2f ms, outputs free %d, ready %d, pending %d\n",
+                (unsigned long long)renderer_present_count(), last ? (now - last) / 1e6 : 0.0, (now - send_t0) / 1e6, free_,
+                d->nready, d->npending);
+            last = now;
+        }
+    }
     pthread_mutex_unlock(&d->lock);
     dec_signal(c, d, 0);
     if (produced) dec_signal(c, d, 1);
@@ -706,6 +732,12 @@ static void dec_acquire_output(Cpu *c) {
     pthread_mutex_unlock(&d->lock);
     *(int32_t *)(uintptr_t)c->x[1] = r.idx;
     if (c->x[2]) *(int64_t *)(uintptr_t)c->x[2] = r.time;
+    {   // (debug) LARECOMP_MOVIE_TIMING: each video frame the game takes, at which presented frame
+        static int on = -1;
+        if (on < 0) on = getenv("LARECOMP_MOVIE_TIMING") != NULL;
+        extern uint64_t renderer_present_count(void);
+        if (on && d->video) LOG("[movie] take at frame %llu: video time %.1f ms (buffer %d)\n", (unsigned long long)renderer_present_count(), r.time / 1000.0, r.idx);
+    }
     if (c->x[3]) *(uint32_t *)(uintptr_t)c->x[3] = r.flags;
     if (c->x[4]) *(int32_t *)(uintptr_t)c->x[4] = remaining;
     c->x[0] = 0;
@@ -730,6 +762,15 @@ static void dec_get_output_buffer(Cpu *c) {
         int dst_stride[1] = {w * 4};
         sws_scale(d->sws, src, src_stride, 0, h, dst, dst_stride);
         renderer_upload_rgba(t, d->rgba, (uint32_t)w, (uint32_t)h, (uint32_t)w * 4);
+        {   // (debug) LARECOMP_MOVIE_LOG=<from frame>:<count>: the presented frame each video frame is uploaded at
+            static long from = -2, left;
+            if (from == -2) { const char *e = getenv("LARECOMP_MOVIE_LOG"); if (!e || sscanf(e, "%ld:%ld", &from, &left) != 2) from = -1; }
+            extern uint64_t renderer_present_count(void);
+            if (from >= 0 && left > 0 && (long)renderer_present_count() >= from) {
+                left--;
+                LOG("[movie] frame %llu: video frame (buffer %d) to texture %p\n", (unsigned long long)renderer_present_count(), i, (void *)t);
+            }
+        }
         c->x[0] = 0;
         return;
     }
@@ -738,11 +779,21 @@ static void dec_get_output_buffer(Cpu *c) {
     b->capacity = d->out_cap;
     b->size = (int32_t)d->out_size[i];
     c->x[0] = 0;
+    static int on = -1;
+    if (on < 0) on = getenv("LARECOMP_MOVIE_TIMING") != NULL;
+    extern uint64_t renderer_present_count(void);
+    if (on && d->video) LOG("[movie] get at frame %llu (buffer %d)\n", (unsigned long long)renderer_present_count(), i);
 }
 
 static void dec_release_output(Cpu *c) {
     Decoder *d = self_state(c);
     n_rel_out++;
+    {
+        static int on = -1;
+        if (on < 0) on = getenv("LARECOMP_MOVIE_TIMING") != NULL;
+        extern uint64_t renderer_present_count(void);
+        if (on && d->video) LOG("[movie] release at frame %llu (buffer %d)\n", (unsigned long long)renderer_present_count(), (int)c->x[1]);
+    }
     dec_signal(c, d, 0);  // input may be accepted again
     int i = (int)c->x[1];
     pthread_mutex_lock(&d->lock);
@@ -839,6 +890,17 @@ static int gs_read(void *opaque, uint8_t *buf, int n) {
     if (!got) return AVERROR_EOF;
     if (got > (uint64_t)n) got = (uint64_t)n;
     memcpy(buf, e->bounce, (size_t)got);
+    {   // (debug) LARECOMP_MOVIE_DUMP=1: each source as read, at its offsets -> build/movie_<size>.mp4
+        static int on = -1;
+        if (on < 0) on = getenv("LARECOMP_MOVIE_DUMP") != NULL;
+        if (on) {
+            char path[64];
+            snprintf(path, sizeof path, "build/movie_%lld.mp4", (long long)e->size);
+            FILE *f = fopen(path, "r+b");
+            if (!f) f = fopen(path, "w+b");
+            if (f) { fseek(f, (long)e->pos, SEEK_SET); fwrite(buf, 1, (size_t)got, f); fclose(f); }
+        }
+    }
     e->pos += (int64_t)got;
     return (int)got;
 }

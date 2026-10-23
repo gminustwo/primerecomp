@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "../hle.h"
+#include "../kernel.h"
 #include "../platform.h"
 #include "../settings.h"
 
@@ -30,16 +31,72 @@ uint32_t rt_sim_step_bits(int negative) {
     return negative ? b | 0x80000000u : b;
 }
 
+// CGameArchitectureSupport::Update: each frame adds the elapsed time it measured (at most one tick) to an
+// accumulator and runs a simulation tick per full tick in it. (debug) LARECOMP_TICK_LOG=<from frame>:<frames>: per
+// frame, that elapsed time and the passes of its tick loop the frame before ("[tick]").
+static int g_tick_passes, g_ticks;
+static volatile uint64_t g_present_ns;  // when the latest present's deadline wait ended
+void rt_tick_body(void) { g_ticks++; }
+unsigned rt_tick_pass(void) {
+    g_tick_passes++;
+    return rt_sim_step_bits(1);
+}
+
+unsigned rt_frame_step(Cpu *c) {
+    static long from = -2, left;
+    if (from == -2) {
+        const char *e = getenv("LARECOMP_TICK_LOG");
+        if (!e || sscanf(e, "%ld:%ld", &from, &left) != 2) from = -1;
+    }
+    extern uint64_t renderer_present_count(void);
+    if (from >= 0 && left > 0 && (long)renderer_present_count() >= from) {
+        left--;
+        float el;
+        memcpy(&el, &c->v[8], 4);
+        LOG("[tick] frame %llu elapsed %.3f ms, %.3f ms after the present, tick loop passes before %d, ticks %d\n", (unsigned long long)renderer_present_count(),
+            el * 1000, (double)(plat_now_ns() - g_present_ns) / 1e6, g_tick_passes, g_ticks);
+    }
+    g_tick_passes = g_ticks = 0;
+    static int once;
+    if (!once++) {
+        extern KThread *kernel_current_thread(void);
+        KThread *t = kernel_current_thread();
+        LOG("[pace] the game's update runs on thread %x\n", t ? t->handle : 0);
+    }
+    return rt_sim_step_bits(0);
+}
+
+void rt_movie_dt(Cpu *c) {  // (debug, LARECOMP_TICK_LOG) the time step the movies advance by
+    static long from = -2, left;
+    if (from == -2) {
+        const char *e = getenv("LARECOMP_TICK_LOG");
+        if (!e || sscanf(e, "%ld:%ld", &from, &left) != 2) from = -1;
+    }
+    extern uint64_t renderer_present_count(void);
+    if (from < 0 || left <= 0 || (long)renderer_present_count() < from) return;
+    left--;
+    float dt;
+    memcpy(&dt, &c->v[0], 4);
+    LOG("[tick] frame %llu movie dt %.3f ms\n", (unsigned long long)renderer_present_count(), dt * 1000);
+}
+
 // The Switch presents at the display's vsync times the window's present interval (1 here) and blocks until then;
 // the host waits for the frame's deadline the same way (runtime/nvn/objects.c nvnQueuePresentTexture). A frame
 // later than a few periods starts the schedule over instead of rushing to catch up.
 void game_pace_present(int interval) {
+    static int once;
+    if (!once++) {
+        extern KThread *kernel_current_thread(void);
+        KThread *t = kernel_current_thread();
+        LOG("[pace] frames presented by thread %x\n", t ? t->handle : 0);
+    }
     int fps = game_frame_rate();
     if (fps <= 0) return;
     static uint64_t next;
     uint64_t period = (uint64_t)(1e9 * (interval > 0 ? interval : 1) / fps), now = plat_now_ns();
     if (!next || now > next + 4 * period) next = now;
     else plat_sleep_until_ns(next);
+    g_present_ns = plat_now_ns();
     next += period;
 }
 
