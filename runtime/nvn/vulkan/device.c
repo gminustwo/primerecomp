@@ -551,7 +551,14 @@ void backend_present(NvnTexture *t) {
     static long debug_at = -1;
     if (debug_at < 0) { const char *e = getenv("LARECOMP_DEBUG_FRAME"); debug_at = e ? atol(e) : 0; }
     extern volatile int g_debug_frame_request;
-    if (g_debug_frame_request) { g_debug_frame_request = 0; debug_at = (long)total_frames + 1; }
+    if (g_debug_frame_request) {  // F9: the next frame, into build/f9_<frame>/ (captures don't overwrite each other)
+        g_debug_frame_request = 0;
+        debug_at = (long)total_frames + 1;
+        extern void vk_debug_capture_dir(const char *dir);
+        char dir[64];
+        snprintf(dir, sizeof dir, "build/f9_%ld", debug_at);
+        vk_debug_capture_dir(dir);
+    }
     // LARECOMP_DEBUG_FRAMES=<n> (with LARECOMP_DEBUG_FRAME / F9): dump n consecutive frames (build/pass_<frame>_NNN.png)
     static long debug_n = -1;
     if (debug_n < 0) { const char *e = getenv("LARECOMP_DEBUG_FRAMES"); debug_n = e && atol(e) > 1 ? atol(e) : 1; }

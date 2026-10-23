@@ -886,6 +886,12 @@ static uint32_t tex_wh[2][64][2];
 static VkFormat pass_color[8], pass_depth, pass_stencil;
 static uint32_t pass_ncolor, pass_samples = 1, pass_w, pass_h, pass_layers = 1;
 static int debug_pass_no;
+static char debug_dir[96] = "build";  // where the debug frame's passes go: F9 gives each capture its own folder
+void vk_debug_capture_dir(const char *dir) {
+    snprintf(debug_dir, sizeof debug_dir, "%s", dir);
+    mkdir(debug_dir, 0755);
+    debug_pass_no = 0;
+}
 
 // Redundant-state filter: what draw() last set in the current command buffer, so unchanged pipeline binds, dynamic
 // state and vertex / index buffer binds are not recorded again (a draw used to issue ~20 vkCmd* calls; most repeat the
@@ -943,8 +949,8 @@ static void vk_end_pass_at(int line) {
         static int multi = -1;
         if (multi < 0) multi = getenv("LARECOMP_DEBUG_FRAMES") != NULL;
         if (multi && renderer_present_count() != debug_pass_frame) { debug_pass_frame = renderer_present_count(); debug_pass_no = 0; }
-        if (multi) snprintf(path, sizeof path, "build/pass_%llu_%03d.png", (unsigned long long)debug_pass_frame, debug_pass_no++);
-        else snprintf(path, sizeof path, "build/pass_%03d.png", debug_pass_no++);
+        if (multi) snprintf(path, sizeof path, "%s/pass_%llu_%03d.png", debug_dir, (unsigned long long)debug_pass_frame, debug_pass_no++);
+        else snprintf(path, sizeof path, "%s/pass_%03d.png", debug_dir, debug_pass_no++);
         renderer_save_texture_tex(pass_color0->backend, path);
     }
 }
@@ -958,7 +964,7 @@ static void begin_pass(void) {
     st.rt_dirty = false;
     if (g_debug_frame && st.rt.ncolor && st.rt.color[0] && st.rt.color[0]->backend && getenv("LARECOMP_DEBUG_PREPASS")) {
         char path[64];  // (debug) the target as the pass finds it: pre_NNN.png next to pass_NNN.png
-        snprintf(path, sizeof path, "build/pre_%03d.png", debug_pass_no);
+        snprintf(path, sizeof path, "%s/pre_%03d.png", debug_dir, debug_pass_no);
         renderer_save_texture_tex(st.rt.color[0]->backend, path);
     }
     pass_color0 = st.rt.ncolor ? st.rt.color[0] : NULL;
