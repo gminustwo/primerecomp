@@ -8,7 +8,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   autosave was forced with `LARECOMP_AUTOSAVE_AT`, then reloaded after a restart.
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it contains the game library), started
   with `Play Metroid Prime Remastered.bat`. Their notes go in `ISSUES.md` there and their log is
-  `lasrecomp.log`. It holds build d7a724f (2026-10-22, a release exe): everything below is in it. No issues written there yet.
+  `lasrecomp.log`. It holds build aa333d7 (2026-10-22, a release exe): everything below is in it. No issues written there yet.
 - **User-reported open bugs:**
   - ~~The star backdrop and Tallon IV are missing in space.~~ Fixed (CC tests, below).
   - ~~Samus renders wrong~~: a burst of spikes in the landing cutscene (LDC offsets, fixed in 5c145b5).
@@ -56,6 +56,11 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   the game's buffers with the hardware number, and there the game had bound a buffer at index 2. Now c >= 3 is
   `ubuf[c - 3]`. Not yet seen in a run that reaches that corridor (scripted routes stop at the second force field;
   the user is to F8 a position there).
+- **Occlusion queries** (the user: an elevator that won't scan, frame ~25700, position in positions.txt): the Scan
+  Visor, lights and scene nodes are tested with SAMPLES_PASSED queries (CGraphicsOcclusionQueryToken_NVN); the report
+  said 0, so small scan targets were "hidden" (on the landing deck lock-on skipped the force field's switch). Real
+  Vulkan occlusion queries now (exec.c `oq_*`); `LARECOMP_OCCLUSION_ZERO=1` for A/B. Whether it fixes the elevator:
+  the user's next session.
 - **A freeze at the title screen** (main thread spinning in `GetTouchScreenStates`): QueryMemory reported the HLE
   stub range and the HLE heap free, so the SDK's random placement of the HID shared memory could land on host
   allocations. Both are kernel regions now.
@@ -139,7 +144,11 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   rotation values]` teleports at the first gameplay frame; F8 in game appends the player's position as such a value
   to `positions.txt` (cwd). `LARECOMP_POS_LOG=50` logs positions. y is up. Teleporting by guessed coordinates mostly
   fell into space (points off the deck or inside the hull); use F8 positions. Whether a teleport into another room
-  (another area) has collision is untested. `LARECOMP_SHOT_DIR` separates parallel runs' shots.
+  (another area) needs `LARECOMP_LOAD_AREAS` (the room is then solid but unlit: not set up as through its door), and
+  doors keep their game state (the upper hangar door: "cannot be opened until room is repressurized"). Frigate
+  saves always load at the landing site, even with `LARECOMP_SAVE_AREA`. D-pad right is the Scan Visor in
+  `LARECOMP_INPUT` (pressed after the HUD has booted, ~frame 5900 with skipped cutscenes), ZL scans.
+  `LARECOMP_SHOT_DIR` separates parallel runs' shots.
 - **Regenerating game code** (after `tools/patches.py` changes):
   `cd tools && ./venv/Scripts/python gen.py main ../private/exefs/main 0x7000000000 ../generated/main`, then `make`.
 - **Updating the playtest build:** the playtest exe is a release (GUI) build, started by Steam directly (its
