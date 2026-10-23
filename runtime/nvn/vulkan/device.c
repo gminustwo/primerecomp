@@ -520,7 +520,15 @@ void backend_present(NvnTexture *t) {
         static long win_shot = -1;
         if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
         bool shot = win_shot && (long)total_frames + 1 == win_shot;
-        vk_frame_end(shot ? "build/window.png" : NULL);
+        extern char g_window_shot_request[256];  // ("shot" in LARECOMP_HOST_INPUT, runtime/hle/input.c: this frame here)
+        static char requested[256];
+        if (!shot && g_window_shot_request[0]) {
+            snprintf(requested, sizeof requested, "%s", g_window_shot_request);
+            g_window_shot_request[0] = 0;
+        } else {
+            requested[0] = 0;
+        }
+        vk_frame_end(shot ? "build/window.png" : requested[0] ? requested : NULL);
         if (shot && getenv("LARECOMP_EXIT_AFTER_SHOT")) { fflush(stderr); _exit(0); }
     } else {
         renderer_submit();

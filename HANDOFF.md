@@ -177,7 +177,15 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   without the `LARECOMP_*` variables, and `timeout` misses it after it re-executes itself.
   - Intro replay: `LARECOMP_INPUT` with A every 300 frames from 2500 to 5500; frame 9000 is in space.
   - Pictures: `LARECOMP_SHOT_AT=<frame>,...` (the game image, `build/build/frames/`), or
-    `LARECOMP_WINDOW_SHOT=<frame>` with `LARECOMP_EXIT_AFTER_SHOT=1` (the window, then exit).
+    `LARECOMP_WINDOW_SHOT=<frame>` with `LARECOMP_EXIT_AFTER_SHOT=1` (the window, then exit), or
+    `LARECOMP_HOST_INPUT=<frame>:shot:<name>` (the window, menus included, as build/build/<name>.png; also on Vulkan
+    since 2026-10-23). The F1 menu: `LARECOMP_HOST_INPUT=6000:sdlkey:F1:5,6040:sdlkey:E:5` (E / Q: next / previous
+    tab).
+  - Sound: `LARECOMP_AUDIO_WAV=<path>` records the renderer's output (float stereo 48 kHz, a frame = 240 samples;
+    `py -E tools/wav_stats.py <wav> [from to [step]]`: levels, clipping, clicks); `LARECOMP_NO_AUDIO=1` keeps the
+    speakers quiet. `LARECOMP_AUDIO_LOG=1`: voices, splitters, effects, mix gains.
+  - Contact sheets: `py -E tools/montage.py out.png <cols> <width> files...` (Pillow and numpy are in the user's
+    Python, not in tools/venv; ffmpeg is in C:/msys64/ucrt64/bin).
   - The runtime's cwd is `build/`, so its outputs land in `build/build/`.
 - The title screen's attract demos (no input, from frame ~6000) are 30 s videos: they test the movie player
   (fine), not the renderer. Later areas need real play or saves.
@@ -197,7 +205,9 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   doors keep their game state (the upper hangar door: "cannot be opened until room is repressurized"). Frigate
   saves always load at the landing site, even with `LARECOMP_SAVE_AREA`. D-pad right is the Scan Visor in
   `LARECOMP_INPUT` (pressed after the HUD has booted, ~frame 5900 with skipped cutscenes), ZL scans.
-  `LARECOMP_SHOT_DIR` separates parallel runs' shots.
+  `LARECOMP_SHOT_DIR` separates parallel runs' shots. Several teleports in one run: `LARECOMP_TELEPORT=f1:x,y,z@yaw;
+  f2:x,y,z@yaw;...` (yaw in degrees) - walk into a room through its door first (it is then lit as in play), then
+  look around it. Turning: RSTICK_LEFT at full tilt turns 360 degrees in ~125 frames.
 - **Regenerating game code** (after `tools/patches.py` changes):
   `cd tools && ./venv/Scripts/python gen.py main ../private/exefs/main 0x7000000000 ../generated/main`, then `make`.
 - **Updating the playtest build:** the playtest exe is a release (GUI) build, started by Steam directly (its

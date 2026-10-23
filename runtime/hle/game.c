@@ -168,9 +168,11 @@ void rt_area_load(Cpu *c) {
 // F8: the player's position and facing, appended to positions.txt (and the log) as a LARECOMP_TELEPORT value - the
 // user walks somewhere, presses F8, and a test run starts there.
 // LARECOMP_POS_LOG=<n>: the player's position every n frames ("[pos] frame F x y z").
-// LARECOMP_TELEPORT=<frame>:<x>,<y>,<z>[,<9 rotation values, by rows>]: from that frame on (0: the first gameplay
-// frame), the next gameplay frame teleports the player there (CPlayerMP1::Teleport; without a rotation, facing kept).
-// Rooms away from the landing site need LARECOMP_LOAD_AREAS (below) and a later frame.
+// LARECOMP_TELEPORT=<frame>:<x>,<y>,<z>[,<9 rotation values, by rows> | @<yaw degrees>]: from that frame on (0: the
+// first gameplay frame), the next gameplay frame teleports the player there (CPlayerMP1::Teleport; without a
+// rotation, facing kept). Several, separated by ';', run in turn (viewpoints in one run: walk into a room through its
+// door - it is then lit as in play - and look around it). Rooms away from the landing site need LARECOMP_LOAD_AREAS
+// (below) and a later frame.
 // With LARECOMP_SKIP_CINEMATICS, a new game's first gameplay frame is ~5600.
 static uint64_t g_player, g_player_mgr;
 
@@ -241,18 +243,31 @@ static void debug_load_areas(Cpu *c) {
 // From CStateManager::BeginFrame (rt_debug_autosave): the teleport runs between frames, not inside the player's update
 static void debug_teleport(Cpu *c) {
     debug_load_areas(c);
-    static long at = -2;
-    static float to[3], rot[9];
-    static int nrot;
-    if (at == -2) {
-        const char *e = getenv("LARECOMP_TELEPORT");
-        int n = e ? sscanf(e, "%ld:%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f", &at, &to[0], &to[1], &to[2], &rot[0], &rot[1],
-                           &rot[2], &rot[3], &rot[4], &rot[5], &rot[6], &rot[7], &rot[8]) : 0;
-        if (n != 4 && n != 13) at = -1;
-        nrot = n == 13 ? 9 : 0;
+    enum { MAXTP = 32 };
+    static struct { long at; float to[3], rot[9]; int nrot; } tp[MAXTP];
+    static int ntp = -1, cur;
+    if (ntp < 0) {
+        ntp = 0;
+        for (const char *e = getenv("LARECOMP_TELEPORT"); e && *e && ntp < MAXTP;) {
+            float *t = tp[ntp].to, *r = tp[ntp].rot, yaw;
+            int n = sscanf(e, "%ld:%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f", &tp[ntp].at, &t[0], &t[1], &t[2], &r[0], &r[1],
+                           &r[2], &r[3], &r[4], &r[5], &r[6], &r[7], &r[8]);
+            const char *at_sign = strchr(e, '@'), *semi = strchr(e, ';');
+            if (n == 4 && at_sign && (!semi || at_sign < semi) && sscanf(at_sign + 1, "%f", &yaw) == 1) {
+                float s = sinf(yaw * (float)M_PI / 180), co = cosf(yaw * (float)M_PI / 180);
+                float m[9] = {co, 0, s, 0, 1, 0, -s, 0, co};  // (rows, as F8 writes them)
+                memcpy(r, m, sizeof m);
+                n = 13;
+            }
+            if (n == 4 || n == 13) tp[ntp].nrot = n == 13 ? 9 : 0, ntp++;
+            e = semi ? semi + 1 : NULL;
+        }
     }
     extern uint64_t vk_frame_counter(void);
-    if (at < 0 || (long)vk_frame_counter() < at || !g_player) return;
+    if (cur >= ntp || (long)vk_frame_counter() < tp[cur].at || !g_player) return;
+    long *at_p = &tp[cur].at;
+    const float *to = tp[cur].to, *rot = tp[cur].rot;
+    int nrot = tp[cur].nrot;
     float *m = player_transform(g_player);
     if (!m) return;
     Cpu *saved = malloc(sizeof *saved);
@@ -272,10 +287,10 @@ static void debug_teleport(Cpu *c) {
         *c = *saved;
         free(saved);
         LOG("[area] current area set to %x, teleport in 120 frames\n", g_load_vid);
-        at = (long)vk_frame_counter() + 120;
+        *at_p = (long)vk_frame_counter() + 120;
         return;
     }
-    at = -1;
+    cur++;
     static float *xf;
     if (!xf) xf = hle_alloc(64);
     memcpy(xf, m, 48);

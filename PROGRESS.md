@@ -115,14 +115,14 @@ What fixed the black screen: the exposure data comes from a vertex shader that s
 the color grading LUTs are 3D textures whose tiling the runtime guessed wrong (see tegra.c).
 
 Open, in order:
-1. **Graphics glitches:** the arm cannon renders as a dark silhouette; black diagonal streaks (shadows?) at the
-   lower left of the landing site.
-2. **Not verified yet:** audio output (the renderer runs, unheard here), saving and loading, rooms beyond the first,
-   bosses, every upgrade, the ending. A full playthrough needs a person at the controls.
+1. **Graphics glitches:** the user's open reports (HANDOFF.md). (The dark arm cannon and the black streaks at the
+   landing site were the sparse lighting volumes, fixed 2026-10-21.)
+2. **Not verified yet:** bosses, every upgrade, the ending (the user plays through; audio is checked by WAV capture,
+   saving and loading by the user's own saves).
 3. Shader instructions still unhandled: `SUST.BA` (raw image stores), `TLD4.PTP`, gather on cube textures - none
    seen so far.
-4. LA leftovers: texpatch.c and LA-only options (blur removal, Hero Mode icon, 360-degree movement, tunic colors),
-   names (`lasrecomp.exe`, `LARECOMP_*`), launcher text.
+4. LA leftovers: texpatch.c (its options are hidden from the menu since 2026-10-23), names (`lasrecomp.exe`,
+   `LARECOMP_*`), launcher text.
 
 Debug recipe: `LARECOMP_DEBUG_FRAME=<n>` (pass images in build/build/, draw log), `LARECOMP_GPUPROF_AT`,
 `LARECOMP_VK_PROF=1` (waits by cause), `LARECOMP_HANG_DUMP`, `LARECOMP_FNTRACE_THREAD` (with `LARECOMP_FNPROF=0:999999999`).
@@ -145,3 +145,14 @@ Debug recipe: `LARECOMP_DEBUG_FRAME=<n>` (pass images in build/build/, draw log)
   through another; those objects now share one image (GPU-written, uncompressed textures only: sharing CPU
   textures broke the next room).
 - Test runs from PowerShell: `tools/run_game.ps1` (Git Bash launches lost the `LARECOMP_*` variables).
+
+## 2026-10-23: sound effects, rumble
+
+- The user: no cannon sounds after loading a save. Most sound effects in play go through audio splitters (each sound
+  a splitter of 5 destinations: the panned dry send and a reverb send), which were ignored - the cannon was silent in
+  a new game too. Splitters implemented, and the game's effects ported from Ryujinx: I3DL2 reverb (the reverb send
+  bus, wet only), delay, biquad filter, aux (the final mix's software limiter: fed, output passed through) and depop.
+- Rumble: the game's SendVibrationValue(s) reach the controller (they were dropped); Audio tab: Rumble.
+- The user's save is in Magmoor Caverns (Save Station Magmoor A): test runs load it to look at the area they play.
+- Menu: Link's Awakening leftovers hidden (Cosmetics, blur, Hero Mode icon, movement and prompt options).
+- `tools/run_game.ps1` no longer stops the user's playtest game.
