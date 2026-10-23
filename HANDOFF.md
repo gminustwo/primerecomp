@@ -39,9 +39,12 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   Auto exposure works: CGameRenderJob::FeedLastFrameAverageRadianceBackToGame reads the 1x1 luminance level back
   every frame (R11G11B10F, (0.26, 0.11, 0.04) in the save room) and CPostFXManager::UpdateTonemapping converges
   on it. Ask the user whether lava looks flat white in play (an F9 + F8 there settles it), or walk there:
-  the save station door, then the corridor to the left.
-- The Burning Trail corridor's stone looks greenish where the MPR references of Magmoor are warm orange - no
-  MPR reference of that exact corridor; unconfirmed.
+  the save station door, then the corridor to the left. Teleport survey of the corridor (y 7.43, z -445): solid
+  from x -162.7 to -147 (warm orange-lit rock ahead at -147, facing +x = yaw 90); at x <= -172 or >= -142 the
+  points are inside rock / other rooms (falls, or "stands" at y -8.09 inside a lava volume with the submerged
+  visor effect) - useless as views.
+- The Burning Trail corridor looks greenish only toward the save station door (its cyan light); along the
+  corridor the walls are warm orange as in the MPR references.
 
 ## Fixed on 2026-10-23
 
