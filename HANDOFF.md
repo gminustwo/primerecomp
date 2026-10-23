@@ -8,15 +8,19 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
   from Steam (its shortcut targets lasrecomp.exe; Steam Input applies). Their log is `lasrecomp.log` there, F9
-  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 01308e1 (release
+  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 8f9ae7c (release
   exe, installed directly: the game was closed; `private/playtest/update/` holds the same build, so
   `Install_update.bat` is harmless). Use the update folder route whenever the game is running.
-- **The user's save** (`private/playtest/MPRRecomp/save/save_0/save.bin`, a save room on Tallon IV) loads in test
-  runs: copy it to `<scratch>/save_0/save.bin`, run with `LARECOMP_SAVE_DIR=<scratch>`, the intro replay's A
-  presses and `LARECOMP_SKIP_CINEMATICS=1`: the save loads at frame ~4100, play from ~5500.
+  `tools/run_game.ps1` now only waits for / stops build/lasrecomp.exe, so tests can run while the user plays.
+- **The user's save** (`private/playtest/MPRRecomp/save/save_0/save.bin`: **Save Station Magmoor A** - they went
+  Chozo Ruins -> Magmoor; 3%, 0:33, 5 missiles) loads in test runs: copy it to `<scratch>/save_0/save.bin`, run
+  with `LARECOMP_SAVE_DIR=<scratch>`, the intro replay's A presses and `LARECOMP_SKIP_CINEMATICS=1`: the save
+  loads at frame ~4100, play from ~5500. The door ahead leads into Burning Trail (Chozo stone corridor); the
+  elevator to Chozo Ruins North is up the corridor. MINUS opens the map (room names), PLUS the pause menu.
 - **New from the user (2026-10-23): "if you load my save there are no cannon sounds"** - fixed in 01308e1
   (splitters, which carry most sound effects in play, were ignored; also the I3DL2 reverb, delay and biquad
-  effects). Wait for their confirmation; ask about any sound that's missing or wrongly balanced.
+  effects). Rumble added in 8f9ae7c (it was dropped). Wait for their confirmation; ask about any sound that's
+  missing or wrongly balanced, and how the rumble feels (Steam Controller through Steam Input).
 - **Next, from the user:**
   1. "The door still is black" - which door is unknown (its capture was overwritten before F9 got its own
      folders). Ask for an F9 + F8 at it; then teleport there (LARECOMP_TELEPORT; far rooms also need
@@ -38,8 +42,14 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   delay (type 3, other rooms' bus), biquad (type 6, a shelf on mix 3's second buffer set). A/B:
   `LARECOMP_NO_SPLITTERS=1`, `LARECOMP_NO_EFFECTS=1`. Checked by WAV capture (`LARECOMP_AUDIO_WAV`) on the user's
   save. The renderer is REV9.
-- Open in audio: the aux effect (type 2) on the final mix passes through. The game imports
-  Read/WriteAuxSend/ReturnBuffer and ProcessAuxLimiter, so it is probably a software master limiter on the CPU.
+- **Aux on the final mix** (type 2): MPR's CAxalFinalMixEffect::AuxUpdate reads the send ring every frame, runs
+  its processors and writes the return ring (measured: the input delayed 144 samples - a lookahead limiter).
+  The send ring is fed; the output passes through (`LARECOMP_AUX_RETURN=1` reads the return: +23 ms, and stale
+  samples whenever the game's audio thread misses a 5 ms frame). (fnprof doesn't count WriteAuxReturnBuffer:
+  tiny SDK thunks aren't counted - don't conclude "never called" from a missing fnprof entry.)
+- **Rumble** (8f9ae7c): hid 201 / 206 (SendVibrationValue(s)) -> SDL_RumbleGamepad, npad 0 + handheld, left
+  device -> left motor. Idle frames send zeros (CRumbleManager "HardStop" -> CNXJoyCon_NPad::StopVibration every
+  frame is normal); missiles give ~0.6. Menu: Audio -> Rumble; `LARECOMP_LOG_RUMBLE=1`.
 
 ## Fixed on 2026-10-22
 
