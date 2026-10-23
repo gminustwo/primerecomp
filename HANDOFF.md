@@ -8,7 +8,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   autosave was forced with `LARECOMP_AUTOSAVE_AT`, then reloaded after a restart.
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it contains the game library), started
   with `Play Metroid Prime Remastered.bat`. Their notes go in `ISSUES.md` there and their log is
-  `lasrecomp.log`. It holds build 5c145b5 (2026-10-22): everything below is in it. No issues written there yet.
+  `lasrecomp.log`. It holds build 2012c44 (2026-10-22, a release exe): everything below is in it. No issues written there yet.
 - **User-reported open bugs:**
   - ~~The star backdrop and Tallon IV are missing in space.~~ Fixed (CC tests, below).
   - ~~Samus renders wrong~~: a burst of spikes in the landing cutscene (LDC offsets, fixed in 5c145b5).
@@ -43,13 +43,21 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 - **Samus in the landing cutscene was a burst of spikes**: skinning reads bone matrix rows with
   `LDC c[6][R + bone*0x30 - 0x10]`; the translator took the 16-bit offset as unsigned (+0xfff0), clamped to the
   palette's end. Signed now with a register base.
+- **Untextured materials (the gunship one flat brown, no canopy; door shields flat cyan; deck stripes and the
+  arm cannon's glow missing)**: materials pick their UV set with AL2P + IPA.IDX; the translator added IPA's
+  immediate to AL2P's full address, read past every varying and sampled at UV (0, 0). IPA.IDX now uses the
+  register alone (all 358 indexed IPAs seen take it from AL2P).
+- **The rare freeze** (menus after starting a game, the intro, likely room loads - the user's "nothing rendered
+  after the first door"): svc_wait_process_wide_key set the condvar key after releasing the mutex, so a guest
+  thread taking the mutex in user mode in between skipped its signal: a lost wakeup. Caught by the new stall
+  watchdog (thread dump after 10 s without a frame, on by default; LARECOMP_STALL_DUMP).
 - Debug: texture and attachment lines show the guest address (`@addr`), flags and refs; `LARECOMP_LOG_TEX_SHARE`
   logs each shared image join; draws with untranslated stages say so; the stats line counts textures / images.
 
 ## Open
 
-1. **Intermittent hang** (not reproduced in 11 runs after 422cc4e; the fog writer storing through a stale
-   descriptor may have been the cause): once in about eight intro replays, the game froze just after frame 9097 (no log
+1. ~~Intermittent hang~~: the condvar lost wakeup, fixed in 2012c44. If a freeze recurs, the log has a
+   "[hang] no frame presented" thread dump. (Old notes:) once in about eight intro replays, the game froze just after frame 9097 (no log
    output, process alive). Not reproduced with `LARECOMP_HANG_DUMP=30` set. Next time: run with
    `LARECOMP_HANG_DUMP=30` and look at the guest threads' waits.
 2. ~~The arm cannon is teal-green~~: correct - its material colour is white and the third-person model's cannon
