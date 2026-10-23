@@ -421,16 +421,7 @@ static bool choice(const char *label, int *value, const char *const *names, int 
     return changed;
 }
 
-static bool toggle(const char *label, bool *v) {
-    const char *names[] = {"Off", "On"};
-    int i = *v;
-    bool ch = choice(label, &i, names, 2);
-    *v = i;
-    return ch;
-}
-
 extern "C" void renderer_get_scale(float *sx, float *sy);
-extern "C" int input_pad_family(void);  // runtime/hle/input.c
 extern "C" double output_scale_dynamic_factor(void);
 
 static void tab_display(void) {
@@ -503,12 +494,7 @@ static void tab_display(void) {
     opt_choice("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,
                "Smooths jagged edges of the game image before it is scaled to the window. SMAA: finds the edges and "
                "blends only along them, so textures stay sharp. Most useful at a lower internal resolution.");
-
-    opt_section("Game");
-    opt_toggle("Remove blur", &g_settings.blur_removal, false,
-               "Turns off the tilt-shift blur at the top and bottom of the screen.");
-    opt_toggle("Hide Hero Mode icon", &g_settings.hide_hero_icon, false,
-               "Hides the Hero Mode emblem in the corner of the screen while playing a Hero Mode file.");
+    // (LAS Recomp's "Remove blur" and "Hide Hero Mode icon" are gone: Link's Awakening only)
     opt_end();
 }
 
@@ -578,21 +564,9 @@ static void tab_quit(float scale, bool in_game) {
     opt_end();
 }
 
+// (LAS Recomp's Movement - "D-pad moves Link" would take Metroid Prime's visor / beam d-pad - and Button prompts -
+// its glyph sheets - aren't shown)
 static void tab_about(void) {
-    header("Movement");
-    toggle("D-pad moves Link", &g_settings.dpad_move);
-    toggle("360-degree movement", &g_settings.move_360);
-    hint("Link walks in the exact direction of the stick instead of snapping to 8 directions.");
-    ImGui::Spacing();
-    header("Button prompts");
-    {
-        static const char *const fam[] = {"Nintendo", "Xbox", "PlayStation"};
-        char autol[64];
-        snprintf(autol, sizeof autol, "Auto (%s)", fam[input_pad_family() % 3]);
-        const char *names[] = {autol, "Nintendo", "Xbox", "PlayStation"};
-        choice("Button icons", &g_settings.prompts, names, 4);
-    }
-    ImGui::Spacing();
     header("System language");
     {
         // what the game is told the console's language is: its text follows this (runtime/settings.c)
@@ -689,8 +663,9 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     int ntabs = 0;
     if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
     // (ids 2-6 were LAS Recomp's Save Editor, Randomizer, Warp, Cheats and Gameplay; ids stay: test hooks)
+    // (Cosmetics, id 7: LAS Recomp's tunic / heart colours - nothing to recolour in Metroid Prime, so not shown)
     static const char *names[] = {"Video", "Audio", "", "", "", "", "", "Cosmetics", "Controls", "Quit"};
-    static const int order[] = {8, 0, 1, 7, 9};  // Controls, Video, Audio, Cosmetics, Quit
+    static const int order[] = {8, 0, 1, 9};  // Controls, Video, Audio, Quit
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT)
         if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
