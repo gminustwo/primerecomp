@@ -1,6 +1,7 @@
 // What the runtime asks about the running game: the renderers' frame logs and the window's framing. Link's
 // Awakening's answers (its level name from PlayerStatus, widescreen framing per room) went with the rest of its game
 // code (git history: runtime/hle/widescreen.c); Metroid Prime Remastered's belong here.
+#include <stdio.h>
 #include <string.h>
 
 #include "../hle.h"
@@ -46,7 +47,20 @@ void game_pace_present(int interval) {
 // (CStateManager::StartAutoSave, as the settings menu's "save game" action does), which writes the current slot -
 // for testing saves without playing to a save station. Called from CStateManager::BeginFrame (tools/patches.py),
 // state manager in x0; every register is put back afterwards.
+static void debug_teleport(Cpu *c);
+
+int rt_skip_cinematics(void) {  // (also CCameraManager::CheckForCinematicSkip: tools/patches.py)
+    static int skip = -1;
+    if (skip < 0) skip = getenv("LARECOMP_SKIP_CINEMATICS") && atoi(getenv("LARECOMP_SKIP_CINEMATICS")) ? 1 : 0;
+    return skip;
+}
+
 void rt_debug_autosave(Cpu *c) {
+    debug_teleport(c);
+    // (debug) LARECOMP_SKIP_CINEMATICS=1: every cutscene skippable, as on a second playthrough
+    // (CGameState::mCinematicForceSkippableOverride, which IsCinematicSkippable checks first), and skipped
+    // (rt_skip_cinematics) - the intro replay reaches the landing site at frame ~5000 instead of ~12000
+    if (rt_skip_cinematics()) *(uint8_t *)(uintptr_t)guest_sym("_ZN10CGameState32mCinematicForceSkippableOverrideE") = 1;
     static long at = -2;
     if (at == -2) at = getenv("LARECOMP_AUTOSAVE_AT") ? atol(getenv("LARECOMP_AUTOSAVE_AT")) : -1;
     extern uint64_t vk_frame_counter(void);
@@ -56,6 +70,93 @@ void rt_debug_autosave(Cpu *c) {
     Cpu *saved = malloc(sizeof *saved);
     *saved = *c;
     guest_call(c, guest_sym("_ZN13CStateManager13StartAutoSaveEv"));
+    *c = *saved;
+    free(saved);
+}
+
+// ---- (debug) areas
+// An area (a room) is a 16-byte CObjectId (GUID); each one the game loads is logged ("[area] load ..."). Called from
+// CGameAreaManager::BeginAreaLoad (tools/patches.py), the ID at [x1], the load type in w2.
+void rt_area_load(Cpu *c) {
+    const uint8_t *id = (const uint8_t *)(uintptr_t)c->x[1];
+    char h[33];
+    for (int i = 0; i < 16; i++) snprintf(h + 2 * i, 3, "%02x", id[i]);
+    extern uint64_t vk_frame_counter(void);
+    LOG("[area] load %s type %u (frame %llu)\n", h, (unsigned)c->x[2], (unsigned long long)vk_frame_counter());
+}
+
+// ---- (debug) the player: position notes, position log, teleport
+// CPlayerMP1::UpdateCameraBob (each gameplay frame, the player in x0 and the state manager in x1; tools/patches.py)
+// keeps both for these:
+// F8: the player's position and facing, appended to positions.txt (and the log) as a LARECOMP_TELEPORT value - the
+// user walks somewhere, presses F8, and a test run starts there.
+// LARECOMP_POS_LOG=<n>: the player's position every n frames ("[pos] frame F x y z").
+// LARECOMP_TELEPORT=<frame>:<x>,<y>,<z>[,<9 rotation values, by rows>]: from that frame on (0: the first gameplay
+// frame), the next gameplay frame teleports the player there (CPlayerMP1::Teleport; without a rotation, facing kept).
+// With LARECOMP_SKIP_CINEMATICS, a new game's first gameplay frame is ~5600.
+static uint64_t g_player, g_player_mgr;
+
+// The actor's world transform: 3x4 rows, the translation in column 3 (CActorMP1::SetTranslation's layout)
+static float *player_transform(uint64_t player) {
+    uint64_t e = LD64(player + 8), t = e ? LD64(e + 0x20) : 0, m = t ? LD64(t + 0x40) : 0;
+    return m ? (float *)(uintptr_t)m : NULL;
+}
+
+void rt_player_frame(Cpu *c) {
+    g_player = c->x[0];
+    g_player_mgr = c->x[1];
+    static long every = -2;
+    if (every == -2) every = getenv("LARECOMP_POS_LOG") ? atol(getenv("LARECOMP_POS_LOG")) : 0;
+    extern uint64_t vk_frame_counter(void);
+    uint64_t frame = vk_frame_counter();
+    static uint64_t logged = ~0ull;
+    float *m = player_transform(g_player);
+    if (every > 0 && m && frame % every == 0 && frame != logged) {
+        logged = frame;
+        LOG("[pos] frame %llu %.2f %.2f %.2f\n", (unsigned long long)frame, m[3], m[7], m[11]);
+    }
+    extern volatile int g_pos_save_request;
+    if (g_pos_save_request && m) {
+        g_pos_save_request = 0;
+        char line[512];
+        snprintf(line, sizeof line, "LARECOMP_TELEPORT=0:%.3f,%.3f,%.3f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f",
+                 m[3], m[7], m[11], m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]);
+        FILE *f = fopen("positions.txt", "a");
+        if (f) { fprintf(f, "%s   (frame %llu)\n", line, (unsigned long long)frame); fclose(f); }
+        LOG("[pos] F8: %s (positions.txt%s)\n", line, f ? "" : ": not writable");
+    }
+}
+
+// From CStateManager::BeginFrame (rt_debug_autosave): the teleport runs between frames, not inside the player's update
+static void debug_teleport(Cpu *c) {
+    static long at = -2;
+    static float to[3], rot[9];
+    static int nrot;
+    if (at == -2) {
+        const char *e = getenv("LARECOMP_TELEPORT");
+        int n = e ? sscanf(e, "%ld:%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f", &at, &to[0], &to[1], &to[2], &rot[0], &rot[1],
+                           &rot[2], &rot[3], &rot[4], &rot[5], &rot[6], &rot[7], &rot[8]) : 0;
+        if (n != 4 && n != 13) at = -1;
+        nrot = n == 13 ? 9 : 0;
+    }
+    extern uint64_t vk_frame_counter(void);
+    if (at < 0 || (long)vk_frame_counter() < at || !g_player) return;
+    float *m = player_transform(g_player);
+    if (!m) return;
+    at = -1;
+    static float *xf;
+    if (!xf) xf = hle_alloc(64);
+    memcpy(xf, m, 48);
+    LOG("[pos] teleport from %.2f %.2f %.2f to %.2f %.2f %.2f\n", m[3], m[7], m[11], to[0], to[1], to[2]);
+    xf[3] = to[0], xf[7] = to[1], xf[11] = to[2];
+    for (int r = 0; r < 3 && nrot; r++) for (int k = 0; k < 3; k++) xf[4 * r + k] = rot[3 * r + k];
+    Cpu *saved = malloc(sizeof *saved);
+    *saved = *c;
+    c->x[0] = g_player;
+    c->x[1] = (uint64_t)(uintptr_t)xf;
+    c->x[2] = g_player_mgr;
+    c->x[3] = 0;
+    guest_call(c, guest_sym("_ZN10CPlayerMP18TeleportERK12CTransform4fR13CStateManagerb"));
     *c = *saved;
     free(saved);
 }

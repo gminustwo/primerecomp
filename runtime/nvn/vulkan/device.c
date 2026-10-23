@@ -565,15 +565,21 @@ void backend_present(NvnTexture *t) {
     }
     if (g_debug_frame) LOG("===== debug frame %llu =====\n", (unsigned long long)total_frames);
     {   // LARECOMP_SHOT_AT=<frame>,<frame>,... (ascending): the game image at those frames -> build/frames/frame_N.png
-        static const char *next;
+        // (or LARECOMP_SHOT_DIR/frame_N.png: runs side by side each keep their own)
+        static const char *next, *dir;
         static int init;
-        if (!init) { init = 1; next = getenv("LARECOMP_SHOT_AT"); if (next) mkdir("build/frames", 0755); }
+        if (!init) {
+            init = 1;
+            next = getenv("LARECOMP_SHOT_AT");
+            dir = getenv("LARECOMP_SHOT_DIR") ? getenv("LARECOMP_SHOT_DIR") : "build/frames";
+            if (next) mkdir(dir, 0755);
+        }
         while (next && *next) {
             long at = strtol(next, (char **)&next, 10);
             if ((long)total_frames < at) { while (next > getenv("LARECOMP_SHOT_AT") && next[-1] != ',') next--; break; }
             if ((long)total_frames == at) {
-                char path[256];
-                snprintf(path, sizeof path, "build/frames/frame_%05llu.png", (unsigned long long)total_frames);
+                char path[512];
+                snprintf(path, sizeof path, "%s/frame_%05llu.png", dir, (unsigned long long)total_frames);
                 renderer_save_texture_tex(b, path);
             }
             if (*next == ',') next++;
