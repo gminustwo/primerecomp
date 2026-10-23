@@ -1105,7 +1105,10 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
                 c->flat_mask |= 1u << ((aa - 0x80) >> 4);
         c->ipa_mode = mode;
         c->ipa_mul = (int)bits(w, 20, 8);
-        attr_load(c, d, addr, iv);
+        // IPA.IDX: the register holds the whole address (AL2P's result, already base + index); the immediate repeats
+        // the base. Adding it read past every varying (zero): the gunship's hull sampled its atlas at UV (0, 0) -
+        // one flat orange-brown.
+        attr_load(c, d, idx ? 0 : addr, iv);
         c->ipa_mode = -1;
         if (bits(w, 51, 1) && d != RZ) sp(&c->body, "    r%d = as_type<uint>(saturate(as_type<float>(r%d)));\n", d, d);
     } else if (OPM(0xefd8000000000000ull, 0xfff8000000000000ull)) {  // LD attribute

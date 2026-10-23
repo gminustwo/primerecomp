@@ -1239,6 +1239,8 @@ static void override_glsl(char **src, uint64_t addr, const char *suffix) {
     if (!f) {  // or by the translation's hash (h<hash>_vs.glsl, as LARECOMP_SAVE_MSL names it)
         snprintf(path, sizeof path, "%s/h%016llx_%s.glsl", dir, (unsigned long long)glsl_hash(*src), suffix);
         f = fopen(path, "rb");
+        static int nlog;
+        if (!f && nlog++ < 3) LOG("[shader] override: no %s (or by address)\n", path);
     }
     if (!f) return;
     fseek(f, 0, SEEK_END);
@@ -3136,6 +3138,31 @@ static void dump_gpu_3d(const TexBackend *b, uint32_t bpp, const char *path) {
     LOG("[draw]     GPU texels -> %s (%llu bytes)\n", path, (unsigned long long)size);
 }
 
+// (debug) every layer and level of a cube / array image, tightly packed (layer-major, then level): the reflection
+// probe's faces and mips, read back in the debug frame with LARECOMP_DUMP_3D
+static void dump_gpu_layers(const TexBackend *b, uint32_t bpp, const char *path) {
+    vk_end_pass();
+    VkCommandBuffer cb = vk_cmd();
+    vk_full_barrier(cb);
+    uint64_t size = 0;
+    for (uint32_t l = 0; l < b->levels; l++) size += (uint64_t)level_extent(b->width, l) * level_extent(b->height, l) * bpp;
+    size *= b->layers;
+    VkSpan out = vk_readback(size);
+    uint64_t off = 0;
+    for (uint32_t ly = 0; ly < b->layers; ly++)
+        for (uint32_t l = 0; l < b->levels; l++) {
+            uint32_t w = level_extent(b->width, l), h = level_extent(b->height, l);
+            VkBufferImageCopy c = {.bufferOffset = out.off + off, .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, ly, 1},
+                                   .imageExtent = {w, h, 1}};
+            vkCmdCopyImageToBuffer(cb, b->image, VK_IMAGE_LAYOUT_GENERAL, out.buf, 1, &c);
+            off += (uint64_t)w * h * bpp;
+        }
+    renderer_flush();
+    FILE *f = fopen(path, "wb");
+    if (f) { fwrite(out.ptr, 1, size, f); fclose(f); }
+    LOG("[draw]     GPU layers x levels -> %s (%u x %u, %llu bytes)\n", path, b->layers, b->levels, (unsigned long long)size);
+}
+
 static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
     LOG("[draw] %s inst %llu mode %llu count %llu prog vs=%llx fs=%llx | vs cb %#x fs cb %#x | rt %d", indexed ? "e" : "a",
         (unsigned long long)(indexed ? r->x[6] : r->x[4]), (unsigned long long)r->x[0], (unsigned long long)r->x[2],
@@ -3217,6 +3244,17 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
             i, (void *)t, (unsigned long long)t->addr, t->width, t->height, t->format, t->flags, b ? b->levels : 0, b ? b->width : 0,
             b ? b->height : 0, b ? b->sx : 0, b ? b->sy : 0, b && b->scalable ? " scalable" : "", t->target, t->depth, t->levels,
             b ? b->depth : 0, b && b->gpu_owned ? "gpu" : "uploaded", b ? b->refs : 0);
+        if (t->target == 1 && t->width == 646 && t->height == 32 && b && b->gpu_owned && getenv("LARECOMP_DUMP_3D") &&
+            t->layout.fmt) {  // (debug) MPR's light table
+            static int once;
+            if (!once++) dump_gpu_3d(b, t->layout.fmt->bpb, "build/lighttable_646x32.bin");
+        }
+        if (t->target == 8 && b && b->layers == 6 && getenv("LARECOMP_DUMP_3D") && t->layout.fmt && t->layout.fmt->bw == 1) {
+            char path[160];
+            snprintf(path, sizeof path, "build/cube_%ux%u_f%x_%s_%llx.bin", b->width, b->height, t->format,
+                     b->gpu_owned ? "gpu" : "up", (unsigned long long)t->addr);
+            dump_gpu_layers(b, t->layout.fmt->bpb, path);
+        }
         if (t->target == 2 && b && b->gpu_owned && b->depth > 1 && getenv("LARECOMP_DUMP_3D") && t->layout.fmt) {
             char path[160];
             snprintf(path, sizeof path, "build/gpu3d_%ux%ux%u_f%x.bin", b->width, b->height, b->depth, t->format);
