@@ -1,16 +1,22 @@
-# Handoff: 2026-10-22
+# Handoff: 2026-10-23
 
 Where the work stopped, and what to do next. Read with PROGRESS.md (history) and the commit log.
 
-## State (paused for the night 2026-10-22; the user picks it up again tomorrow)
+## State (2026-10-23, working on my own while the user is away)
 
 - **Playable:** boot, menus, the whole frigate, onto Tallon IV (the user's own playthrough), 60 / 120 fps.
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
   from Steam (its shortcut targets lasrecomp.exe; Steam Input applies). Their log is `lasrecomp.log` there, F9
-  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build a77199c (release
-  exe; installed by the user with `Install_update.bat`, which copies `private/playtest/update/` in when the game
-  is closed - use that route whenever the game is running).
+  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 01308e1 (release
+  exe, installed directly: the game was closed; `private/playtest/update/` holds the same build, so
+  `Install_update.bat` is harmless). Use the update folder route whenever the game is running.
+- **The user's save** (`private/playtest/MPRRecomp/save/save_0/save.bin`, a save room on Tallon IV) loads in test
+  runs: copy it to `<scratch>/save_0/save.bin`, run with `LARECOMP_SAVE_DIR=<scratch>`, the intro replay's A
+  presses and `LARECOMP_SKIP_CINEMATICS=1`: the save loads at frame ~4100, play from ~5500.
+- **New from the user (2026-10-23): "if you load my save there are no cannon sounds"** - fixed in 01308e1
+  (splitters, which carry most sound effects in play, were ignored; also the I3DL2 reverb, delay and biquad
+  effects). Wait for their confirmation; ask about any sound that's missing or wrongly balanced.
 - **Next, from the user:**
   1. "The door still is black" - which door is unknown (its capture was overwritten before F9 got its own
      folders). Ask for an F9 + F8 at it; then teleport there (LARECOMP_TELEPORT; far rooms also need
@@ -21,6 +27,19 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 - **User-reported open bugs (older):**
   - Many objects are black. The blue door shields (flat cyan) are fixed; no other black objects found in the
     first two rooms.
+
+## Fixed on 2026-10-23
+
+- **No cannon sounds (most sound effects in play silent):** MPR sends each sound through a splitter (voice mix
+  0x7FFFFFFF + a splitter id; 5 destinations: the panned dry send to mix 3, a reverb send to mix 4). The splitter
+  section ('SNDH') was ignored. Now parsed and routed for voices and sub mixes (`update_splitters`,
+  `split_dest`); mixes ordered by their longest route over both kinds. The game's effects are ported from Ryujinx:
+  I3DL2 reverb (type 5, the reverb send bus, dry gain 0 - passing it through would have doubled every send),
+  delay (type 3, other rooms' bus), biquad (type 6, a shelf on mix 3's second buffer set). A/B:
+  `LARECOMP_NO_SPLITTERS=1`, `LARECOMP_NO_EFFECTS=1`. Checked by WAV capture (`LARECOMP_AUDIO_WAV`) on the user's
+  save. The renderer is REV9.
+- Open in audio: the aux effect (type 2) on the final mix passes through. The game imports
+  Read/WriteAuxSend/ReturnBuffer and ProcessAuxLimiter, so it is probably a software master limiter on the CPU.
 
 ## Fixed on 2026-10-22
 
