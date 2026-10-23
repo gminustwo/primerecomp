@@ -8,7 +8,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   autosave was forced with `LARECOMP_AUTOSAVE_AT`, then reloaded after a restart.
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it contains the game library), started
   with `Play Metroid Prime Remastered.bat`. Their notes go in `ISSUES.md` there and their log is
-  `lasrecomp.log`. It holds build aa333d7 (2026-10-22, a release exe): everything below is in it. No issues written there yet.
+  `lasrecomp.log`. It holds build efbe616 (2026-10-22, a release exe): everything below is in it. No issues written there yet.
 - **User-reported open bugs:**
   - ~~The star backdrop and Tallon IV are missing in space.~~ Fixed (CC tests, below).
   - ~~Samus renders wrong~~: a burst of spikes in the landing cutscene (LDC offsets, fixed in 5c145b5).
@@ -56,6 +56,13 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   the game's buffers with the hardware number, and there the game had bound a buffer at index 2. Now c >= 3 is
   `ubuf[c - 3]`. Not yet seen in a run that reaches that corridor (scripted routes stop at the second force field;
   the user is to F8 a position there).
+- **The user got past the frigate onto Tallon IV** (the elevator scans since the occlusion queries). Still open
+  from them: "the door still is black" (which door: unknown - its F9 capture was overwritten; F9 now keeps each
+  capture in build/f9_<frame>/).
+- **Button glyphs** (fragments of brackets): the default block height is the power of two nearest the height in GOBs
+  (tegra.c; LARECOMP_BH_PROBE scored every texture between powers of two: 9 rows 1 GOB, 13 2, 26 4, 52 8).
+- **The map's filled rooms** (wireframe only): geometry shaders are translated now (translate.c: VMAD / VSETP /
+  ISBERD / ALD from a vertex / AST / OUT; exec.c: a third stage, set 2). LARECOMP_NO_GS=1 draws without them.
 - **Occlusion queries** (the user: an elevator that won't scan, frame ~25700, position in positions.txt): the Scan
   Visor, lights and scene nodes are tested with SAMPLES_PASSED queries (CGraphicsOcclusionQueryToken_NVN); the report
   said 0, so small scan targets were "hidden" (on the landing deck lock-on skipped the force field's switch). Real
@@ -80,7 +87,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
    `st.ubuf[stage][c - 3]`), so the "cb4 = 0 0 0" reading was wrong: look again.
 3. ~~Frame 7000 of the intro replay is black~~: the fog volume bug, fixed in 422cc4e.
 4. Save slot area name `<ERROR>` with a forced autosave: check with a save made at a real save station.
-5. **Two other geometry shaders are still dropped** (`gs 729c002100`, `729c004100`, logged once per program with
+5. ~~Two other geometry shaders are still dropped~~: translated since fd5c33e (with the map's). (Old notes:) (`gs 729c002100`, `729c004100`, logged once per program with
    the frame: 5131 and 10558 of the intro replay). Full geometry shaders: the vertex shader only outputs world
    positions (v0), the GS projects the triangle with c[3] matrices, culls (EXIT) and emits (OUT, past the first
    0x800 bytes - dump more to see it). Their draws are depth-only into the main depth buffer and draw nothing
