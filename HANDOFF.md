@@ -8,7 +8,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   autosave was forced with `LARECOMP_AUTOSAVE_AT`, then reloaded after a restart.
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it contains the game library), started
   with `Play Metroid Prime Remastered.bat`. Their notes go in `ISSUES.md` there and their log is
-  `lasrecomp.log`. It holds build 2012c44 (2026-10-22, a release exe): everything below is in it. No issues written there yet.
+  `lasrecomp.log`. It holds build d7a724f (2026-10-22, a release exe): everything below is in it. No issues written there yet.
 - **User-reported open bugs:**
   - ~~The star backdrop and Tallon IV are missing in space.~~ Fixed (CC tests, below).
   - ~~Samus renders wrong~~: a burst of spikes in the landing cutscene (LDC offsets, fixed in 5c145b5).
@@ -51,6 +51,14 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   after the first door"): svc_wait_process_wide_key set the condvar key after releasing the mutex, so a guest
   thread taking the mutex in user mode in between skipped its signal: a lost wakeup. Caught by the new stall
   watchdog (thread dump after 10 s without a frame, on by default; LARECOMP_STALL_DUMP).
+- **The black screen in the first enclosed corridor** (user F9 capture: the scene pass fine, the final image black):
+  the fog writer's bindless image handle comes from hardware cbuf 2 (the driver table), but `image_view` indexed
+  the game's buffers with the hardware number, and there the game had bound a buffer at index 2. Now c >= 3 is
+  `ubuf[c - 3]`. Not yet seen in a run that reaches that corridor (scripted routes stop at the second force field;
+  the user is to F8 a position there).
+- **A freeze at the title screen** (main thread spinning in `GetTouchScreenStates`): QueryMemory reported the HLE
+  stub range and the HLE heap free, so the SDK's random placement of the HID shared memory could land on host
+  allocations. Both are kernel regions now.
 - Debug: texture and attachment lines show the guest address (`@addr`), flags and refs; `LARECOMP_LOG_TEX_SHARE`
   logs each shared image join; draws with untranslated stages say so; the stats line counts textures / images.
 
@@ -126,6 +134,12 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 - **Gameplay:** frame ~12000 with the same input script; add `12100:STICK_UP:200` to walk through the first
   door (frame 12500 is the next room). **Saves:** `LARECOMP_SAVE_DIR=<scratch dir>` and
   `LARECOMP_AUTOSAVE_AT=<frame>`.
+- **Getting somewhere fast** (2026-10-22): `LARECOMP_SKIP_CINEMATICS=1` skips every cutscene (a new game is at the
+  landing site, (91.38, 0.25, -105.23), by frame ~5600 with only the menu A presses). `LARECOMP_TELEPORT=0:x,y,z[,9
+  rotation values]` teleports at the first gameplay frame; F8 in game appends the player's position as such a value
+  to `positions.txt` (cwd). `LARECOMP_POS_LOG=50` logs positions. y is up. Teleporting by guessed coordinates mostly
+  fell into space (points off the deck or inside the hull); use F8 positions. Whether a teleport into another room
+  (another area) has collision is untested. `LARECOMP_SHOT_DIR` separates parallel runs' shots.
 - **Regenerating game code** (after `tools/patches.py` changes):
   `cd tools && ./venv/Scripts/python gen.py main ../private/exefs/main 0x7000000000 ../generated/main`, then `make`.
 - **Updating the playtest build:** the playtest exe is a release (GUI) build, started by Steam directly (its
