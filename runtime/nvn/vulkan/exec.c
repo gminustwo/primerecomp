@@ -2495,10 +2495,12 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
 static VkImageView image_view(int stage, const ShaderTexture *im) {
     uint64_t h = 0;
     if (im->bindless) {
-        Range u = st.ubuf[stage][im->bindless_cbuf];
+        // hardware cbuf c >= 3 is the game's uniform buffer c - 3 (cbuf_info); cbuf 2 is the driver's handle table
+        // (bound textures at 0x20 + 8 * slot, then bound images at 0x120 + 8 * slot) - the volumetric fog writer
+        // reads its image's handle there. (Indexing the game's buffers with c itself read the game's buffer 2 once
+        // it bound one: no image in the first corridor of the frigate, the fog volume empty, the screen black.)
+        Range u = im->bindless_cbuf >= 3 && im->bindless_cbuf - 3 < 18 ? st.ubuf[stage][im->bindless_cbuf - 3] : (Range){0, 0};
         if (u.addr && im->bindless_offset + 4 <= u.size) h = *(const uint32_t *)(uintptr_t)(u.addr + im->bindless_offset);
-        // Constant buffer 2 past what the game bound there: the driver's handle table (bound textures at 0x20 + 8 *
-        // slot, then bound images at 0x120 + 8 * slot) - the volumetric fog writer reads its image's handle that way
         else if (im->bindless_cbuf == 2 && im->bindless_offset >= 0x20 && im->bindless_offset < 0x160) {
             uint32_t off = im->bindless_offset;
             h = off < 0x120 ? st.tex[stage][(off - 0x20) / 8] : st.img[stage][(off - 0x120) / 8];
@@ -2511,8 +2513,8 @@ static VkImageView image_view(int stage, const ShaderTexture *im) {
     if (g_debug_frame && (!h || !st.tpool || tic >= (uint32_t)st.tpool->count || !((NvnTexEntry *)st.tpool->entries)[tic].tex))
         LOG("[draw]   image (stage %d) not found: bindless %d cbuf %d off %#x slot %d handle %llx pool %p | cbuf %llx size %llu"
             " | images %llx %llx\n", stage, im->bindless, im->bindless_cbuf, im->bindless_offset, ((int)im->handle_offset - 0x20) / 8,
-            (unsigned long long)h, (void *)st.tpool, (unsigned long long)st.ubuf[stage][im->bindless_cbuf].addr,
-            (unsigned long long)st.ubuf[stage][im->bindless_cbuf].size, (unsigned long long)st.img[stage][0],
+            (unsigned long long)h, (void *)st.tpool, (unsigned long long)(im->bindless_cbuf >= 3 ? st.ubuf[stage][im->bindless_cbuf - 3].addr : 0),
+            (unsigned long long)(im->bindless_cbuf >= 3 ? st.ubuf[stage][im->bindless_cbuf - 3].size : 0), (unsigned long long)st.img[stage][0],
             (unsigned long long)st.img[stage][1]);
     if (!h || !st.tpool || tic >= (uint32_t)st.tpool->count) return VK_NULL_HANDLE;
     NvnTexEntry *e = &((NvnTexEntry *)st.tpool->entries)[tic];
