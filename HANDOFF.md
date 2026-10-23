@@ -45,6 +45,9 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   visor effect) - useless as views.
 - The Burning Trail corridor looks greenish only toward the save station door (its cyan light); along the
   corridor the walls are warm orange as in the MPR references.
+- Reflection probes: each room's materials bind a baked 128x128 BC6H cube (8 levels, uploaded: @72ca862400 in the
+  save station, @72c616b600 in Burning Trail when walked in). After a teleport out of the room's bounds they get a
+  1x1 placeholder cube instead - a teleport artifact, not a bug (it also explains odd colours in such views).
 
 ## Fixed on 2026-10-23
 
