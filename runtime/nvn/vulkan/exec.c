@@ -1209,6 +1209,13 @@ static VkPipelineLayout make_layout(Prog *p, int nsets, VkShaderStageFlags s0, V
     return l;
 }
 
+// (debug) a translation's name that stays the same between runs (code addresses don't): FNV-1a of the source
+static uint64_t glsl_hash(const char *src) {
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (const char *p = src; *p; p++) { h ^= (uint8_t)*p; h *= 0x100000001B3ull; }
+    return h;
+}
+
 static void save_glsl(const char *src, uint64_t addr, const char *suffix) {
     if (!getenv("LARECOMP_SAVE_MSL")) return;
     mkdir("build/glsl", 0755);
@@ -1216,9 +1223,12 @@ static void save_glsl(const char *src, uint64_t addr, const char *suffix) {
     snprintf(path, sizeof path, "build/glsl/%llx_%s.glsl", (unsigned long long)addr, suffix);
     FILE *f = fopen(path, "w");
     if (f) { fputs(src, f); fclose(f); }
+    snprintf(path, sizeof path, "build/glsl/h%016llx_%s.glsl", (unsigned long long)glsl_hash(src), suffix);
+    f = fopen(path, "w");
+    if (f) { fputs(src, f); fclose(f); }
 }
 
-// (debug) LARECOMP_GLSL_OVERRIDE=<dir>: <dir>/<code addr>_vs.glsl / _fs.glsl, when present, replaces the
+// (debug) LARECOMP_GLSL_OVERRIDE=<dir>: <dir>/<code addr>_vs.glsl / _fs.glsl (or h<source hash>_...), replaces the
 // translation (experiments on one shader without rebuilding; the directory is relative to build/)
 static void override_glsl(char **src, uint64_t addr, const char *suffix) {
     const char *dir = getenv("LARECOMP_GLSL_OVERRIDE");
@@ -1226,6 +1236,10 @@ static void override_glsl(char **src, uint64_t addr, const char *suffix) {
     char path[512];
     snprintf(path, sizeof path, "%s/%llx_%s.glsl", dir, (unsigned long long)addr, suffix);
     FILE *f = fopen(path, "rb");
+    if (!f) {  // or by the translation's hash (h<hash>_vs.glsl, as LARECOMP_SAVE_MSL names it)
+        snprintf(path, sizeof path, "%s/h%016llx_%s.glsl", dir, (unsigned long long)glsl_hash(*src), suffix);
+        f = fopen(path, "rb");
+    }
     if (!f) return;
     fseek(f, 0, SEEK_END);
     long n = ftell(f);

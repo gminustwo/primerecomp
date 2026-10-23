@@ -846,7 +846,10 @@ static bool guest_ptr_ok(uint64_t p) { return p >= GUEST_LO && p + 16 <= GUEST_H
 
 static void dump_threads(void) {
     static const char *const kinds[] = {"run", "mutex", "condvar", "arbiter"};
-    pthread_mutex_lock(&g_klock);
+    // (a deadlock may hold the kernel lock: read the thread list without it after a few seconds of trying)
+    bool locked = false;
+    for (int i = 0; i < 300 && !(locked = pthread_mutex_trylock(&g_klock) == 0); i++) plat_sleep_until_ns(plat_now_ns() + 10000000);
+    if (!locked) LOG("[hang] (kernel lock held: reading the threads without it)\n");
     LOG("[hang] ---- threads\n");
     for (KThread *t = g_threads; t; t = t->anext) {
         Cpu *c = &t->cpu;
@@ -876,7 +879,28 @@ static void dump_threads(void) {
             fp = next;
         }
     }
-    pthread_mutex_unlock(&g_klock);
+    if (locked) pthread_mutex_unlock(&g_klock);
+}
+
+// Stall watch (on by default; LARECOMP_STALL_DUMP=<seconds>, 0 = off): when no frame has been presented for that
+// long, the guest threads are dumped once (per stall) - an intermittent freeze in the menus and the intro left
+// nothing in the log, and the periodic LARECOMP_HANG_DUMP (the kernel lock every few seconds) seems to hide it.
+static void *stall_watch(void *arg) {
+    double secs = *(double *)arg;
+    extern uint64_t renderer_present_count(void);
+    uint64_t last = renderer_present_count(), since = plat_now_ns();
+    bool dumped = false;
+    for (;;) {
+        plat_sleep_until_ns(plat_now_ns() + 1000000000ull);
+        uint64_t n = renderer_present_count(), now = plat_now_ns();
+        if (n != last) { last = n; since = now; dumped = false; continue; }
+        if (!dumped && last > 0 && now - since > (uint64_t)(secs * 1e9)) {
+            LOG("[hang] no frame presented for %.0f s (frame %llu): guest threads\n", secs, (unsigned long long)last);
+            dump_threads();
+            dumped = true;
+        }
+    }
+    return NULL;
 }
 
 static void *hang_watch(void *arg) {
@@ -902,6 +926,13 @@ void kernel_init(void) {
     if (!hang_started && getenv("LARECOMP_HANG_DUMP") && (hang_every = atof(getenv("LARECOMP_HANG_DUMP"))) > 0) {
         pthread_t th;
         hang_started = !pthread_create(&th, NULL, hang_watch, &hang_every);
+    }
+    static double stall_secs = -1;
+    if (stall_secs < 0) {
+        const char *e = getenv("LARECOMP_STALL_DUMP");
+        stall_secs = e ? atof(e) : 10;
+        pthread_t th;
+        if (stall_secs > 0) pthread_create(&th, NULL, stall_watch, &stall_secs);
     }
 }
 
