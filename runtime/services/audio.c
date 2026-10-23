@@ -15,8 +15,8 @@
 // Ryujinx's AudioRenderer (VoiceState / DataSourceHelper / StateUpdater, copies in notes/ryujinx_audio).
 // Voices decode PCM16 / ADPCM wave buffers, resample to 48 kHz, and mix into their destination mix's
 // buffers (or a splitter's destinations); sub mixes route into their destination; the final mix feeds the
-// device sink, which we downmix to stereo and push to an SDL audio stream. Effects: reverb, I3DL2 reverb, delay
-// and biquad filter (aux sends pass the mix through).
+// device sink, which we downmix to stereo and push to an SDL audio stream. Effects: aux, reverb, I3DL2 reverb,
+// delay and biquad filter.
 #define WB_COUNT 4
 #define MIXBUF_MAX 24
 #define HIST 4
@@ -691,7 +691,54 @@ struct Effect {
     Reverb3d r3;    // type 5
     Delay dly;      // type 3
     float bq_k[5], bq_st[6][2];  // type 6: one biquad per channel
+    // type 2, aux: up to 24 channels; the send / return buffers' headers (the DSP's offsets at +0x40, samples at +0x80)
+    uint8_t aux_in[24], aux_out[24], aux_ch;
+    uint32_t aux_count;
+    uint64_t aux_send, aux_ret;
 };
+
+// Aux (port of Ryujinx AuxiliaryBufferCommand): each channel's samples go to the send ring as s32 and the output
+// comes back from the return ring; the last channel moves the DSP's write (send) and read (return) offsets on by all
+// the channels' samples. MPR's aux on the final mix: the game reads the send ring every frame (its rumble follows
+// the sound) and writes it back delayed by 144 samples (a lookahead limiter, no change at normal levels) - measured.
+// The output passes the input through instead: reading the return adds 23 ms and repeats stale samples whenever the
+// game's audio thread misses its 5 ms frame (LARECOMP_AUX_RETURN=1 uses the return).
+static void aux_process(Effect *fx, Mix *m, uint32_t N) {
+    static int use_return = -1;
+    if (use_return < 0) use_return = getenv("LARECOMP_AUX_RETURN") ? atoi(getenv("LARECOMP_AUX_RETURN")) : 0;
+    uint32_t cmax = fx->aux_count, ch = fx->aux_ch;
+    uint8_t *send = (uint8_t *)(uintptr_t)fx->aux_send, *ret = (uint8_t *)(uintptr_t)fx->aux_ret;
+    int pass = !fx->enabled || !cmax || !send || !ret || !use_return;
+    if (!fx->enabled) {
+        if (send) memset(send + 0x40, 0, 8), memset(send + 0x4C, 0, 4);  // read / write offsets, total count
+        if (ret) memset(ret + 0x40, 0, 8), memset(ret + 0x4C, 0, 4);
+    } else if (cmax && send && ret) {
+        uint32_t *sinfo = (uint32_t *)(send + 0x40), *rinfo = (uint32_t *)(ret + 0x40);
+        int32_t *sbuf = (int32_t *)(send + 0x80), *rbuf = (int32_t *)(ret + 0x80), tmp[4096];
+        for (uint32_t c = 0; c < ch && N <= 4096; c++) {
+            float *in = m->buf + (fx->aux_in[c] % MIXBUF_MAX) * N, *out = m->buf + (fx->aux_out[c] % MIXBUF_MAX) * N;
+            uint32_t t = c * N + __atomic_load_n(&sinfo[1], __ATOMIC_RELAXED);
+            if (t <= cmax) {
+                for (uint32_t i = 0; i < N; i++) tmp[i] = (int32_t)lrintf(in[i]);
+                for (uint32_t i = 0; i < N; i++, t = (t + 1) % cmax) sbuf[t % cmax] = tmp[i];
+            }
+            if (c == ch - 1) __atomic_store_n(&sinfo[1], (sinfo[1] + ch * N) % cmax, __ATOMIC_RELEASE);
+            if (!use_return) continue;
+            t = c * N + __atomic_load_n(&rinfo[0], __ATOMIC_ACQUIRE);
+            if (t <= cmax) {
+                for (uint32_t i = 0; i < N; i++, t = (t + 1) % cmax) tmp[i] = rbuf[t % cmax];
+                for (uint32_t i = 0; i < N; i++) out[i] = (float)tmp[i];
+            } else {
+                memset(out, 0, N * sizeof(float));
+            }
+            if (c == ch - 1) __atomic_store_n(&rinfo[0], (rinfo[0] + ch * N) % cmax, __ATOMIC_RELEASE);
+        }
+    }
+    if (pass)
+        for (uint32_t c = 0; c < ch; c++)
+            if (fx->aux_in[c] != fx->aux_out[c] && fx->aux_in[c] < m->bufs && fx->aux_out[c] < m->bufs)
+                memcpy(m->buf + fx->aux_out[c] * N, m->buf + fx->aux_in[c] * N, N * sizeof(float));
+}
 
 static int ch_valid(unsigned ch) { return ch == 1 || ch == 2 || ch == 4 || ch == 6; }
 
@@ -708,6 +755,25 @@ static void effect_update(Effect *fx, const uint8_t *e) {
     const uint8_t *d = e + 0x20;
     memcpy(fx->input, d, 6);
     memcpy(fx->output, d + 6, 6);
+    if (fx->type == 2) {  // AuxiliaryBufferParameter: input[24], output[24], channels, rate, ring size, max, buffers
+        uint32_t ch, count;
+        uint64_t send, ret;
+        memcpy(&ch, d + 0x30, 4);
+        memcpy(&count, d + 0x38, 4);
+        memcpy(&send, d + 0x40, 8);
+        memcpy(&ret, d + 0x50, 8);
+        if (send != fx->aux_send || ret != fx->aux_ret || count != fx->aux_count)
+            LOG("[audren] aux on mix %d: %u channels, ring %u, send %llx return %llx%s\n", fx->mix_id, ch, count,
+                (unsigned long long)send, (unsigned long long)ret, send == ret ? " (the same buffer: a tap)" : "");
+        memcpy(fx->aux_in, d, 24);
+        memcpy(fx->aux_out, d + 24, 24);
+        fx->aux_ch = ch <= 24 ? (uint8_t)ch : 0;
+        fx->aux_count = count <= (1u << 24) ? count : 0;
+        fx->aux_send = send;
+        fx->aux_ret = ret;
+        fx->ch = fx->aux_ch ? 1 : 0;  // (apply_effects: the aux keeps its own channel lists)
+        return;
+    }
     if (fx->type == 6) {  // BiquadFilterEffectParameter: input, output, s16 numerator[3], denominator[2] (Q14), channels
         int16_t k[5];
         memcpy(k, d + 12, 10);
@@ -776,7 +842,7 @@ static void effect_update(Effect *fx, const uint8_t *e) {
     }
 }
 
-// A mix's effects in their processing order. Disabled ones (and aux sends, not implemented) copy input to output.
+// A mix's effects in their processing order. Disabled ones copy input to output.
 static void apply_effects(Renderer *r, int32_t mix_id, Mix *m) {
     uint32_t N = r->sample_count;
     static int no_reverb = -1, toggle = -1, no_fx = -1;
@@ -788,6 +854,10 @@ static void apply_effects(Renderer *r, int32_t mix_id, Mix *m) {
             Effect *fx = &r->fx[i];
             if (!fx->type || fx->mix_id != mix_id || fx->order != order || !fx->ch) continue;
             if (no_fx && fx->type != 4) continue;
+            if (fx->type == 2) {
+                aux_process(fx, m, N);
+                continue;
+            }
             int ch = fx->ch;
             float *in[6], *out[6];
             int ok = 1;
@@ -1331,8 +1401,8 @@ static void request_update(Renderer *r, IpcReq *req, IpcResp *resp) {
         static uint32_t seen_types;
         if (e[0] && e[0] < 32 && !(seen_types & (1u << e[0]))) {
             seen_types |= 1u << e[0];
-            LOG("[audren] effect type %u used%s: slot %u mix %d enabled %u\n", e[0], e[0] >= 3 && e[0] <= 6 ? "" : " (not implemented)", i,
-                *(const int32_t *)(e + 4), e[2]);
+            LOG("[audren] effect type %u used%s: slot %u mix %d enabled %u\n", e[0],
+                e[0] >= 2 && e[0] <= 6 ? "" : " (not implemented)", i, *(const int32_t *)(e + 4), e[2]);
         }
         if (e[0] && getenv("LARECOMP_AUDIO_LOG")) {
             static uint8_t last[16][0xC0];

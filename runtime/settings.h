@@ -29,6 +29,7 @@ typedef struct {
     int antialias;       // AA_*: anti-aliasing of the game image before it is scaled to the window
     float volume;        // master volume, 1 = 100%
     bool reverb;         // room reverb effect
+    bool rumble;         // controller rumble (runtime/hle/input.c)
     bool movie_audio;
     bool show_fps;
     int frame_rate;      // frames (and game simulation steps) per second: 60 (the Switch's), 120, or 0 = uncapped at 60 Hz

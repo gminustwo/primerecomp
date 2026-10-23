@@ -439,8 +439,8 @@ static void tab_display(void) {
     opt_section("Display");
     const char *aspects[] = {"Unlocked", "Original 16:9"};
     opt_choice("Aspect ratio", &g_settings.aspect, aspects, 2, ASPECT_UNLOCKED,
-               "Unlocked: the view fills the window, so wider (or taller) windows show more of the island - up to "
-               "ultrawide; houses and dungeons keep their framing. Original 16:9: the game's own framing, with bars.");
+               "Unlocked: the view fills the window, so wider (or taller) windows show more - up to ultrawide. "
+               "Original 16:9: the game's own framing, with bars.");
     bool fs = g_settings.fullscreen;
     if (opt_toggle("Fullscreen", &fs, false, "Fills the screen. Also: F11, Alt+Enter or Cmd+Ctrl+F.")) {
         g_settings.fullscreen = fs;
@@ -535,9 +535,11 @@ static void tab_audio(void) {
                    "The game's volume. 100% is the game's own level; above it, louder."))
         g_settings.volume = pct / 100.0f;
     opt_toggle("Room reverb", &g_settings.reverb, true,
-               "The game's echo in caves, dungeons and big rooms.");
+               "The game's echo in caves, ruins and big rooms.");
     opt_toggle("Movie audio", &g_settings.movie_audio, true,
                "Sound in the game's movies (the opening and the ending). Applies the next time a movie starts.");
+    opt_section("Controller");
+    opt_toggle("Rumble", &g_settings.rumble, true, "The game's rumble on the controller (missiles, damage...).");
     opt_end();
 }
 

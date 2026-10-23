@@ -36,7 +36,21 @@ SERVICE("hid", hid) {
     case 101: OUT(uint32_t, 0) = 0x1F; resp_size(resp, 4); break;  // GetSupportedNpadStyleSet
     case 121: OUT(int64_t, 0) = 0; resp_size(resp, 8); break;      // GetNpadJoyHoldType
     case 129: OUT(int64_t, 0) = 0; resp_size(resp, 8); break;      // GetNpadHandheldActivationMode
-    case 201: case 202: case 203: case 206: case 207: case 208: case 209: break;  // vibration
+    case 201: {  // SendVibrationValue(handle, {amp low, freq low, amp high, freq high}, aruid) -> the controller's motors
+        extern void input_set_vibration(uint32_t handle, float amp_low, float amp_high);
+        if (req->data_size >= 20) input_set_vibration(IN(uint32_t, 0), IN(float, 4), IN(float, 12));
+        break;
+    }
+    case 206: {  // SendVibrationValues(aruid; handles[], values[])
+        extern void input_set_vibration(uint32_t handle, float amp_low, float amp_high);
+        IpcBuf *h = in_buf(req, 0), *v = in_buf(req, 1);
+        for (uint64_t i = 0; h && v && i < h->size / 4 && i < v->size / 16; i++) {
+            const float *f = (const float *)(uintptr_t)(v->addr + i * 16);
+            input_set_vibration(((const uint32_t *)(uintptr_t)h->addr)[i], f[0], f[2]);
+        }
+        break;
+    }
+    case 202: case 203: case 207: case 208: case 209: break;  // vibration
     case 200: memset(resp->data, 0, 0x10); OUT(uint32_t, 0) = 1; resp_size(resp, 0x10); break;
     default: break;  // Activate*/Set*: accept
     }

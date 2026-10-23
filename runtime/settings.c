@@ -20,6 +20,7 @@ Settings g_settings = {
     .fullscreen = false,
     .volume = 1.0f,
     .reverb = true,
+    .rumble = true,
     .movie_audio = true,
     .show_fps = false,
     .frame_rate = 60,
@@ -93,6 +94,7 @@ void settings_load(void) {
         else if (!strcmp(key, "fullscreen")) g_settings.fullscreen = atoi(val) != 0;
         else if (!strcmp(key, "volume")) g_settings.volume = (float)atof(val);
         else if (!strcmp(key, "reverb")) g_settings.reverb = atoi(val) != 0;
+        else if (!strcmp(key, "rumble")) g_settings.rumble = atoi(val) != 0;
         else if (!strcmp(key, "movie_audio")) g_settings.movie_audio = atoi(val) != 0;
         else if (!strcmp(key, "show_fps")) g_settings.show_fps = atoi(val) != 0;
         else if (!strcmp(key, "frame_rate")) g_settings.frame_rate = atoi(val) == 120 ? 120 : atoi(val) == 0 ? 0 : 60;
@@ -150,6 +152,7 @@ void settings_save(void) {
     fprintf(f, "fullscreen = %d\n", g_settings.fullscreen);
     fprintf(f, "volume = %.2f\n", g_settings.volume);
     fprintf(f, "reverb = %d\n", g_settings.reverb);
+    fprintf(f, "rumble = %d\n", g_settings.rumble);
     fprintf(f, "movie_audio = %d\n", g_settings.movie_audio);
     fprintf(f, "show_fps = %d\n", g_settings.show_fps);
     fprintf(f, "frame_rate = %d\n", g_settings.frame_rate);

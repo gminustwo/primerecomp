@@ -79,6 +79,36 @@ void input_reset(void) {
     recompute_keyboard();
 }
 
+// Rumble: the game's vibration values (hid SendVibrationValue(s), per device: the low / high band amplitudes; MPR
+// plays its rumble effects for missiles, damage and the like) drive the controller's motors, the left device the
+// left (low frequency) one and the right device the right one. The game sends values for every player: player 1's
+// (npad 0) and the handheld one's count, whichever is stronger. The game's IPC thread sets them; the event loop,
+// which owns the pad, sends them (input_rumble_pump). LARECOMP_NO_RUMBLE=1: none; scripted runs don't rumble;
+// LARECOMP_LOG_RUMBLE=1 logs the changes.
+static _Atomic uint32_t rumble_amp[2][2];  // [npad 0, handheld][left, right], 0..65535
+static bool scripted_run(void);
+void input_set_vibration(uint32_t handle, float amp_low, float amp_high) {
+    uint32_t npad = (handle >> 8) & 0xFF;
+    if (npad != 0 && npad != 0x20) return;
+    float a = fmaxf(amp_low, amp_high);
+    rumble_amp[npad != 0][handle & 1] = a > 0 ? (uint32_t)(fminf(a, 1.0f) * 65535.0f) : 0;  // (NaN: 0)
+}
+void input_rumble_pump(void) {
+    static int off = -1, verbose = -1;
+    static uint32_t sent[2];
+    static uint64_t sent_ns;
+    if (off < 0) off = (getenv("LARECOMP_NO_RUMBLE") && atoi(getenv("LARECOMP_NO_RUMBLE"))) || scripted_run();
+    if (verbose < 0) verbose = getenv("LARECOMP_LOG_RUMBLE") ? 1 : 0;
+    uint32_t l = rumble_amp[0][0] > rumble_amp[1][0] ? rumble_amp[0][0] : rumble_amp[1][0];
+    uint32_t r = rumble_amp[0][1] > rumble_amp[1][1] ? rumble_amp[0][1] : rumble_amp[1][1];
+    if (!g_settings.rumble) l = r = 0;  // (switched off in the menu: a running rumble stops)
+    uint64_t now = SDL_GetTicksNS();
+    if (l == sent[0] && r == sent[1] && (!(l | r) || now - sent_ns < 100000000ull)) return;  // (refreshed every 100 ms)
+    if (verbose && (l != sent[0] || r != sent[1])) LOG("[rumble] %u %u%s\n", l, r, pad && !off ? "" : " (not sent)");
+    if (pad && !off) SDL_RumbleGamepad(pad, (Uint16)l, (Uint16)r, 200);
+    sent[0] = l, sent[1] = r, sent_ns = now;
+}
+
 volatile int g_debug_frame_request;  // F9: dump the next frame's passes (build/pass_*.png) + draw log
 volatile int g_pos_save_request;     // F8: note the player's position (runtime/hle/game.c, positions.txt)
 
@@ -96,7 +126,7 @@ static bool test_event(const SDL_Event *e) {
 // Scripted test runs ignore the user's own input (a key or stick touched while a test drives Link spoils it):
 // LARECOMP_NO_USER_INPUT=1, on by default whenever LARECOMP_INPUT / LARECOMP_DOORJUMP_TEST / LARECOMP_PLACE is set
 // (or LARECOMP_HOST_INPUT / LARECOMP_BIND_TEST; LARECOMP_NO_USER_INPUT=0 lets it through again).
-bool input_user_blocked(const SDL_Event *e) {
+static bool scripted_run(void) {
     static int on = -1;
     if (on < 0) {
         const char *v = getenv("LARECOMP_NO_USER_INPUT");
@@ -104,7 +134,11 @@ bool input_user_blocked(const SDL_Event *e) {
                                  getenv("LARECOMP_HOST_INPUT") || getenv("LARECOMP_BIND_TEST"));
         if (on) LOG("[input] scripted run: keyboard, mouse and controllers ignored\n");
     }
-    if (!on) return false;
+    return on;
+}
+
+bool input_user_blocked(const SDL_Event *e) {
+    if (!scripted_run()) return false;
     if (test_event(e)) return false;  // (LARECOMP_HOST_INPUT type: / sdlkey: / sdlpad: - the test's own presses)
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP: case SDL_EVENT_TEXT_INPUT: case SDL_EVENT_TEXT_EDITING:
@@ -168,6 +202,7 @@ void input_handle_event(const SDL_Event *e) {
         recompute_pad();
         break;
     }
+    input_rumble_pump();  // (and from the event loop when it's idle)
 }
 
 // Scripted input for testing: LARECOMP_INPUT="frame:BUTTON:frames,..." (BUTTON = A,B,X,Y,L,R,ZL,ZR,PLUS,
@@ -461,7 +496,8 @@ HLE_FUNC("_ZN2nn3hid27BindNpadStyleSetUpdateEventERKjPNS_2os15SystemEventTypeENS
     LOG("[input] style set update event bound\n");
 }
 
-// Vibration devices: accepted but inert (the SDK's vibration node graph stays recompiled).
+// Vibration devices (the SDK's vibration node graph stays recompiled; its values reach hid's SendVibrationValue,
+// runtime/services/hid_set.c, and the controller through input_set_vibration).
 HLE_FUNC("_ZN2nn3hid25InitializeVibrationDeviceERKNS0_21VibrationDeviceHandleE", hid_init_vibration) { (void)c; }
 HLE_FUNC("_ZN2nn3hid25GetVibrationDeviceHandlesEPNS0_21VibrationDeviceHandleEiRKjNS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE", hid_vibration_handles) {
     uint32_t *out = (uint32_t *)(uintptr_t)c->x[0];
