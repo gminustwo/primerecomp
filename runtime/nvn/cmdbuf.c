@@ -438,9 +438,30 @@ PLAIN(nvnCommandBufferWaitSync, CMD_WAIT_SYNC)
 PLAIN(nvnCommandBufferBarrier, CMD_BARRIER)
 PLAIN(nvnCommandBufferSignalEvent, CMD_SIGNAL_EVENT)
 PLAIN(nvnCommandBufferWaitEvent, CMD_WAIT_EVENT)
-PLAIN(nvnCommandBufferReportCounter, CMD_REPORT_COUNTER)
+NVN(nvnCommandBufferReportCounter) {
+    static int nlog[32];  // (who asks for what: the first few of each non-timestamp counter)
+    if (A(1) != 0 && A(1) < 32 && nlog[A(1)] < 3) {
+        nlog[A(1)]++;
+        uint64_t off = 0;
+        const char *fn = loader_symbol_at(c->x[30], &off);
+        LOG("[nvn] ReportCounter type %u to %llx from %s+%llx\n", (unsigned)A(1), (unsigned long long)A(2), fn ? fn : "?",
+            (unsigned long long)off);
+    }
+    Snap s = snap(c);
+    record(c, CMD_REPORT_COUNTER, 0, &s);
+}
 NVN(nvnCommandBufferReportValue) { (void)c; }
-NVN(nvnCommandBufferResetCounter) { (void)c; }
+NVN(nvnCommandBufferResetCounter) {
+    static int nlog[32];
+    if (A(1) < 32 && nlog[A(1)] < 3) {
+        nlog[A(1)]++;
+        uint64_t off = 0;
+        const char *fn = loader_symbol_at(c->x[30], &off);
+        LOG("[nvn] ResetCounter type %u from %s+%llx\n", (unsigned)A(1), fn ? fn : "?", (unsigned long long)off);
+    }
+    Snap s = snap(c);
+    record(c, CMD_RESET_COUNTER, 0, &s);
+}
 NVN(nvnCommandBufferCallCommands) { record_copy(c, CMD_CALL, 2, (uint32_t)A(1) * 8); }
 NVN(nvnCommandBufferCopyCommands) { record_copy(c, CMD_CALL, 2, (uint32_t)A(1) * 8); }
 NVN(nvnCommandBufferInsertDebugMarker) { (void)c; }

@@ -210,9 +210,57 @@ static void cq_resolve(int i) {  // (cq_lock held) submission slot i is done: it
     q->n = 0;
 }
 
+// ---- the game's occlusion queries (ResetCounter, draws, ReportCounter: SAMPLES_PASSED)
+// MPR tests lights (NLightGatherBin) and scene nodes (NHardwareOcclusion) by drawing a proxy between ResetCounter and
+// ReportCounter and reading the samples that passed (CGraphicsOcclusionQueryToken_NVN::GetPixelCount). The report
+// said 0: everything it tests was hidden. Now a Vulkan occlusion query covers the draws in between - a pass boundary
+// ends it and the next pass begins another segment, the report sums them - and the count is written when the
+// submission is done. Until then the report holds the previous count for that address (a new one: visible), as the
+// game may read it as soon as our early-signalled fence lets it.
+#define OQ_MAX 1024
+typedef struct { uint64_t *out; uint16_t first, count; } OccRep;
+typedef struct { VkQueryPool pool; uint32_t n, nrep; uint64_t seq; OccRep rep[OQ_MAX]; } OccQ;
+static OccQ oq[SUBS];
+static bool oq_counting, oq_open;  // between ResetCounter and ReportCounter / a query begun in the open pass
+static uint32_t oq_first;          // the counting's first query in the slot
+static struct { uint64_t *out; uint64_t v; } oq_last[2048];  // previous count per report address
+static uint64_t *oq_last_slot(uint64_t *out) {
+    uint32_t h = (uint32_t)(((uintptr_t)out >> 3) * 2654435761u) & 2047;
+    for (int k = 0; k < 2048; k++, h = (h + 1) & 2047)
+        if (oq_last[h].out == out || !oq_last[h].out) { oq_last[h].out = out; return &oq_last[h].v; }
+    return &oq_last[0].v;
+}
+static void oq_resolve(int i) {  // (cq_lock held) slot i is done: its reports get their counts
+    OccQ *q = &oq[i];
+    static uint64_t r[OQ_MAX];
+    if (q->n && vkGetQueryPoolResults(g_vk.dev, q->pool, 0, q->n, sizeof r, r, 8, VK_QUERY_RESULT_64_BIT) != VK_SUCCESS) {
+        q->n = q->nrep = 0;
+        return;
+    }
+    for (uint32_t k = 0; k < q->nrep; k++) {
+        uint64_t sum = 0;
+        for (uint32_t j = 0; j < q->rep[k].count; j++) sum += r[q->rep[k].first + j];
+        q->rep[k].out[0] = sum;
+        *oq_last_slot(q->rep[k].out) = sum;
+    }
+    q->n = q->nrep = 0;
+}
+static void oq_begin_segment(void) {  // (in a pass) start counting the draws that follow
+    OccQ *q = &oq[cur_sub];
+    if (!oq_counting || oq_open || !in_pass || !q->pool || q->n >= OQ_MAX) return;
+    vkCmdBeginQuery(vk_cmd(), q->pool, q->n++, g_vk.occlusion_precise ? VK_QUERY_CONTROL_PRECISE_BIT : 0);
+    oq_open = true;
+}
+static void oq_end_segment(void) {
+    if (!oq_open) return;
+    vkCmdEndQuery(vk_cmd(), oq[cur_sub].pool, oq[cur_sub].n - 1);
+    oq_open = false;
+}
+
 static void cq_resolve_done(uint64_t done) {  // every slot whose submission is done
     pthread_mutex_lock(&cq_lock);
     for (int i = 0; i < SUBS; i++) if (cq[i].n && cq[i].seq <= done) cq_resolve(i);
+    for (int i = 0; i < SUBS; i++) if (oq[i].nrep && oq[i].seq <= done) oq_resolve(i);
     pthread_mutex_unlock(&cq_lock);
 }
 
@@ -266,6 +314,21 @@ VkCommandBuffer vk_cmd(void) {
             q->seq = s->seq;
             pthread_mutex_unlock(&cq_lock);
             if (q->pool) vkCmdResetQueryPool(s->main, q->pool, 0, CQ_MAX);
+        }
+        {   // this slot's occlusion queries (reset outside any render pass)
+            OccQ *q = &oq[cur_sub];
+            if (!q->pool) {
+                VkQueryPoolCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryType = VK_QUERY_TYPE_OCCLUSION,
+                                            .queryCount = OQ_MAX};
+                if (vkCreateQueryPool(g_vk.dev, &qi, NULL, &q->pool) != VK_SUCCESS) q->pool = VK_NULL_HANDLE;
+            }
+            pthread_mutex_lock(&cq_lock);
+            q->n = q->nrep = 0;  // (resolved when the slot was freed: sub())
+            q->seq = s->seq;
+            pthread_mutex_unlock(&cq_lock);
+            if (q->pool) vkCmdResetQueryPool(s->main, q->pool, 0, OQ_MAX);
+            oq_open = false;
+            if (oq_counting) oq_first = 0;  // (a counting across submissions keeps only this one's draws)
         }
         gp_mark(s->main, "(submission start; includes GPU idle before it)");
         if (prof && prof_qp) {
@@ -871,6 +934,7 @@ static NvnTexture *pass_color0;  // (debug frame) the colour target the open pas
 static void vk_end_pass_at(int line) {
     if (!in_pass) return;
     if (prof && line < 4096) prof_end_line[line]++;
+    oq_end_segment();  // (a query can't outlive its pass: the next pass begins another segment)
     vkCmdEndRendering(vk_cmd());
     in_pass = false;
     if (g_debug_frame && pass_color0 && pass_color0->backend) {
@@ -981,6 +1045,7 @@ static void begin_pass(void) {
     vkCmdBeginRendering(cb, &ri);
     ss_forget();  // (whatever ran between the passes may have set its own state)
     in_pass = true;
+    oq_begin_segment();
     vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
     stat_passes++;
 }
@@ -3993,6 +4058,24 @@ static void exec_list(uint64_t handle, int depth) {
             uint32_t type = (uint32_t)r->x[0];
             static uint32_t seen;
             if (type < 32 && !(seen & (1u << type))) { seen |= 1u << type; LOG("[nvn] ReportCounter type %u\n", type); }
+            if (type == 1) {  // SAMPLES_PASSED: the occlusion query's end (see oq_resolve)
+                oq_end_segment();
+                OccQ *q = &oq[cur_sub];
+                if (out) {
+                    uint64_t *last = oq_last_slot(out);
+                    out[0] = *last ? *last : 1u << 20;  // (provisional: the previous count, or visible)
+                    static int zero = -1;  // (test) LARECOMP_OCCLUSION_ZERO=1: report 0, as before the queries
+                    if (zero < 0) zero = getenv("LARECOMP_OCCLUSION_ZERO") != NULL;
+                    if (zero) { out[0] = 0; oq_counting = false; break; }
+                    out[1] = ns_to_gpu_ticks(plat_now_ns());
+                    pthread_mutex_lock(&cq_lock);
+                    if (oq_counting && q->pool && q->nrep < OQ_MAX && q->n >= oq_first)
+                        q->rep[q->nrep++] = (OccRep){out, (uint16_t)oq_first, (uint16_t)(q->n - oq_first)};
+                    pthread_mutex_unlock(&cq_lock);
+                }
+                oq_counting = false;
+                break;
+            }
             int mode = vk_counter_mode();
             static uint64_t frame_seen = ~0ull, frame_ts;
             extern uint64_t vk_frame_counter(void);
@@ -4024,6 +4107,14 @@ static void exec_list(uint64_t handle, int depth) {
             }
             break;
         }
+        case CMD_RESET_COUNTER:
+            if ((uint32_t)r->x[0] == 1) {  // SAMPLES_PASSED: an occlusion query begins (see oq_resolve)
+                oq_end_segment();
+                oq_counting = true;
+                oq_first = oq[cur_sub].n;
+                oq_begin_segment();
+            }
+            break;
         case CMD_COPY_TEXTURE_TO_TEXTURE: { const TexRefRec *t = x; copy_texture(&t[0], &t[1], r->x[6]); break; }
         case CMD_DOWNSAMPLE: { const TexRefRec *t = x; copy_texture(&t[0], &t[1], 1); break; }
         case CMD_COPY_BUFFER_TO_TEXTURE: copy_buffer_to_texture(r->x[0], x); break;

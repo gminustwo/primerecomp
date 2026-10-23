@@ -196,6 +196,8 @@ static void create_device(void) {
     b->fragmentStoresAndAtomics = h->fragmentStoresAndAtomics;
     b->vertexPipelineStoresAndAtomics = h->vertexPipelineStoresAndAtomics;
     b->robustBufferAccess = h->robustBufferAccess;  // guest shaders index cbufs freely: keep OOB reads harmless
+    b->occlusionQueryPrecise = h->occlusionQueryPrecise;  // (the game's occlusion queries read sample counts)
+    g_vk.occlusion_precise = h->occlusionQueryPrecise;
     b->shaderClipDistance = h->shaderClipDistance;
     b->shaderStorageImageWriteWithoutFormat = h->shaderStorageImageWriteWithoutFormat;  // (SUST: images of any format)
     if (!h->shaderInt64) LOG("[vk] warning: no shaderInt64 (64-bit address math in shaders)\n");
