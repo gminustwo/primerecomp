@@ -667,6 +667,7 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
         KObject *o = handle_get((uint32_t)x[0]);
         if (!o || o->type != KOBJ_SHMEM) { x[0] = R_INVALID_HANDLE; break; }
         KSharedMem *s = (KSharedMem *)o;
+        LOG("[kernel] MapSharedMemory %llx+%llx\n", (unsigned long long)x[1], (unsigned long long)x[2]);
         memset((void *)x[1], 0, x[2]);
         s->guest_addr = x[1];  // HLE services write straight into the guest's mapping
         region_add(x[1], x[2], 6, 3);
@@ -897,7 +898,8 @@ static void *stall_watch(void *arg) {
     for (;;) {
         plat_sleep_until_ns(plat_now_ns() + 1000000000ull);
         uint64_t n = renderer_present_count(), now = plat_now_ns();
-        if (n != last) { last = n; since = now; dumped = false; continue; }
+        extern bool g_debug_frame;  // (a debug frame, saving its passes, takes longer)
+        if (n != last || g_debug_frame) { last = n; since = now; dumped = false; continue; }
         if (!dumped && last > 0 && now - since > (uint64_t)(secs * 1e9)) {
             LOG("[hang] no frame presented for %.0f s (frame %llu): guest threads\n", secs, (unsigned long long)last);
             dump_threads();
@@ -919,6 +921,12 @@ static void *hang_watch(void *arg) {
 void kernel_init(void) {
     // Reserve the heap, alias, stack, and TLS regions.
     region_add(TLS_BASE, TLS_SIZE, 0xC, 3);
+    // Host-owned guest addresses (the HLE stubs' fake addresses, the HLE heap) are in use as well: the SDK places
+    // shared memory and other mappings at random free addresses it finds with QueryMemory. (Reported free, the HLE
+    // heap took the HID shared memory over host allocations: the touch screen ring held garbage and the main thread
+    // spun forever in GetTouchScreenStates - a rare freeze at the title screen.)
+    region_add(HLE_BASE, HLE_SIZE, 0xC, 1);
+    region_add(HLE_HEAP, HLE_HEAP_SIZE, 0xC, 3);
     for (int i = 0; i < g_nmodules; i++) {
         Module *m = &g_modules[i];
         region_add(m->base + m->text_off, m->ro_off - m->text_off, 3, 5);
