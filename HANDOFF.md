@@ -42,7 +42,8 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   the save station door, then the corridor to the left. Teleport survey of the corridor (y 7.43, z -445): solid
   from x -162.7 to -147 (warm orange-lit rock ahead at -147, facing +x = yaw 90); at x <= -172 or >= -142 the
   points are inside rock / other rooms (falls, or "stands" at y -8.09 inside a lava volume with the submerged
-  visor effect) - useless as views.
+  visor effect) - useless as views. Points off z -445 (x -156..-150, z -435..-470) all fall: the walkable strip
+  is narrow and its exits are at other heights (stairs?) - the route to the elevator / lava needs real play.
 - The Burning Trail corridor looks greenish only toward the save station door (its cyan light); along the
   corridor the walls are warm orange as in the MPR references.
 - Reflection probes: each room's materials bind a baked 128x128 BC6H cube (8 levels, uploaded: @72ca862400 in the
