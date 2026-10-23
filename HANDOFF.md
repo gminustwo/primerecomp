@@ -8,7 +8,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
   from Steam (its shortcut targets lasrecomp.exe; Steam Input applies). Their log is `lasrecomp.log` there, F9
-  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build fe5ba72 (release
+  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 4c6c31a (release
   exe, installed directly: the game was closed; `private/playtest/update/` holds the same build, so
   `Install_update.bat` is harmless). Use the update folder route whenever the game is running.
   `tools/run_game.ps1` now only waits for / stops build/lasrecomp.exe, so tests can run while the user plays.
@@ -31,6 +31,17 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 - **User-reported open bugs (older):**
   - Many objects are black. The blue door shields (flat cyan) are fixed; no other black objects found in the
     first two rooms.
+- **Lead (mine, 2026-10-23): Burning Trail's lava as flat white-orange blocks.** Seen only by teleporting from the
+  corridor (-162.69, 7.43, -445.03) to (-172 / -182, 7.43, -445) - outside the current room's collision (Samus
+  falls through the world), so the room there may not be set up (lights / exposure) - possibly a test artifact.
+  The lava is the last draw of the HDR scene pass: fs hash 6346b44e1a6739e8 (a standard material: normal t0,
+  properties t1, albedo t2 = 2048x1024 BC6H, env cube t3), with fcb4[0] = (50, 50, 50) - very bright on purpose.
+  Auto exposure works: CGameRenderJob::FeedLastFrameAverageRadianceBackToGame reads the 1x1 luminance level back
+  every frame (R11G11B10F, (0.26, 0.11, 0.04) in the save room) and CPostFXManager::UpdateTonemapping converges
+  on it. Ask the user whether lava looks flat white in play (an F9 + F8 there settles it), or walk there:
+  the save station door, then the corridor to the left.
+- The Burning Trail corridor's stone looks greenish where the MPR references of Magmoor are warm orange - no
+  MPR reference of that exact corridor; unconfirmed.
 
 ## Fixed on 2026-10-23
 
