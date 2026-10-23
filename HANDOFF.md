@@ -2,17 +2,23 @@
 
 Where the work stopped, and what to do next. Read with PROGRESS.md (history) and the commit log.
 
-## State
+## State (paused for the night 2026-10-22; the user picks it up again tomorrow)
 
-- **Playable:** boot, menus, intro, frigate start, 60 / 120 fps. Saving and loading are verified: the game's own
-  autosave was forced with `LARECOMP_AUTOSAVE_AT`, then reloaded after a restart.
-- **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it contains the game library), started
-  with `Play Metroid Prime Remastered.bat`. Their notes go in `ISSUES.md` there and their log is
-  `lasrecomp.log`. It holds build efbe616 (2026-10-22, a release exe); a77199c waits in private/playtest/update/ (the user's game was
-  running) - `Install_update.bat` in the playtest folder copies it in once the game is closed: everything below is in it. No issues written there yet.
-- **User-reported open bugs:**
-  - ~~The star backdrop and Tallon IV are missing in space.~~ Fixed (CC tests, below).
-  - ~~Samus renders wrong~~: a burst of spikes in the landing cutscene (LDC offsets, fixed in 5c145b5).
+- **Playable:** boot, menus, the whole frigate, onto Tallon IV (the user's own playthrough), 60 / 120 fps.
+  Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
+- **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
+  from Steam (its shortcut targets lasrecomp.exe; Steam Input applies). Their log is `lasrecomp.log` there, F9
+  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build a77199c (release
+  exe; installed by the user with `Install_update.bat`, which copies `private/playtest/update/` in when the game
+  is closed - use that route whenever the game is running).
+- **Next, from the user:**
+  1. "The door still is black" - which door is unknown (its capture was overwritten before F9 got its own
+     folders). Ask for an F9 + F8 at it; then teleport there (LARECOMP_TELEPORT; far rooms also need
+     LARECOMP_LOAD_AREAS and come up unlit) or analyse the capture.
+  2. The corridor capture (cap2, frame 14099: blocky cyan patches on a wall, large black areas) predates the
+     occlusion query fix; recheck with a new capture.
+  3. Map fill and button glyphs fixed today: wait for the user's confirmation (shading had no reference).
+- **User-reported open bugs (older):**
   - Many objects are black. The blue door shields (flat cyan) are fixed; no other black objects found in the
     first two rooms.
 
