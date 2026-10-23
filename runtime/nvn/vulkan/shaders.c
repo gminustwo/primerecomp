@@ -14,7 +14,8 @@ void vk_shaders_init(void) {  // (compilers are per thread: check shaderc works 
 }
 
 static shaderc_shader_kind kind_of(int stage) {
-    return stage == STAGE_VERTEX ? shaderc_vertex_shader : stage == STAGE_FRAGMENT ? shaderc_fragment_shader : shaderc_compute_shader;
+    return stage == STAGE_VERTEX ? shaderc_vertex_shader : stage == STAGE_FRAGMENT ? shaderc_fragment_shader :
+           stage == STAGE_GEOMETRY ? shaderc_geometry_shader : shaderc_compute_shader;
 }
 
 // SPIR-V disk cache: cache/spirv/<hash of stage + source>.spv, so a known shader costs a file read instead of a

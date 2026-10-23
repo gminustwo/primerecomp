@@ -43,8 +43,12 @@ typedef struct {
     bool flip_y;            // lower-left window origin
     bool flip_x;            // mirror the image left to right (mirror mode's scene composite). (In the padding
                             // after flip_y: keys without it hash as before - shader caches stay valid.)
-    uint32_t vs_out_mask;   // fragment: varyings the vertex shader provides
+    uint8_t gs_follows;     // vertex, GLSL: a geometry shader takes the outputs (it does the clip space epilogue)
+    uint32_t vs_out_mask;   // fragment: varyings the vertex shader provides (geometry: its inputs; fragment after a
+                            // geometry shader: the geometry shader's outputs)
     uint8_t glsl;           // emit Vulkan GLSL (see the contract above) instead of MSL
+    uint8_t gs_in;          // geometry: the input primitive - 0 points, 1 lines, 2 triangles, 3 lines with
+                            // adjacency, 4 triangles with adjacency (the draw's)
     uint16_t layer_attr;    // vertex, GLSL: gl_Layer = int(the output attribute at this byte offset) - what the
                             // program's passthrough geometry shader would do (0: none)
 } ShaderKey;

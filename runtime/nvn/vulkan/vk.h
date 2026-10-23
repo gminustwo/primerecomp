@@ -36,7 +36,8 @@ typedef struct {
     VkCommandPool pool;        // render thread only
     bool custom_border, divisor, host_import;
     bool output_layer;  // vertex shaders may write gl_Layer (shaderOutputLayer)
-    bool occlusion_precise;  // occlusion queries count samples (occlusionQueryPrecise), not just any-passed
+    bool occlusion_precise;
+    bool geometry;  // geometry shaders (geometryShader): programs with one are translated with it  // occlusion queries count samples (occlusionQueryPrecise), not just any-passed
     // window
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;

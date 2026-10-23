@@ -1252,13 +1252,14 @@ static void clear(int index, int kind, const void *color, uint32_t mask, bool de
 // ================================================================== programs
 #define MAX_BIND 96
 typedef struct {
-    ShaderInfo *vi, *fi;
-    uint64_t code[2], cmax[2];  // translation inputs (copied: translated on the translator thread)
-    ShaderKey vkey, fkey;
-    VkShaderModule vs, fs;
+    ShaderInfo *vi, *fi, *gi;
+    uint64_t code[3], cmax[3];  // translation inputs (copied: translated on the translator thread); [2]: geometry
+    ShaderKey vkey, fkey, gkey;
+    VkShaderModule vs, fs, gs;
+    bool has_gs;  // a translated geometry shader (set 2), between the vertex and fragment shaders
     VkBindingInfo binds[MAX_BIND];
     int nbinds;
-    VkDescriptorSetLayout set_layout[2];
+    VkDescriptorSetLayout set_layout[3];
     VkPipelineLayout layout;
     bool vs_uses_vid;
     _Atomic int state;  // 0 building, 1 ready, 2 failed
@@ -1267,6 +1268,7 @@ typedef struct {
 static VkPipelineLayout make_layout(Prog *p, int nsets, VkShaderStageFlags s0, VkShaderStageFlags s1) {
     p->set_layout[0] = vk_set_layout(p->binds, p->nbinds, 0, s0);
     if (nsets > 1) p->set_layout[1] = vk_set_layout(p->binds, p->nbinds, 1, s1);
+    if (nsets > 2) p->set_layout[2] = vk_set_layout(p->binds, p->nbinds, 2, VK_SHADER_STAGE_GEOMETRY_BIT);
     VkPipelineLayoutCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = (uint32_t)nsets,
                                      .pSetLayouts = p->set_layout};
     VkPipelineLayout l;
@@ -1321,18 +1323,23 @@ static void override_glsl(char **src, uint64_t addr, const char *suffix) {
 static void compile_program(void *arg) {
     Prog *p = arg;
     size_t nv = 0, nf = 0;
+    size_t ng = 0;
     uint32_t *sv = vk_glsl_to_spirv(p->vi->msl, STAGE_VERTEX, "vs", &nv);
     uint32_t *sf = sv ? vk_glsl_to_spirv(p->fi->msl, STAGE_FRAGMENT, "fs", &nf) : NULL;
-    if (!sv || !sf) { free(sv); free(sf); atomic_store(&p->state, 2); return; }
+    uint32_t *sg = sf && p->has_gs ? vk_glsl_to_spirv(p->gi->msl, STAGE_GEOMETRY, "gs", &ng) : NULL;
+    if (!sv || !sf || (p->has_gs && !sg)) { free(sv); free(sf); free(sg); atomic_store(&p->state, 2); return; }
     p->nbinds = vk_reflect(sv, nv, p->binds, MAX_BIND);
     p->nbinds += vk_reflect(sf, nf, p->binds + p->nbinds, MAX_BIND - p->nbinds);
+    if (sg) p->nbinds += vk_reflect(sg, ng, p->binds + p->nbinds, MAX_BIND - p->nbinds);
     p->vs = vk_module(sv, nv);
     p->fs = vk_module(sf, nf);
+    if (sg) p->gs = vk_module(sg, ng);
     free(sv);
     free(sf);
-    p->layout = make_layout(p, 2, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
+    free(sg);
+    p->layout = make_layout(p, p->has_gs ? 3 : 2, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
     atomic_fetch_add(&stat_compiles, 1);
-    atomic_store(&p->state, p->vs && p->fs ? 1 : 2);
+    atomic_store(&p->state, p->vs && p->fs && (!p->has_gs || p->gs) ? 1 : 2);
 }
 
 // (debug) LARECOMP_DUMP_FAILED_SHADERS: the code of a stage the translator rejects -> build/shaders/<addr>_s<stage>.bin
@@ -1353,8 +1360,20 @@ static void translate_program(void *arg) {
     maxwell_gmem_size = HEAP_MAX;
     pthread_mutex_lock(&translate_lock);
     p->vi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[0], p->cmax[0], STAGE_VERTEX, &p->vkey);
+    if (p->vi->msl && p->has_gs) {  // the geometry shader reads the vertex shader's outputs, the fragment shader its
+        p->gkey.vs_out_mask = p->vi->out_mask;
+        p->gi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[2], p->cmax[2], STAGE_GEOMETRY, &p->gkey);
+        if (!p->gi->msl) {  // drawn without it, as before: the vertex shader does its own clip space epilogue again
+            LOG("[shader] GS translate failed: %s (code %llx): drawn without it\n", p->gi->error, (unsigned long long)p->code[2]);
+            dump_failed_shader(p->code[2], p->cmax[2], 2);
+            p->has_gs = false;
+            p->vkey.gs_follows = 0;
+            maxwell_free(p->vi);
+            p->vi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[0], p->cmax[0], STAGE_VERTEX, &p->vkey);
+        }
+    }
     if (p->vi->msl) {
-        p->fkey.vs_out_mask = p->vi->out_mask;
+        p->fkey.vs_out_mask = p->has_gs ? p->gi->out_mask : p->vi->out_mask;
         p->fi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[1], p->cmax[1], STAGE_FRAGMENT, &p->fkey);
     }
     pthread_mutex_unlock(&translate_lock);
@@ -1372,9 +1391,11 @@ static void translate_program(void *arg) {
     }
     override_glsl(&p->vi->msl, p->code[0], "vs");
     override_glsl(&p->fi->msl, p->code[1], "fs");
+    if (p->has_gs) override_glsl(&p->gi->msl, p->code[2], "gs");
     p->vs_uses_vid = strstr(p->vi->msl, "gl_VertexIndex") != NULL;
     save_glsl(p->vi->msl, p->code[0], "vs");
     save_glsl(p->fi->msl, p->code[1], "fs");
+    if (p->has_gs) save_glsl(p->gi->msl, p->code[2], "gs");
     run_job(compile_program, p);
 }
 
@@ -1417,16 +1438,24 @@ static uint32_t gs_layer_attr(uint64_t code) {
     return attr >= 0x80 ? attr : 0;
 }
 
-static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
+// gs_in: the draw's primitive class (0 points, 1 lines, 2 triangles) - a geometry shader's input
+static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey, int gs_in) {
     if (!(np->stage_mask & 1) || !(np->stage_mask & 2)) return NULL;
     ShaderKey vk_layer;
+    bool gs = false;  // a full geometry shader, translated (not the passthrough layer kind, no tessellation)
     if ((np->stage_mask & 4) && g_vk.output_layer) {
         vk_layer = *vkey;
         vk_layer.layer_attr = (uint16_t)gs_layer_attr(np->stages[2].code_addr);
         vkey = &vk_layer;
     }
+    if ((np->stage_mask & 4) && !(np->stage_mask & 0x18) && !vkey->layer_attr && g_vk.geometry && !getenv("LARECOMP_NO_GS")) {
+        if (vkey != &vk_layer) { vk_layer = *vkey; vkey = &vk_layer; }
+        vk_layer.gs_follows = 1;
+        gs = true;
+    }
     uint64_t h = 0xcbf29ce484222325ull;
-    for (int i = 0; i < 2; i++) { uint64_t a = np->stages[i].code_addr; for (int k = 0; k < 8; k++) { h ^= (a >> (k * 8)) & 0xFF; h *= 0x100000001B3ull; } }
+    for (int i = 0; i < (gs ? 3 : 2); i++) { uint64_t a = np->stages[i].code_addr; for (int k = 0; k < 8; k++) { h ^= (a >> (k * 8)) & 0xFF; h *= 0x100000001B3ull; } }
+    if (gs) { h ^= (uint64_t)gs_in + 1; h *= 0x100000001B3ull; }
     const uint8_t *vb = (const uint8_t *)vkey;
     for (size_t i = 0; i < sizeof *vkey; i++) { h ^= vb[i]; h *= 0x100000001B3ull; }
     for (int i = 0; i < 8; i++) { h ^= fkey->rt_kind[i]; h *= 0x100000001B3ull; }
@@ -1443,11 +1472,23 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
     }
     p->vkey = *vkey;
     p->fkey = *fkey;
+    if (gs) {
+        p->has_gs = true;
+        p->code[2] = np->stages[2].code_addr;
+        p->cmax[2] = np->stages[2].const_offset ? np->stages[2].const_offset : 0x10000;
+        p->gkey.glsl = 1;
+        p->gkey.flip_y = vkey->flip_y;
+        p->gkey.flip_x = vkey->flip_x;
+        p->gkey.depth_minus_one = vkey->depth_minus_one;
+        p->gkey.gs_in = (uint8_t)gs_in;
+        LOG("[vk] program vs %llx fs %llx: geometry shader %llx (input class %d) translated\n", (unsigned long long)p->code[0],
+            (unsigned long long)p->code[1], (unsigned long long)p->code[2], gs_in);
+    }
     if (vkey->layer_attr)
         LOG("[vk] program vs %llx fs %llx: passthrough geometry shader %llx, the layer from vertex output %#x\n",
             (unsigned long long)p->code[0], (unsigned long long)p->code[1], (unsigned long long)np->stages[2].code_addr,
             vkey->layer_attr);
-    else if (np->stage_mask & 0x1C)
+    else if ((np->stage_mask & 0x1C) && !gs)
         LOG("[vk] frame %llu: program vs %llx fs %llx has a geometry / tessellation stage (gs %llx tcs %llx tes %llx): not "
             "supported, drawn without it\n", (unsigned long long)renderer_present_count(), (unsigned long long)p->code[0],
             (unsigned long long)p->code[1],
@@ -1676,9 +1717,10 @@ static VkPrimitiveTopology topo_class_base(uint8_t c) {
 static void build_pipeline(void *arg) {
     Pipe *pp = arg;
     PipeKey *k = &pp->k;
-    VkPipelineShaderStageCreateInfo stages[2] = {
+    VkPipelineShaderStageCreateInfo stages[3] = {
         {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_VERTEX_BIT, .module = k->prog->vs, .pName = "main"},
-        {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = k->prog->fs, .pName = "main"}};
+        {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = k->prog->fs, .pName = "main"},
+        {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_GEOMETRY_BIT, .module = k->prog->gs, .pName = "main"}};
     VkVertexInputAttributeDescription va[32];
     VkVertexInputBindingDescription vb[17];
     VkVertexInputBindingDivisorDescriptionEXT vd[17];
@@ -1725,7 +1767,7 @@ static void build_pipeline(void *arg) {
     VkPipelineRenderingCreateInfo ri = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = k->ncolor,
                                         .pColorAttachmentFormats = k->color, .depthAttachmentFormat = k->depth,
                                         .stencilAttachmentFormat = k->stencil};
-    VkGraphicsPipelineCreateInfo pi = {.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &ri, .stageCount = 2,
+    VkGraphicsPipelineCreateInfo pi = {.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &ri, .stageCount = k->prog->has_gs ? 3u : 2u,
                                        .pStages = stages, .pVertexInputState = &vi, .pInputAssemblyState = &ia, .pViewportState = &vs,
                                        .pRasterizationState = &rs, .pMultisampleState = &ms, .pDepthStencilState = &ds,
                                        .pColorBlendState = &cb, .pDynamicState = &dy, .layout = k->prog->layout};
@@ -2817,7 +2859,10 @@ static void draw_(CmdRec *r, bool indexed) {
     vkey.depth_minus_one = nvn_depth_mode() == 0;
     for (int i = 0; i < st.nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(st.attrib[i] & 0xFF);
     for (int i = 0; i < st.rt.ncolor; i++) if (st.rt.color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(st.rt.color[i]->format);
-    Prog *pr = get_program(st.program, &vkey, &fkey);
+    VkPrimitiveTopology topo0;
+    uint8_t cls0;
+    topology((uint32_t)r->x[0], &topo0, &cls0);
+    Prog *pr = get_program(st.program, &vkey, &fkey, cls0);
     if (!pr || atomic_load(&pr->state) != 1) {
         if (g_debug_frame)
             LOG("[draw] SKIPPED (program %s) mode %llu count %llu prog vs=%llx fs=%llx | rt %d %p\n",
@@ -3071,8 +3116,9 @@ static void draw_(CmdRec *r, bool indexed) {
     uint64_t prof_t1_ = prof ? SDL_GetTicksNS() : 0;
     VkDescriptorSet fset = stage_set(pr, pr->set_layout[1], 1, 1, pr->fi, rs0, tint, 0, 0, 0, fii);
     if (prof) prof_sets += SDL_GetTicksNS() - prof_t1_;
-    VkDescriptorSet sets[2] = {vset, fset};
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pr->layout, 0, 2, sets, 0, NULL);  // (always new sets)
+    VkDescriptorSet sets[3] = {vset, fset, VK_NULL_HANDLE};
+    if (pr->has_gs) sets[2] = stage_set(pr, pr->set_layout[2], 2, 2, pr->gi, NULL, NULL, 0, 0, 0, NULL);  // (stage 2: its cbufs)
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pr->layout, 0, pr->has_gs ? 3 : 2, sets, 0, NULL);  // (always new sets)
     if (pr->vi->uses_gmem_store) vc_mark_sbufs(0);
     if (pr->fi->uses_gmem_store) vc_mark_sbufs(1);
 
@@ -3235,7 +3281,7 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
         (unsigned long long)(indexed ? r->x[6] : r->x[4]), (unsigned long long)r->x[0], (unsigned long long)r->x[2],
         (unsigned long long)st.program->stages[0].code_addr, (unsigned long long)st.program->stages[1].code_addr,
         pr->vi->cbuf_mask, pr->fi->cbuf_mask, st.rt.ncolor);
-    if ((st.program->stage_mask & 0x1C) && !pr->vkey.layer_attr)  // geometry / tessellation: not translated
+    if ((st.program->stage_mask & 0x1C) && !pr->vkey.layer_attr && !pr->has_gs)  // geometry / tessellation: not translated
         LOG(" [UNSUPPORTED gs=%llx tcs=%llx tes=%llx]", (unsigned long long)st.program->stages[2].code_addr,
             (unsigned long long)st.program->stages[3].code_addr, (unsigned long long)st.program->stages[4].code_addr);
     for (int i = 0; i < st.rt.ncolor; i++)
