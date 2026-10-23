@@ -37,6 +37,9 @@ typedef struct {  // per channel resource, "VoiceUpdateState"
     int16_t hist[HIST];
     int16_t pred_scale, h0, h1;
     float bq[2][2];  // biquad filter state per voice filter
+    // depop: the last sample this channel left in each buffer of up to 4 mixes (a splitter's destinations)
+    float last[4][MIXBUF_MAX];
+    uint8_t last_mix[4], nlast;
 } ChanState;
 
 typedef struct {
@@ -46,7 +49,7 @@ typedef struct {
 
 typedef struct {
     uint8_t in_use, is_new, play_state;  // play_state: 0 started, 1 stopped, 2 stopping, 3 paused
-    uint8_t fmt, chans, drop;
+    uint8_t fmt, chans, drop, played;    // played: mixed last frame (depop when it stops)
     uint32_t rate, wb_count, flush;
     float pitch, volume, prev_volume;
     int32_t mix_id;
@@ -67,6 +70,7 @@ typedef struct {
     uint32_t dest_splitter;
     float vol[MIXBUF_MAX * MIXBUF_MAX];
     float *buf;  // bufs * sample_count
+    float depop[MIXBUF_MAX];  // what stopped voices left in each buffer, decaying away
 } Mix;
 
 // Splitters: a voice or sub mix whose mix is unused (0x7FFFFFFF) and that names a splitter sends to each of the
@@ -261,13 +265,46 @@ static SplitDest *split_dest(Renderer *r, uint32_t id, uint32_t k, Mix **m) {
     return *m ? d : NULL;
 }
 
-// Adds a voice channel's samples to a mix's buffers, ramping from last frame's gains to this frame's.
-static void mix_ramp(Mix *dst, const float *smp, uint32_t N, float pv, float v, const float *prev, const float *cur) {
+// Adds a voice channel's samples to a mix's buffers, ramping from last frame's gains to this frame's; notes the last
+// sample left in each buffer (depop) in the channel's state.
+static void mix_ramp(Renderer *r, ChanState *cs, Mix *dst, const float *smp, uint32_t N, float pv, float v,
+                     const float *prev, const float *cur) {
+    float *last = cs->nlast < 4 ? cs->last[cs->nlast] : NULL;
+    if (last) cs->last_mix[cs->nlast++] = (uint8_t)(dst - r->mix);
     for (uint32_t b = 0; b < dst->bufs && b < MIXBUF_MAX; b++) {
         float g0 = pv * prev[b], g1 = v * cur[b];
+        if (last) last[b] = 0;
         if (g0 == 0 && g1 == 0) continue;
         float *o = dst->buf + b * N, dg = (g1 - g0) / N;
         for (uint32_t i = 0; i < N; i++) o[i] += smp[i] * (g0 + dg * i);
+        if (last) last[b] = smp[N - 1] * (g0 + dg * (N - 1));
+    }
+}
+
+// Depop (as the DSP's DepopPrepare / DepopForMixBuffers): a voice that stops leaves its last samples in the mixes it
+// fed, which decay away over about a millisecond instead of dropping to zero (a click).
+static void voice_depop(Renderer *r, Voice *v) {
+    static int off = -1;  // (A/B: LARECOMP_NO_DEPOP=1)
+    if (off < 0) off = getenv("LARECOMP_NO_DEPOP") ? atoi(getenv("LARECOMP_NO_DEPOP")) : 0;
+    if (!v->played) return;
+    v->played = 0;
+    if (off) return;
+    for (int c = 0; c < (v->chans > 6 ? 6 : v->chans); c++) {
+        ChanState *cs = &r->chst[v->chan_ids[c] % r->voices];
+        for (int k = 0; k < cs->nlast; k++)
+            if (cs->last_mix[k] < r->nmix)
+                for (int b = 0; b < MIXBUF_MAX; b++) r->mix[cs->last_mix[k]].depop[b] += cs->last[k][b];
+        cs->nlast = 0;
+    }
+}
+static void depop_apply(Renderer *r, Mix *m) {
+    float decay = r->sample_rate == 48000 ? 0.962189f : 0.943695f;
+    uint32_t N = r->sample_count;
+    for (uint32_t b = 0; b < m->bufs && b < MIXBUF_MAX; b++) {
+        float d = m->depop[b], *o = m->buf + b * N;
+        if (d == 0) continue;
+        for (uint32_t i = 0; i < N; i++) { d = roundf(d * decay); o[i] += d; }  // (rounded: it reaches 0)
+        m->depop[b] = d;
     }
 }
 
@@ -906,9 +943,16 @@ static void render_frame(Renderer *r, float *stereo) {
     float smp[4096];
     for (uint32_t vi = 0; vi < r->voices; vi++) {
         Voice *v = &r->voice[vi];
-        if (!v->in_use) continue;
+        if (!v->in_use) {
+            voice_depop(r, v);  // (freed while it played)
+            continue;
+        }
         int play = voice_prepare(r, v);
-        if (!play || v->wb_count == 0 || v->drop) continue;
+        if (!play || v->wb_count == 0 || v->drop) {
+            voice_depop(r, v);
+            continue;
+        }
+        v->played = 1;
         Mix *dst = find_mix(r, v->mix_id);
         float ratio = (float)v->rate / r->sample_rate * v->pitch;
         if (!(ratio > 0) || ratio > 8) ratio = 1;
@@ -917,6 +961,7 @@ static void render_frame(Renderer *r, float *stereo) {
             uint32_t rid = v->chan_ids[c] % r->voices;
             ChanState *cs = &r->chst[rid];
             ChanRes *cr = &r->chres[rid];
+            cs->nlast = 0;
             int need = (int)(cs->fraction + ratio * N);
             if (need > 4096) need = 4096;
             memcpy(tmp, cs->hist, sizeof cs->hist);
@@ -959,13 +1004,13 @@ static void render_frame(Renderer *r, float *stereo) {
             if (solo == -2) solo = getenv("LARECOMP_AUDIO_SOLO") ? atoi(getenv("LARECOMP_AUDIO_SOLO")) : -1;
             if (solo >= 0 && (int)vi != solo) continue;
             if (dst) {
-                mix_ramp(dst, smp, N, v->prev_volume, v->volume, cr->prev, cr->mix);
+                mix_ramp(r, cs, dst, smp, N, v->prev_volume, v->volume, cr->prev, cr->mix);
             } else if (v->splitter_id < r->splitters && !no_splitters) {
                 for (uint32_t k = c; k < r->spl[v->splitter_id].n; k += v->chans) {
                     Mix *m;
                     SplitDest *d = split_dest(r, v->splitter_id, k, &m);
                     if (!d) continue;
-                    mix_ramp(m, smp, N, v->prev_volume, v->volume, d->prev, d->vol);
+                    mix_ramp(r, cs, m, smp, N, v->prev_volume, v->volume, d->prev, d->vol);
                     d->ramped = 1;
                 }
             }
@@ -1015,6 +1060,7 @@ static void render_frame(Renderer *r, float *stereo) {
         for (uint32_t m = 1; m < nm; m++) {
             Mix *s = &r->mix[m];
             if (!s->used || depth[m] != d) continue;
+            depop_apply(r, s);
             apply_effects(r, (int32_t)m, s);
             Mix *t = find_mix(r, s->dest);
             if (t && t != s) {
@@ -1042,7 +1088,7 @@ static void render_frame(Renderer *r, float *stereo) {
     }
     // final mix -> device sink (FL FR FC LFE BL BR) -> stereo
     Mix *f = find_mix(r, 0);
-    if (f) apply_effects(r, 0, f);
+    if (f) depop_apply(r, f), apply_effects(r, 0, f);
     for (uint32_t i = 0; i < N; i++) {
         float ch[6] = {0};
         if (f && r->sink_used)

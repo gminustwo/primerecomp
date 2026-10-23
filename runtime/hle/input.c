@@ -166,6 +166,12 @@ static void note_family(void) {
     if (f != pad_family) LOG("[input] button prompts: %s controller\n", f == 1 ? "Xbox" : f == 2 ? "PlayStation" : "Nintendo / other");
     pad_family = f;
 }
+static void log_pad(void) {
+    if (!pad) return;
+    SDL_PropertiesID p = SDL_GetGamepadProperties(pad);
+    LOG("[input] gamepad: %s (rumble %s)\n", SDL_GetGamepadName(pad),
+        SDL_GetBooleanProperty(p, SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false) ? "yes" : "no");
+}
 int input_pad_family(void) {
     static int env = -2;
     if (env == -2) {
@@ -181,7 +187,7 @@ void input_handle_event(const SDL_Event *e) {
         scanned = true;
         int n = 0;
         SDL_JoystickID *ids = SDL_GetGamepads(&n);
-        if (n > 0 && !pad) { pad = SDL_OpenGamepad(ids[0]); LOG("[input] gamepad: %s\n", SDL_GetGamepadName(pad)); note_family(); }
+        if (n > 0 && !pad) { pad = SDL_OpenGamepad(ids[0]); log_pad(); note_family(); }
         SDL_free(ids);
     }
     switch (e->type) {
@@ -192,7 +198,7 @@ void input_handle_event(const SDL_Event *e) {
         recompute_keyboard();
         break;
     case SDL_EVENT_GAMEPAD_ADDED:
-        if (!pad) { pad = SDL_OpenGamepad(e->gdevice.which); LOG("[input] gamepad: %s\n", SDL_GetGamepadName(pad)); note_family(); }
+        if (!pad) { pad = SDL_OpenGamepad(e->gdevice.which); log_pad(); note_family(); }
         break;
     case SDL_EVENT_GAMEPAD_REMOVED:
         if (pad && SDL_GetGamepadID(pad) == e->gdevice.which) { SDL_CloseGamepad(pad); pad = NULL; note_family(); }
