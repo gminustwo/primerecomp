@@ -1,5 +1,6 @@
 // LAS Recomp entry: load modules, set up the kernel, run nn::init::Start on the main thread.
 #include <SDL3/SDL.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -162,6 +163,23 @@ static void boot(const char *root) {
     uint64_t fini = hle_register("<rtld_fini>", rtld_fini);
     KThread *t = kernel_create_main_thread(start, stack_size, prio);
     kernel_run_main(t, t->handle, 0, init_sdk, init_main, fini);
+}
+
+void rt_log(const char *fmt, ...) {
+    char buf[2048];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (n < (int)sizeof buf) { fwrite(buf, 1, (size_t)n, stderr); return; }
+    char *big = malloc((size_t)n + 1);  // (rare: a long line)
+    if (!big) return;
+    va_start(ap, fmt);
+    vsnprintf(big, (size_t)n + 1, fmt, ap);
+    va_end(ap);
+    fwrite(big, 1, (size_t)n, stderr);
+    free(big);
 }
 
 int main(int argc, char **argv) {

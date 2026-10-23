@@ -7,7 +7,11 @@
 #include "cpu.h"
 #include "platform.h"
 
-#define LOG(...) fprintf(stderr, __VA_ARGS__)
+// The log (stderr, unbuffered so nothing is lost on a crash): each LOG formatted first, then written in one go - the
+// Windows CRT writes an unbuffered fprintf in pieces, ~0.4 ms a line (the 2-second stats line cost a frame 8 ms:
+// a stutter every 2 s, plainest in the main menu).
+void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+#define LOG(...) rt_log(__VA_ARGS__)
 #define FATAL(...) (fprintf(stderr, "FATAL: " __VA_ARGS__), rt_fatal_trace())
 
 // ---- address space layout (guest addresses == host addresses)
