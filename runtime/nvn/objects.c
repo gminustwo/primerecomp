@@ -264,7 +264,7 @@ NVN(nvnBufferInvalidateMappedRange) { (void)c; }
 // ================================================================== textures
 // TextureBuilder: device@0 flags@8 target@0xC width@0x10 height@0x14 depth@0x18 levels@0x1C
 //   format@0x20 samples@0x24 swizzle@0x28 dsmode@0x2C stride@0x30 pool@0x38 offset@0x40
-//   packaged@0x48 layout@0x50 glname@0x58
+//   packaged@0x48 layout@0x50 glname@0x58 layout_set@0x5C
 #define TB(T, off) G(T, A(0), off)
 NVN(nvnTextureBuilderSetDevice) { TB(uint64_t, 0) = A(1); }
 NVN(nvnTextureBuilderSetDefaults) {
@@ -295,7 +295,10 @@ NVN(nvnTextureBuilderSetDepthStencilMode) { TB(uint32_t, 0x2C) = (uint32_t)A(1);
 NVN(nvnTextureBuilderSetStride) { TB(uint64_t, 0x30) = A(1); }
 NVN(nvnTextureBuilderSetStorage) { TB(uint64_t, 0x38) = A(1); TB(uint64_t, 0x40) = A(2); }
 NVN(nvnTextureBuilderSetPackagedTextureData) { TB(uint64_t, 0x48) = A(1); }
-NVN(nvnTextureBuilderSetPackagedTextureLayout) { TB(uint64_t, 0x50) = A(1) ? *(uint64_t *)AP(1) : 0; }
+NVN(nvnTextureBuilderSetPackagedTextureLayout) {
+    TB(uint64_t, 0x50) = A(1) ? *(uint64_t *)AP(1) : 0;
+    TB(uint32_t, 0x5C) = A(1) != 0;  // (a layout of all zeroes is block height 1 GOB, not "no layout")
+}
 NVN(nvnTextureBuilderSetGLTextureName) { TB(uint32_t, 0x58) = (uint32_t)A(1); }
 NVN(nvnTextureBuilderGetDevice) { RET(TB(uint64_t, 0)); }
 NVN(nvnTextureBuilderGetFlags) { RET(TB(uint32_t, 8)); }
@@ -339,9 +342,12 @@ static void builder_layout(uint64_t b, TexLayout *t) {
     tegra_layout_init(t);
     // Packaged textures (BNTX) were swizzled offline with their own block height, which can differ
     // from the driver default: NVNpackagedTextureLayout's low word is log2(GOBs per block).
+    // (A layout of 0 means 1 GOB: the HUD's 36x36 BC7 button glyphs. Taken as "none", they got the default 2 GOBs
+    // and showed as fragments.)
     uint64_t pl = G(uint64_t, b, 0x50);
-    if (pl && (uint32_t)pl <= 5) t->block_height_log2 = (uint32_t)pl;
-    if (pl && getenv("LARECOMP_LOG_PACKAGED")) {
+    bool packaged = G(uint32_t, b, 0x5C) != 0;
+    if (packaged && (uint32_t)pl <= 5) t->block_height_log2 = (uint32_t)pl;
+    if (packaged && getenv("LARECOMP_LOG_PACKAGED")) {
         static int n;
         if (n++ < 4000) LOG("[nvn] packaged layout %016llx fmt %#x %ux%u lv %u -> default bh %u\n", pl, G(uint32_t, b, 0x20), t->width, t->height, t->levels, t->block_height_log2);
     }

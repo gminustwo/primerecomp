@@ -7,10 +7,13 @@
 static uint32_t div_up(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 static uint64_t align_up(uint64_t a, uint64_t b) { return (a + b - 1) / b * b; }
 
+// The default block height: the power of two GOBs nearest the height in GOBs (1 to 16; rounded at the geometric
+// midpoint). Metroid Prime Remastered's assets are tiled that way (LARECOMP_BH_PROBE, decoding them every way):
+// 9 block rows take 1 GOB (the HUD's 36x36 BC7 button glyphs: rounding up gave 2 and they showed as fragments),
+// 13 take 2, 26 take 4, 52 take 8 (ASTC; rounding down left error blocks), 103 and more 16.
 uint32_t tegra_default_block_height_log2(uint32_t height_in_blocks) {
-    uint32_t gobs = div_up(height_in_blocks, 8);
-    uint32_t log2 = 0;
-    while ((1u << log2) < gobs && log2 < 4) log2++;
+    uint32_t log2 = 0;  // (rows >= 8 * 2^log2 * sqrt(2): rows^2 >= 128 * 4^log2)
+    while (log2 < 4 && (uint64_t)height_in_blocks * height_in_blocks >= 128ull << (2 * log2)) log2++;
     return log2;
 }
 

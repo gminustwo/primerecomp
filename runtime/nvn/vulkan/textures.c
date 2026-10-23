@@ -603,6 +603,52 @@ static const uint8_t *sparse_gather(NvnTexture *t, TexBackend *b, uint64_t total
 }
 
 uint64_t prof_tex_checks, prof_tex_samples, prof_tex_full, prof_tex_full_bytes, prof_tex_dyn, prof_tex_watch_skips;
+// (debug) LARECOMP_BH_PROBE=1: for uploads whose height doesn't fill a power of two GOBs, level 0 decoded with each
+// block height up to the one in use and scored - ASTC by its error blocks (only a wrong layout makes them),
+// uncompressed by the mean difference between vertically adjacent bytes - to learn the driver's default rule.
+// Once per texture address.
+static void bh_probe(const uint8_t *src, const LevelLayout *l, uint32_t bpb, uint32_t abw, uint32_t abh, uint32_t fmt) {
+    static int on = -1;
+    if (on < 0) on = getenv("LARECOMP_BH_PROBE") != NULL;
+    if (!on || l->hb <= 8) return;
+    uint32_t g = (l->hb + 7) / 8;
+    if (!(g & (g - 1)) && l->hb % 8 == 0) return;  // (fills its GOBs exactly: every rule agrees)
+    static const uint8_t *seen[4096];
+    static int nseen;
+    for (int i = 0; i < nseen; i++) if (seen[i] == src) return;
+    if (nseen < 4096) seen[nseen++] = src;
+    bool astc = abw != 0, bc = !astc && bpb == 16 && fmt >= 0x41 && fmt <= 0x50;
+    if (bc || (bpb != 1 && bpb != 2 && bpb != 4 && bpb != 8 && !astc)) return;
+    uint32_t row = l->wb * bpb;
+    uint8_t *lin = malloc((uint64_t)row * l->hb);
+    uint8_t *rgba = astc ? malloc((uint64_t)l->w * l->h * 4) : NULL;
+    char line[256];
+    int n = snprintf(line, sizeof line, "[bh] %ux%u f%#x rows %u in use %u:", l->w, l->h, fmt, l->hb, l->block_height_log2);
+    double best = 1e30;
+    int besti = -1;
+    for (uint32_t bh = 0; bh <= l->block_height_log2; bh++) {
+        tegra_deswizzle(src, lin, l->wb, l->hb, 1, bpb, bh, 0);
+        double score = 0;
+        if (astc) {
+            astc_decode_ldr(lin, l->w, l->h, abw, abh, false, rgba);
+            uint64_t bad = 0;
+            for (uint64_t i = 0; i < (uint64_t)l->w * l->h; i++)
+                bad += rgba[4 * i] == 255 && rgba[4 * i + 1] == 0 && rgba[4 * i + 2] == 255 && rgba[4 * i + 3] == 255;
+            score = (double)bad / ((double)l->w * l->h);
+        } else {
+            uint64_t sum = 0;
+            for (uint32_t y = 0; y + 1 < l->hb; y++)
+                for (uint32_t x = 0; x < row; x++) sum += (uint64_t)abs((int)lin[y * row + x] - (int)lin[(y + 1) * row + x]);
+            score = (double)sum / ((double)row * (l->hb - 1));
+        }
+        n += snprintf(line + n, sizeof line - n, " %.3f", score);
+        if (score < best - 1e-9) best = score, besti = (int)bh;
+    }
+    LOG("%s -> best %d\n", line, besti);
+    free(lin);
+    free(rgba);
+}
+
 static void upload_texture(NvnTexture *t, TexBackend *b) {
     bool sparse = t->pool && (t->pool->flags & NVN_POOL_VIRTUAL);
     if ((!t->addr && !sparse) || t->target == 10) return;
@@ -677,6 +723,7 @@ upload:
     for (uint32_t layer = 0; layer < layers; layer++) {
         for (uint32_t lv = 0; lv < levels; lv++) {
             LevelLayout l = tegra_level(&t->layout, lv);
+            if (lv == 0 && layer == 0 && !linear && l.d == 1) bh_probe(base + l.offset, &l, fi->bpb, b->astc_bw, b->astc_bh, t->format);
             if (b->astc_bw) {  // blocks -> linear block rows -> RGBA8 texels
                 const uint8_t *src = base + layer * layer_size + l.offset;
                 uint8_t *blocks = malloc((uint64_t)l.wb * l.hb * 16);
@@ -706,6 +753,23 @@ upload:
                 tegra_deswizzle(src, lin, l.wb, l.hb, l.d, fi->bpb, l.block_height_log2, l.block_depth_log2);
             }
             if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, lin, l.w, l.h, row);
+            {   // (debug) LARECOMP_DUMP_TEX=<w>x<h>: level 0 of uploads that size, as stored and as decoded
+                static int dw = -1, dh;
+                if (dw < 0 && !(getenv("LARECOMP_DUMP_TEX") && sscanf(getenv("LARECOMP_DUMP_TEX"), "%dx%d", &dw, &dh) == 2)) dw = 0;
+                static int ndump;
+                if (dw && lv == 0 && layer == 0 && (int)l.w == dw && (int)l.h == dh && ndump < 64) {
+                    ndump++;
+                    mkdir("build/texdump", 0755);
+                    char path[256];
+                    LevelLayout l1 = lv + 1 < t->layout.levels ? tegra_level(&t->layout, lv + 1) : l;
+                    uint64_t raw = lv + 1 < t->layout.levels ? l1.offset - l.offset : tegra_layer_size(&t->layout) - l.offset;
+                    snprintf(path, sizeof path, "build/texdump/%llx_%ux%u_f%x_bh%u_lin%d_stride%u.raw", (unsigned long long)(uintptr_t)base,
+                             l.w, l.h, t->format, l.block_height_log2, linear, (unsigned)t->stride);
+                    FILE *f = fopen(path, "wb");
+                    if (f) { fwrite(src, 1, raw, f); fclose(f); }
+                    LOG("[tex] dumped %s (%llu bytes, flags %#x)\n", path, (unsigned long long)raw, (unsigned)t->flags);
+                }
+            }
             if (expand) {  // RGB8 -> RGBA8
                 uint8_t *o = s.ptr;
                 uint64_t n = (uint64_t)l.wb * l.hb * l.d;
