@@ -420,7 +420,8 @@ static void live_remove(NvnTexture *t) {
 static TexBackend *share_tab[SHARE_TAB];
 static uint32_t share_slot(uint64_t addr) { return (uint32_t)((addr >> 9) * 0x9E3779B97F4A7C15ull >> 52) & (SHARE_TAB - 1); }
 
-static TexBackend *share_find(const NvnTexture *t, TexBackend *key_out) {
+// gpu_write: t's first use writes it (a render target, a copy or dispatch destination).
+static TexBackend *share_find(const NvnTexture *t, TexBackend *key_out, bool gpu_write) {
     static int off = -1;
     if (off < 0) off = getenv("LARECOMP_NO_TEX_SHARE") != NULL;  // (debug) every texture object its own image
     memset(&key_out->key, 0, sizeof key_out->key);  // (compared with memcmp)
@@ -429,6 +430,10 @@ static TexBackend *share_find(const NvnTexture *t, TexBackend *key_out) {
     // GPU-written images only: a texture loaded from disc into memory an older texture object of the same shape
     // still covers must get its own image and upload (sharing left stale and half-updated texels: garbage
     // textures in the room after the first door). Compressed formats are never render targets.
+    // The other way round joins: an object about to be rendered into takes over an uploaded image of its shape (that
+    // image becomes GPU-written). MPR samples its reflection probe blend target (the arm cannon's and Samus's
+    // reflections between two probes) through an object made, and uploaded from memory, before the blend first
+    // renders: with an image of its own the blend never reached it - black reflections (user 2026-10-23).
     const FormatInfo *fi = nvn_format_info(t->format);
     if (!fi || fi->bw > 1 || fi->bh > 1) return NULL;
     key_out->key.addr = t->addr;
@@ -442,8 +447,16 @@ static TexBackend *share_find(const NvnTexture *t, TexBackend *key_out) {
     key_out->key.format = t->format;
     key_out->key.samples = t->samples;
     key_out->shared = true;
-    for (TexBackend *b = share_tab[share_slot(t->addr)]; b; b = b->share_next)
-        if (!memcmp(&b->key, &key_out->key, sizeof b->key) && !(b->uploaded && !b->gpu_owned)) return b;
+    for (TexBackend *b = share_tab[share_slot(t->addr)]; b; b = b->share_next) {
+        if (memcmp(&b->key, &key_out->key, sizeof b->key)) continue;
+        if (gpu_write || !(b->uploaded && !b->gpu_owned)) return b;
+        static int log_share = -1;
+        if (log_share < 0) log_share = getenv("LARECOMP_LOG_TEX_SHARE") != NULL;
+        if (log_share)
+            LOG("[share] frame %llu %p @%llx %ux%u f%#x target %u: an uploaded image of that shape not joined\n",
+                (unsigned long long)renderer_present_count(), (void *)t, (unsigned long long)t->addr, t->width, t->height,
+                t->format, t->target);
+    }
     return NULL;
 }
 static void share_unlink(TexBackend *b) {
@@ -453,7 +466,7 @@ static void share_unlink(TexBackend *b) {
     b->shared = false;
 }
 
-static TexBackend *tex_backend(NvnTexture *t) {
+static TexBackend *tex_backend_for(NvnTexture *t, bool gpu_write) {
     TexBackend *b = t->backend;
     if (b) {
         if (b->scalable && (b->sx != g_rs_x || b->sy != g_rs_y)) {  // output resolution changed: reallocate
@@ -464,7 +477,7 @@ static TexBackend *tex_backend(NvnTexture *t) {
     }
     vk_collect_dead();
     TexBackend key;
-    b = share_find(t, &key);
+    b = share_find(t, &key, gpu_write);
     if (b) {
         static int log_share = -1;
         if (log_share < 0) log_share = getenv("LARECOMP_LOG_TEX_SHARE") != NULL;
@@ -491,6 +504,7 @@ static TexBackend *tex_backend(NvnTexture *t) {
     live_add(t);
     return b;
 }
+static TexBackend *tex_backend(NvnTexture *t) { return tex_backend_for(t, false); }
 
 void backend_texture_destroyed(NvnTexture *t) {
     TexBackend *b = t->backend;
@@ -797,7 +811,7 @@ upload:
 }
 
 TexBackend *vk_tex(NvnTexture *t, bool for_render) {
-    TexBackend *b = tex_backend(t);
+    TexBackend *b = tex_backend_for(t, for_render);
     if (b->pending_rgba) upload_pending(b);
     if (for_render) b->gpu_owned = true;
     else if (!b->gpu_owned) {
@@ -809,7 +823,7 @@ TexBackend *vk_tex(NvnTexture *t, bool for_render) {
     return b;
 }
 
-void renderer_mark_gpu_owned(NvnTexture *t) { tex_backend(t)->gpu_owned = true; }
+void renderer_mark_gpu_owned(NvnTexture *t) { tex_backend_for(t, true)->gpu_owned = true; }
 bool renderer_is_gpu_owned(NvnTexture *t) { return tex_backend(t)->gpu_owned; }
 void backend_pool_written(uint64_t addr, uint64_t size) { (void)addr; (void)size; }
 

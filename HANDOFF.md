@@ -4,6 +4,36 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 
 ## State (2026-10-23 evening)
 
+- **NEXT (stopped here for the night, user's request): the Landing Site lighting / rain report.** The user loaded
+  their save (Landing Site, by the ship) and reported "lighting issues when I walk forward or around the area where
+  I saved" (F9 capture: `private/playtest/MPRRecomp/build/f9_13830/`, log backed up in `log_backup/
+  lasrecomp_2026-10-23_2131_f9.log`) and "the rain effect isn't always appearing on Samus' visor or the arm
+  cannon". Their screenshot didn't come through; the F9 frame shows the arm cannon pitch black.
+  - **Cause found (lighting):** MPR blends its two nearest reflection probes into a 128x128 R11G11B10F cube
+    (CReflectionProbeManager::ResolveReflectionProbe; blend shader fs 729c00f800: out = probe1*cb3[0].x +
+    probe0*cb3[0].y, per face via a passthrough-GS layer, per mip) whenever Samus is between probe zones. That cube is
+    the scene's whole image-based lighting there - world and cannon (a shader override writing red turned
+    everything red). The object the game samples it through can be made, and uploaded from (all-zero) memory,
+    before the blend first renders; textures.c share_find refused to join an upload-only image, so the blend got
+    an image of its own and the scene sampled zeros: black. Timing-dependent (some runs share, some don't).
+  - **Fix, uncommitted when the user stopped me, now committed as WIP (see the log):** share_find(..., gpu_write)
+    - an object about to be rendered into (renderer_mark_gpu_owned / vk_tex(for_render)) joins an uploaded image of
+    its shape. Verified: the blend target joins (LARECOMP_LOG_TEX_SHARE: "joins ... uploaded"), its six faces and
+    eight mips decode to the scene (scratchpad tools/cube_r11.py on a LARECOMP_DUMP_3D cube dump). Only two images
+    change behavior on this route: the probe blend target and the refraction mip chain (@729215c000 1024x512) -
+    the latter is worth a look at a blue door's shield (the refraction case the sharing was made for).
+    In the blend zone the scene is now dim-but-lit (an overcast corner: probe0 or probe1 alone look the same as the
+    blend, so the weights are right); crossing the zone edge is smooth. NOT installed in the playtest yet: next,
+    a door-shield check, then a release build for the user.
+  - **Repro:** copy of the user's save in scratchpad save2/; scratchpad tools/probe_route.ps1 <exe> <wd> <tag>
+    [root] (load, walk left from the ship into the blend zone at about (-363, -31, -310), turn in place, shots),
+    probe_cross.ps1 (step back out: the blend stops at frame 7722), probe_edge.ps1. New logs: LARECOMP_LOG_CUBE_PASS
+    (a pass into a cube target, per frame) and LARECOMP_LOG_TEX_SHARE also names upload-only images not joined.
+    Shader overrides: LARECOMP_GLSL_OVERRIDE is relative to the data root (build/), so build/<dir> means
+    build/build/<dir>; LARECOMP_VK_NO_SPIRV_CACHE=1 with it.
+  - **Rain on the visor / cannon (not started):** "isn't always appearing". Likely related (the cannon's wet look
+    may ride on the same lighting) or its own bug: check after the fix, at the ship in the rain.
+  - Also seen in the user's log: 120 fps around frames 6482-7198 with frame_rate = 60 (unexplained, check).
 - **Playable:** boot, menus, the whole frigate, onto Tallon IV (the user's own playthrough), 60 / 120 fps.
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started

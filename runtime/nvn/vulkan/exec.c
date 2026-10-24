@@ -1017,6 +1017,16 @@ static void begin_pass(void) {
         uint32_t rl = vk_render_layers(t, &st.rt.cview[i], st.rt.has_cview[i]);
         if (rl < layers) layers = rl;
         pass_samples = b->samples;
+        static int log_cube = -1;  // LARECOMP_LOG_CUBE_PASS: passes into cube targets (MPR's reflection probe blend)
+        if (log_cube < 0) log_cube = getenv("LARECOMP_LOG_CUBE_PASS") != NULL;
+        static uint64_t cube_logged = ~0ull;
+        if (log_cube && rl == 6 && cube_logged != renderer_present_count()) {
+            cube_logged = renderer_present_count();
+            LOG("[cube] frame %llu: pass into %p @%llx %ux%u f%#x target %u depth %u levels %u flags %#x stride %u, image %p "
+                "refs %d %s\n", (unsigned long long)cube_logged, (void *)t, (unsigned long long)t->addr, t->width, t->height,
+                t->format, t->target, t->depth, t->levels, t->flags, (unsigned)t->stride, (void *)b, b->refs,
+                b->uploaded ? "uploaded" : "");
+        }
     }
     pass_depth = pass_stencil = VK_FORMAT_UNDEFINED;
     bool has_d = false, has_s = false;
