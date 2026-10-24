@@ -31,6 +31,7 @@ Settings g_settings = {
     .upscaler = UPSCALE_SHARP,  // (MetalFX on macOS, AMD FSR 1 on Windows)
     .res_lines = 2160,
     .fov = FOV_GAME,
+    .gyro = true,
     .aniso = 16,
 };
 
@@ -114,6 +115,8 @@ void settings_load(void) {
         else if (!strcmp(key, "frame_rate")) g_settings.frame_rate = atoi(val) == 120 ? 120 : atoi(val) == 0 ? 0 : 60;
         else if (!strcmp(key, "fov")) g_settings.fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
         else if (!strcmp(key, "skippable_cutscenes")) g_settings.skippable_cutscenes = atoi(val) != 0;
+        else if (!strcmp(key, "gyro")) g_settings.gyro = atoi(val) != 0;
+        else if (!strcmp(key, "steam_controller_direct")) g_settings.steam_controller_direct = atoi(val) != 0;
         else if (!strcmp(key, "resolution")) {  // match / dynamic / 75% / 50% / 25% / <lines>p / 4k / 8k (LAS: 1x-8x)
             int n = atoi(val);
             size_t l = strlen(val);
@@ -179,7 +182,9 @@ void settings_save(void) {
     fprintf(f, "movie_audio = %d\n", g_settings.movie_audio);
     fprintf(f, "show_fps = %d\n", g_settings.show_fps);
     fprintf(f, "frame_rate = %d\n", g_settings.frame_rate);
-    fprintf(f, "fov = %d\nskippable_cutscenes = %d\n", g_settings.fov, g_settings.skippable_cutscenes);
+    fprintf(f, "fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.skippable_cutscenes,
+            g_settings.gyro);
+    if (g_settings.steam_controller_direct) fprintf(f, "steam_controller_direct = 1\n");  // (written only when set)
     fprintf(f, "upscaler = %s\n", g_settings.upscaler == UPSCALE_METALFX ? "metalfx" : g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
     fprintf(f, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");
     fprintf(f, "aniso = %d\n", g_settings.aniso);

@@ -515,7 +515,9 @@ static void tab_display(void) {
     opt_end();
 }
 
-// Gameplay: Metroid Prime's own options (runtime/hle/game.c), live
+extern "C" bool motion_available(void);  // runtime/hle/motion.c
+
+// Gameplay: Metroid Prime's own options (runtime/hle/game.c, motion.c), live
 static void tab_gameplay(void) {
     opt_begin("##gameplay", ImGui::GetFontSize() / 34);
     opt_section("Camera");
@@ -529,6 +531,18 @@ static void tab_gameplay(void) {
                               "and HUD stay as they are. Cutscenes keep their own framing.\n\nNow %d degrees, %.0f across "
                               "a 16:9 screen.", g_settings.fov, across);
         if (opt_slider("Field of view", &fov, FOV_MIN, FOV_MAX, 1, FOV_GAME, "%g", d)) g_settings.fov = (int)lroundf(fov);
+    }
+    opt_section("Motion");
+    {
+        char d[700];
+        snprintf(d, sizeof d, "Your controller's gyro drives the game's own motion aiming, as a Joy-Con or Pro "
+                              "Controller does on the Switch. Pick it in the game: pause, Options -> Controls -> "
+                              "Control Scheme -> Pointer (aim and turn by pointing, as on the Wii) or Hybrid (sticks, "
+                              "aiming by motion). The game then asks to calibrate: lay the controller flat for a "
+                              "moment.\n\nNeeds a controller with a gyro: Steam Controller, DualSense, DualShock 4, "
+                              "Switch Pro Controller, Joy-Con (Xbox controllers have none).\n\nYour controller: %s.",
+                 motion_available() ? "gyro found" : "no gyro found");
+        opt_toggle("Gyro aiming", &g_settings.gyro, true, d);
     }
     opt_section("Cutscenes");
     opt_toggle("Skip any cutscene", &g_settings.skippable_cutscenes, false,

@@ -16,6 +16,11 @@
 #include "../settings.h"
 #include "../input_bind.h"
 
+// runtime/hle/motion.c
+void motion_pad(SDL_Gamepad *pad);
+void motion_event(const SDL_Event *e);
+void motion_frame(uint64_t frame);
+
 enum {
     BTN_A = 0, BTN_B, BTN_X, BTN_Y, BTN_LSTICK, BTN_RSTICK, BTN_L, BTN_R, BTN_ZL, BTN_ZR, BTN_PLUS, BTN_MINUS,
     BTN_LEFT, BTN_UP, BTN_RIGHT, BTN_DOWN
@@ -148,6 +153,8 @@ bool input_user_blocked(const SDL_Event *e) {
     case SDL_EVENT_GAMEPAD_BUTTON_UP: case SDL_EVENT_JOYSTICK_ADDED: case SDL_EVENT_JOYSTICK_AXIS_MOTION:
     case SDL_EVENT_JOYSTICK_BUTTON_DOWN: case SDL_EVENT_JOYSTICK_BUTTON_UP:
         return true;
+    case SDL_EVENT_GAMEPAD_SENSOR_UPDATE:  // (the player's pad on the desk moved the aim in tests; LARECOMP_REAL_GYRO=1:
+        return !getenv("LARECOMP_REAL_GYRO");  // its gyro anyway, for looking at a real controller's data)
     default:
         return false;
     }
@@ -187,7 +194,7 @@ void input_handle_event(const SDL_Event *e) {
         scanned = true;
         int n = 0;
         SDL_JoystickID *ids = SDL_GetGamepads(&n);
-        if (n > 0 && !pad) { pad = SDL_OpenGamepad(ids[0]); log_pad(); note_family(); }
+        if (n > 0 && !pad) { pad = SDL_OpenGamepad(ids[0]); log_pad(); note_family(); motion_pad(pad); }
         SDL_free(ids);
     }
     switch (e->type) {
@@ -198,14 +205,17 @@ void input_handle_event(const SDL_Event *e) {
         recompute_keyboard();
         break;
     case SDL_EVENT_GAMEPAD_ADDED:
-        if (!pad) { pad = SDL_OpenGamepad(e->gdevice.which); log_pad(); note_family(); }
+        if (!pad) { pad = SDL_OpenGamepad(e->gdevice.which); log_pad(); note_family(); motion_pad(pad); }
         break;
     case SDL_EVENT_GAMEPAD_REMOVED:
-        if (pad && SDL_GetGamepadID(pad) == e->gdevice.which) { SDL_CloseGamepad(pad); pad = NULL; note_family(); }
+        if (pad && SDL_GetGamepadID(pad) == e->gdevice.which) { motion_pad(NULL); SDL_CloseGamepad(pad); pad = NULL; note_family(); }
         recompute_pad();
         break;
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP:
         recompute_pad();
+        break;
+    case SDL_EVENT_GAMEPAD_SENSOR_UPDATE:
+        motion_event(e);  // (runtime/hle/motion.c: the gyro for the game's motion controls)
         break;
     }
     input_rumble_pump();  // (and from the event loop when it's idle)
@@ -371,6 +381,7 @@ void input_frame(uint64_t frame) {
     extern void watch_arm(void);
     watch_arm();
     host_test_frame(frame);
+    motion_frame(frame);  // (LARECOMP_GYRO_TEST)
     const char *spec = getenv("LARECOMP_INPUT");
     if (!spec) return;
     static const char *const names[] = {"A", "B", "X", "Y", "LSTICK", "RSTICK", "L", "R", "ZL", "ZR", "PLUS",

@@ -49,6 +49,9 @@ typedef struct {
                          // simulation (runtime/hle/game.c); LARECOMP_FPS overrides it
     int fov;             // first-person vertical field of view in degrees, FOV_MIN..FOV_MAX (55: the game's): game.c
     bool skippable_cutscenes;  // every cutscene can be skipped, seen before or not (runtime/hle/game.c)
+    bool gyro;           // the controller's gyro / accelerometer reach the game's motion controls (runtime/hle/motion.c)
+    bool steam_controller_direct;  // (larecomp.ini only) SDL's own Steam Controller driver, for its gyro without
+                                   // Steam Input (the window code sets SDL_HINT_JOYSTICK_HIDAPI_STEAM)
     bool dpad_move;      // the d-pad (and arrow keys) move Link like the stick
     bool move_360;       // analog movement in any direction (the game snaps the stick to 8): runtime/hle/qol.c
     bool blur_removal;   // no tilt-shift blur at the top / bottom of the screen

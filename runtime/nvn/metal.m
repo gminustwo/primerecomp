@@ -1130,6 +1130,7 @@ void ui_window_init(void) {
     // (no SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS here: on macOS reading controllers in the background opens them
     // as HID devices, for which the system asks for Input Monitoring - "receive keystrokes from any application")
     settings_load();
+    if (g_settings.steam_controller_direct) SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM, "1");  // (as vulkan/device.c)
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) FATAL("SDL_Init: %s\n", SDL_GetError());
     int win_w = 1280, win_h = 720;
     if (getenv("LARECOMP_WINDOW")) sscanf(getenv("LARECOMP_WINDOW"), "%dx%d", &win_w, &win_h);
