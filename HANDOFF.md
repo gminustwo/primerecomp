@@ -8,7 +8,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
   from Steam (its shortcut targets lasrecomp.exe; Steam Input applies). Their log is `lasrecomp.log` there, F9
-  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 2a4aaa3 (release
+  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 87a6e17 (release
   exe, installed directly: the game was closed; `private/playtest/update/` holds the same build, so
   `Install_update.bat` is harmless). Use the update folder route whenever the game is running.
   `tools/run_game.ps1` now only waits for / stops build/lasrecomp.exe, so tests can run while the user plays.
@@ -17,12 +17,19 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   an option (done: 7fab0aa), the face buttons flippable to an Xbox layout (done: 7fab0aa), then "the recomp menu
   options - the LA-only ones don't make sense, focus on Metroid ones" (first pass: e12a7f6 - Gameplay tab with
   Field of view and Skip any cutscene; Aspect ratio / Movie audio out; Quit -> Restart Game). From my list of
-  candidates they then picked **gyro aiming and sharper textures** (both done: dc25199, 2a4aaa3). Wait for their
-  reaction. Left on the list:
-  - Ultrawide (21:9 / 32:9): needs the camera's aspect (CGameCameraMP1 +0x268 = 1.42? the MP1 value; the engine
-    camera's own), the 16:9-only render target scaling (textures.c tex_scalable) and the HUD placement.
+  candidates they then picked **gyro aiming and sharper textures** (both done: dc25199, 2a4aaa3), then **ultrawide**
+  (done: 52109d1, 87a6e17). Wait for their reaction. Left on the list:
   - The start screen (launcher.mm) is still all LAS Recomp (seeds, randomizer, LA game files text, the first-PLAY
     aspect question); the playtest never sees it (`--play`), and Restart Game no longer leads to it.
+- **Ultrawide** (Video -> Aspect ratio, Unlocked by default; wider windows only): game.c wide_frame writes the
+  projection's aspect ([[display manager (state manager + 0x4e0168) + 0x10] + 0x98]); exec.c ui_boxed keeps UI drawn
+  into presented targets (the HUD pass's HDR target counts) in the 16:9 box; edge_overlay lists the overlays whose
+  outer edge goes to the window's edges (scan ring c8eaf61f..., helmet / pause backdrop 405a0731...) through the
+  vertex shader variant (ShaderKey.x_mode bit 1); the minimap is a "UI layer" (a full-size RGBA8 target laid over the
+  HUD by a 54-vertex mesh: that mesh is boxed). Unchecked: thermal / X-ray visors, damage / water / steam effects on
+  the visor, text boxes from scans - a seam at the 16:9 edge means another overlay for edge_overlay: find its hash
+  with a debug frame at LARECOMP_WINDOW=2560x720 (LARECOMP_LOG_FSHASH=1) and try LARECOMP_EDGE_FSHASH=<hash>.
+  (Debug log order: a draw's "[draw] X inst" line, its textures, any "[pass]" lines, then its "vp" line.)
 - **Gyro** (runtime/hle/motion.c): the game's six-axis imports are HLE'd from SDL's gyro / accelerometer. The user's
   Steam Controller reports both through Steam (log: "[input] Steam Controller: gyro yes, accelerometer yes"). In
   the game: Options -> Controls -> Control Scheme -> Pointer / Hybrid; it then calibrates (waits for "at rest").

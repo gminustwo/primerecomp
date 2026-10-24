@@ -169,3 +169,6 @@ Debug recipe: `LARECOMP_DEBUG_FRAME=<n>` (pass images in build/build/, draw log)
 - Then, picked by the user: gyro aiming - the game's six-axis sensor calls now read the controller's gyro and
   accelerometer through SDL (the user's Steam Controller has both), for its own Pointer / Hybrid motion controls -
   and Texture filtering (16x anisotropic by default; MPR's floors smeared at an angle).
+- Ultrawide: the game's projection follows the window's shape (CDisplayManager's aspect ratio), the HUD stays in the
+  16:9 middle (the renderer's UI box), the scan visor's ring and the helmet reach the edges, the minimap layer is
+  boxed. Checked at 21:9 and 32:9: scene, cutscenes, morph ball, scan visor, pause / map, title.
