@@ -7,10 +7,12 @@
 
 #include "../hle.h"
 #include "../input_bind.h"
+#include "../settings.h"
 
 _Static_assert(PADB_LTRIGGER == SDL_GAMEPAD_BUTTON_COUNT, "trigger pseudo-buttons follow SDL's buttons");
 
-// Defaults: Nintendo layout by position (east = A, south = B, north = X, west = Y), triggers = ZL / ZR;
+// Defaults: Nintendo layout by position (east = A, south = B, north = X, west = Y; the Xbox face layout swaps them:
+// bind_face_host), triggers = ZL / ZR;
 // keyboard WASD left stick, arrows d-pad, K/J/L/I = A/B/X/Y, Q/E = L/R, 1/3 = ZL/ZR, Enter / Backspace = Plus /
 // Minus, F / numpad 0 = stick clicks, numpad 8/5/4/6 right stick.
 #define DEF_PAD { \
@@ -26,6 +28,34 @@ _Static_assert(PADB_LTRIGGER == SDL_GAMEPAD_BUTTON_COUNT, "trigger pseudo-button
     SDL_SCANCODE_KP_4, SDL_SCANCODE_KP_6}
 static const int16_t k_def_pad[BIND_PAD_COUNT] = DEF_PAD, k_def_key[BIND_KEY_COUNT] = DEF_KEY;
 int16_t g_bind_pad[BIND_PAD_COUNT] = DEF_PAD, g_bind_key[BIND_KEY_COUNT] = DEF_KEY;
+
+// Face layout (Controls tab "Face buttons", g_settings.face_layout): Xbox swaps south <-> east and west <-> north,
+// in the defaults and in whatever the player has bound, so A is the bottom button and the menus confirm with it.
+static int face_swap(int host) {
+    switch (host) {
+    case SDL_GAMEPAD_BUTTON_SOUTH: return SDL_GAMEPAD_BUTTON_EAST;
+    case SDL_GAMEPAD_BUTTON_EAST: return SDL_GAMEPAD_BUTTON_SOUTH;
+    case SDL_GAMEPAD_BUTTON_WEST: return SDL_GAMEPAD_BUTTON_NORTH;
+    case SDL_GAMEPAD_BUTTON_NORTH: return SDL_GAMEPAD_BUTTON_WEST;
+    default: return host;
+    }
+}
+
+int bind_face_host(int host) { return g_settings.face_layout == FACE_XBOX ? face_swap(host) : host; }
+
+static int16_t def_pad(int slot) { return (int16_t)bind_face_host(k_def_pad[slot]); }
+
+void bind_set_face_layout(int layout) {
+    if (layout == g_settings.face_layout) return;
+    for (int i = 0; i < BIND_PAD_COUNT; i++) g_bind_pad[i] = (int16_t)face_swap(g_bind_pad[i]);
+    g_settings.face_layout = layout;
+    LOG("[input] face buttons: %s layout\n", layout == FACE_XBOX ? "Xbox" : "Nintendo");
+}
+
+void bind_load_face_layout(int layout) {
+    g_settings.face_layout = layout;
+    for (int i = 0; i < BIND_PAD_COUNT; i++) g_bind_pad[i] = def_pad(i);
+}
 
 static const char *const k_ini[BIND_KEY_COUNT] = {
     "a", "b", "x", "y", "lstick", "rstick", "l", "r", "zl", "zr", "plus", "minus", "left", "up", "right", "down",
@@ -89,25 +119,28 @@ int bind_label_family(void) {
     SDL_JoystickID *ids = SDL_GetGamepads(&n);
     if (ids && n > 0) t = SDL_GetGamepadTypeForID(ids[0]);
     SDL_free(ids);
+    if (n <= 0 && g_settings.face_layout == FACE_XBOX) return 1;  // (no controller: the names the chosen layout uses)
     return t == SDL_GAMEPAD_TYPE_XBOX360 || t == SDL_GAMEPAD_TYPE_XBOXONE ? 1 :
            t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5 ? 2 : 0;
 }
 
 static void result(int kind, int dev, int slot, int other);
 
-void bind_reset(int dev) {
-    if (dev == BIND_DEV_PAD) memcpy(g_bind_pad, k_def_pad, sizeof g_bind_pad);
+void bind_reset(int dev) {  // (the controller's: those of the face layout)
+    if (dev == BIND_DEV_PAD) for (int i = 0; i < BIND_PAD_COUNT; i++) g_bind_pad[i] = def_pad(i);
     else memcpy(g_bind_key, k_def_key, sizeof g_bind_key);
     LOG("[input] %s bindings reset to the defaults\n", dev == BIND_DEV_PAD ? "controller" : "keyboard");
     result(5, dev, -1, -1);
 }
 
-bool bind_is_default(int dev) {
-    return dev == BIND_DEV_PAD ? !memcmp(g_bind_pad, k_def_pad, sizeof g_bind_pad) : !memcmp(g_bind_key, k_def_key, sizeof g_bind_key);
+bool bind_is_default_slot(int dev, int slot) {
+    return dev == BIND_DEV_PAD ? g_bind_pad[slot] == def_pad(slot) : g_bind_key[slot] == k_def_key[slot];
 }
 
-bool bind_is_default_slot(int dev, int slot) {
-    return dev == BIND_DEV_PAD ? g_bind_pad[slot] == k_def_pad[slot] : g_bind_key[slot] == k_def_key[slot];
+bool bind_is_default(int dev) {
+    for (int i = 0; i < (dev == BIND_DEV_PAD ? BIND_PAD_COUNT : BIND_KEY_COUNT); i++)
+        if (!bind_is_default_slot(dev, i)) return false;
+    return true;
 }
 
 int bind_prompt_host(int slot) { return slot >= 0 && slot < BIND_PAD_COUNT ? g_bind_pad[slot] : -1; }
@@ -222,7 +255,7 @@ bool bind_settings_load(const char *key, const char *val) {
 
 void bind_settings_save(FILE *f) {
     for (int i = 0; i < BIND_PAD_COUNT; i++)
-        if (g_bind_pad[i] != k_def_pad[i] && g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT)
+        if (g_bind_pad[i] != def_pad(i) && g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT)
             fprintf(f, "bind_pad_%s = %s\n", k_ini[i], k_pad_ini[g_bind_pad[i]]);
     for (int i = 0; i < BIND_KEY_COUNT; i++)
         if (g_bind_key[i] != k_def_key[i])

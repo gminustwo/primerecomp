@@ -1,7 +1,7 @@
 // Control remapping (runtime/hle/bindings.c): which controller button / key drives each Switch input. Edited from
 // the in-game menu's Controls tab and the start screen (runtime/ui/controls_ui.mm), saved in larecomp.ini.
-// Menus (the overlay, the start screen) never use these: they keep the fixed default layout, so no binding can lock
-// the player out.
+// Menus (the overlay, the start screen) never use these: they keep the fixed default layout (only the face layout
+// moves their A / B), so no binding can lock the player out.
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
@@ -59,6 +59,13 @@ int bind_pad_from_name(const char *name);
 
 // Button prompts (runtime/nvn/texpatch.c): the controller button now driving Switch input `slot` (BIND_A..)
 int bind_prompt_host(int slot);
+
+// Face layout (g_settings.face_layout, FACE_*): set swaps the face buttons in the current bindings (and the defaults
+// they're compared with); load (larecomp.ini) sets the layout's defaults, before the bind_pad_* lines. face_host: a
+// controller button as the Nintendo layout sees it (the menus' confirm / back go through it).
+void bind_set_face_layout(int layout);
+void bind_load_face_layout(int layout);
+int bind_face_host(int host);
 
 #ifdef __cplusplus
 }

@@ -502,12 +502,22 @@ void backend_present(NvnTexture *t) {
         double dw = g_vk.sc_extent.width, dh = g_vk.sc_extent.height;
         extern bool widescreen_allowed(void);  // runtime/hle/game.c
         // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Internal resolution");
-        // no GPU timer here (-1): dynamic resolution goes by the frame time
+        // no GPU timer here (-1): dynamic resolution goes by the frame time. The scale is of the presented image's
+        // own size (MPR: 1600x900), so Match display renders the 3D at the window's resolution.
         OutScale os;
-        output_scale(dw, dh, widescreen_allowed(), SDL_GetTicksNS() / 1e9, -1, &os);
+        output_scale(dw, dh, t->width, t->height, widescreen_allowed(), SDL_GetTicksNS() / 1e9, -1, &os);
         double sx = os.sx, sy = os.sy, vx = os.vx, vy = os.vy, vw = os.vw, vh = os.vh, shape = os.shape;
         float crop[4] = {0, 0, 1, 1};  // uv origin and size (the whole image)
         (void)shape;
+        {   // a new window size, game image size or setting: the render size in the log
+            static double pdw, pdh, psx, psy;
+            static uint32_t pbw, pbh;
+            if (dw != pdw || dh != pdh || sx != psx || sy != psy || t->width != pbw || t->height != pbh)
+                LOG("[scale] frame %llu window %.0fx%.0f, game image %ux%u -> render %ux%u (scale %.3f)\n",
+                    (unsigned long long)total_frames, dw, dh, t->width, t->height, (unsigned)lround(t->width * sx),
+                    (unsigned)lround(t->height * sy), sy);
+            pdw = dw, pdh = dh, psx = sx, psy = sy, pbw = t->width, pbh = t->height;
+        }
         renderer_set_scale((float)sx, (float)sy);
         VkCommandBuffer cb = vk_cmd();
         float pv[8] = {renderer_origin_lower_left() ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};

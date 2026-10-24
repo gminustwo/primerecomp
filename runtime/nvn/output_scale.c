@@ -1,13 +1,14 @@
 // Output resolution, shared by the Metal and Vulkan backends (each calls output_scale() once per presented frame).
-// Render targets the game sizes for the Switch's 1920x1080 screen are allocated at (sx, sy) times their size; the
-// image is then drawn into (vx, vy, vw, vh) of the window. Video tab "Internal resolution" (g_settings.res_mode):
-//   Match display  render at the window's own pixel size (default)
-//   1x .. 4x       N times the Switch's docked image: 1080 lines x N (wide windows keep their shape: 32:9 at 2x =
-//                  7680 x 2160); capped to the GPU's 16384-pixel texture limit
+// Render targets the game sizes for its screen image (MPR: 1600x900, the Switch's docked resolution - the TV gets
+// it scaled up to 1080p) are allocated at (sx, sy) times their size; the image is then drawn into (vx, vy, vw, vh)
+// of the window. Video tab "Internal resolution" (g_settings.res_mode):
+//   Match display  render at the window's own pixel size (default): a 4K window renders 3840 x 2160
+//   900p .. 8K     that many lines (RES_FIXED, g_settings.res_lines; wide windows keep their shape); more than the
+//                  window is drawn into it smaller (supersampling); capped to the GPU's 16384-pixel texture limit
 //   .75x / .50x / .25x  of Match display (scaled up to the window - with MetalFX on macOS when chosen)
 //   Dynamic        Match display, lowered in steps while the GPU can't hold 60 fps and raised again when it can
 //                  (each change reallocates the render targets: a short hitch, so it changes rarely, with hysteresis)
-// Test overrides: LARECOMP_SCALE=<f> (render height = 1080 x f), LARECOMP_WIDE_TEST=<f> (forced shape).
+// Test overrides: LARECOMP_SCALE=<f> (render height = the game's x f), LARECOMP_WIDE_TEST=<f> (forced shape).
 #include <math.h>
 #include <stdlib.h>
 
@@ -57,21 +58,25 @@ static void dyn_update(double now, double gpu_ms) {
 
 double output_scale_dynamic_factor(void) { return g_dyn; }
 
-void output_scale(double dw, double dh, bool reshape_allowed, double now, double gpu_ms, OutScale *o) {
-    double fit = fmin(dw / 1920.0, dh / 1080.0);
+static double g_render_w = 1920, g_render_h = 1080;
+void output_scale_render_size(double *w, double *h) { *w = g_render_w; *h = g_render_h; }
+
+void output_scale(double dw, double dh, double bw, double bh, bool reshape_allowed, double now, double gpu_ms, OutScale *o) {
+    if (bw < 1 || bh < 1) bw = 1920, bh = 1080;
+    double fit = fmin(dw / bw, dh / bh);
     static double forced = -1, wide_test = -1;
     if (forced < 0) forced = getenv("LARECOMP_SCALE") ? atof(getenv("LARECOMP_SCALE")) : 0;
     if (wide_test < 0) wide_test = getenv("LARECOMP_WIDE_TEST") ? atof(getenv("LARECOMP_WIDE_TEST")) : 0;
-    double shape = wide_test > 0 ? wide_test : (dw / dh) / (16.0 / 9.0);
+    double shape = wide_test > 0 ? wide_test : (dw / dh) / (bw / bh);
     bool reshape = reshape_allowed && fabs(shape - 1.0) > 0.005;
     if (!reshape) shape = 1.0;
-    // render height in units of the Switch's 1080 lines
+    // render height in units of the game's own (bh lines)
     double h;
     int mode = g_settings.res_mode;
     if (forced > 0) h = forced;
-    else if (mode >= 1 && mode <= 8) h = mode;
+    else if (mode == RES_FIXED) h = g_settings.res_lines / bh;
     else {
-        h = reshape ? dh / 1080.0 : fit;  // Match display
+        h = reshape ? dh / bh : fit;  // Match display
         if (mode == RES_DYNAMIC) { dyn_update(now, gpu_ms); h *= g_dyn; }
         else if (mode == RES_Q75) h *= 0.75;
         else if (mode == RES_Q25) h *= 0.25;
@@ -79,15 +84,16 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
     }
     h = fmax(h, 0.1);  // (.25x of a small window)
     double sx = h * shape, sy = h;
-    double cap = fmin(MAX_TEX / (1920.0 * sx), MAX_TEX / (1080.0 * sy));
+    double cap = fmin(MAX_TEX / (bw * sx), MAX_TEX / (bh * sy));
     if (cap < 1.0) { sx *= cap; sy *= cap; }
     o->sx = sx; o->sy = sy; o->shape = shape;
-    // where the image goes in the window: fills it when reshaped, else a fitted 16:9 box
+    g_render_w = round(bw * sx); g_render_h = round(bh * sy);
+    // where the image goes in the window: fills it when reshaped, else a fitted box of the game's shape
     if (reshape) { o->vw = dw; o->vh = dh; }
-    else { o->vw = 1920.0 * fit; o->vh = 1080.0 * fit; }
+    else { o->vw = bw * fit; o->vh = bh * fit; }
     if (wide_test > 0) {
-        double f2 = fmin(dw / (1920.0 * wide_test), dh / 1080.0);
-        o->vw = 1920.0 * wide_test * f2; o->vh = 1080.0 * f2;
+        double f2 = fmin(dw / (bw * wide_test), dh / bh);
+        o->vw = bw * wide_test * f2; o->vh = bh * f2;
     }
     o->vx = (dw - o->vw) / 2; o->vy = (dh - o->vh) / 2;
 }

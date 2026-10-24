@@ -29,7 +29,19 @@ Settings g_settings = {
     .chaos_letters = CHAOS_LETTERS_MAP,
     .diff_damage = 1.0f,
     .upscaler = UPSCALE_SHARP,  // (MetalFX on macOS, AMD FSR 1 on Windows)
+    .res_lines = 2160,
 };
+
+const int g_res_lines[N_RES_LINES] = {900, 1080, 1440, 2160, 4320};
+const char *const g_res_names[N_RES_LINES] = {"900p (Switch)", "1080p", "1440p", "4K", "8K"};
+
+// the offered height nearest to `lines` (a hand-edited larecomp.ini, LAS's "2x")
+static int res_snap(int lines) {
+    int best = g_res_lines[0];
+    for (int i = 1; i < N_RES_LINES; i++)
+        if (abs(g_res_lines[i] - lines) < abs(best - lines)) best = g_res_lines[i];
+    return best;
+}
 
 // The game's own text languages: its RomFS carries these per region (regionUS/USen|USes|USfr, regionEU/EUen|EUes|...,
 // regionJP/JPja, regionKR/KRkr, regionTW/TWch, regionCN/CNch), and the game picks one from the system language it
@@ -98,11 +110,15 @@ void settings_load(void) {
         else if (!strcmp(key, "movie_audio")) g_settings.movie_audio = atoi(val) != 0;
         else if (!strcmp(key, "show_fps")) g_settings.show_fps = atoi(val) != 0;
         else if (!strcmp(key, "frame_rate")) g_settings.frame_rate = atoi(val) == 120 ? 120 : atoi(val) == 0 ? 0 : 60;
-        else if (!strcmp(key, "resolution")) {
+        else if (!strcmp(key, "resolution")) {  // match / dynamic / 75% / 50% / 25% / <lines>p / 4k / 8k (LAS: 1x-8x)
             int n = atoi(val);
+            size_t l = strlen(val);
+            char unit = l ? (char)(val[l - 1] | 0x20) : 0;
             g_settings.res_mode = !strcmp(val, "dynamic") ? RES_DYNAMIC : (!strcmp(val, "75%") || !strcmp(val, "67%")) ? RES_Q75 :
                                   !strcmp(val, "50%") ? RES_Q50 : !strcmp(val, "25%") ? RES_Q25 :
-                                  (n >= 1 && n <= 4) ? n : n > 4 ? 4 : RES_MATCH;  // (5x-8x were removed)
+                                  n > 0 && (unit == 'p' || unit == 'k' || unit == 'x') ? RES_FIXED : RES_MATCH;
+            if (g_settings.res_mode == RES_FIXED)
+                g_settings.res_lines = res_snap(unit == 'p' ? n : unit == 'k' ? n * 540 : n * 1080);
         }
         else if (!strcmp(key, "upscaler")) g_settings.upscaler = !strcmp(val, "bilinear") ? UPSCALE_BILINEAR : UPSCALE_SHARP;  // (metalfx / fsr1: this OS's)
         else if (!strcmp(key, "antialias")) g_settings.antialias = !strcmp(val, "off") ? AA_OFF : AA_SMAA;  // ("fxaa": SMAA now)
@@ -114,6 +130,8 @@ void settings_load(void) {
         else if (!strcmp(key, "mirror_mode")) g_settings.mirror_mode = atoi(val) != 0;
         else if (!strcmp(key, "prompts")) g_settings.prompts = !strcmp(val, "nintendo") ? PROMPTS_NINTENDO : !strcmp(val, "xbox") ?
                                                               PROMPTS_XBOX : !strcmp(val, "playstation") ? PROMPTS_PLAYSTATION : PROMPTS_AUTO;
+        // (before the bind_pad_* lines, which settings_save writes last: they're the differences from its defaults)
+        else if (!strcmp(key, "face_layout")) bind_load_face_layout(!strcmp(val, "xbox") ? FACE_XBOX : FACE_NINTENDO);
         else if (!strcmp(key, "language")) {  // ("auto" or one of the game's codes; anything else: auto)
             g_settings.language = LANG_AUTO;
             for (int i = 1; i < N_LANGUAGES; i++)
@@ -147,7 +165,7 @@ void settings_load(void) {
 void settings_save(void) {
     FILE *f = fopen(SETTINGS_FILE, "w");
     if (!f) { LOG("[settings] cannot write %s\n", SETTINGS_FILE); return; }
-    fprintf(f, "# LAS Recomp settings (edited from the in-game menu: F1, Esc, or Minus+Plus on a controller)\n");
+    fprintf(f, "# MPR Recomp settings (edited from the in-game menu: F1, Esc, or Minus+Plus on a controller)\n");
     fprintf(f, "aspect = %s\n", g_settings.aspect == ASPECT_ORIGINAL ? "original" : "unlocked");
     fprintf(f, "fullscreen = %d\n", g_settings.fullscreen);
     fprintf(f, "volume = %.2f\n", g_settings.volume);
@@ -162,7 +180,7 @@ void settings_save(void) {
     else if (g_settings.res_mode == RES_Q75) fprintf(f, "resolution = 75%%\n");
     else if (g_settings.res_mode == RES_Q25) fprintf(f, "resolution = 25%%\n");
     else if (g_settings.res_mode == RES_Q50) fprintf(f, "resolution = 50%%\n");
-    else if (g_settings.res_mode >= 1 && g_settings.res_mode <= 8) fprintf(f, "resolution = %dx\n", g_settings.res_mode);
+    else if (g_settings.res_mode == RES_FIXED) fprintf(f, "resolution = %dp\n", g_settings.res_lines);
     else fprintf(f, "resolution = match\n");
     fprintf(f, "inv_keys = %d\n", g_settings.inv_keys);
     fprintf(f, "dpad_move = %d\n", g_settings.dpad_move);
@@ -170,6 +188,7 @@ void settings_save(void) {
             g_settings.hide_hero_icon);
     static const char *const prompts[] = {"auto", "nintendo", "xbox", "playstation"};
     fprintf(f, "prompts = %s\n", prompts[g_settings.prompts & 3]);
+    fprintf(f, "face_layout = %s\n", g_settings.face_layout == FACE_XBOX ? "xbox" : "nintendo");
     fprintf(f, "mirror_mode = %d\n", g_settings.mirror_mode);
     fprintf(f, "language = %s\n", g_language_codes[g_settings.language > LANG_AUTO && g_settings.language < N_LANGUAGES
                                                      ? g_settings.language : LANG_AUTO]);

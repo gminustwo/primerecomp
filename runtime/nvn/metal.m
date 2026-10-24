@@ -984,7 +984,7 @@ void backend_present(NvnTexture *t) {
         double gpu_ms = gpu_prev ? (gpu_now - gpu_prev) / 1e6 : -1;
         gpu_prev = gpu_now;
         OutScale os;
-        output_scale(dw, dh, widescreen_allowed(), SDL_GetTicksNS() / 1e9, gpu_ms, &os);
+        output_scale(dw, dh, t ? t->width : 0, t ? t->height : 0, widescreen_allowed(), SDL_GetTicksNS() / 1e9, gpu_ms, &os);
         double sx = os.sx, sy = os.sy, vx = os.vx, vy = os.vy, vw = os.vw, vh = os.vh, shape = os.shape;
         bool reshape = shape != 1.0;
         float crop[4] = {0, 0, 1, 1};  // uv origin and size (the whole image)

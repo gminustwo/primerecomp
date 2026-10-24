@@ -110,9 +110,10 @@ static ImGuiKey key_from_scancode(SDL_Scancode sc) {
     }
 }
 
-// Nintendo layout: the right face button (A) confirms, the bottom one (B) goes back.
+// A confirms, B goes back: by position in the Nintendo layout (right / bottom), in the Xbox one by the labels
+// (bottom / right) - Controls tab "Face buttons" (bind_face_host).
 static ImGuiKey key_from_pad(Uint8 b) {
-    switch (b) {
+    switch (bind_face_host(b)) {
     case SDL_GAMEPAD_BUTTON_EAST: return ImGuiKey_GamepadFaceDown;   // activate
     case SDL_GAMEPAD_BUTTON_SOUTH: return ImGuiKey_GamepadFaceRight; // cancel / back
     case SDL_GAMEPAD_BUTTON_NORTH: return ImGuiKey_GamepadFaceUp;
@@ -421,8 +422,8 @@ static bool choice(const char *label, int *value, const char *const *names, int 
     return changed;
 }
 
-extern "C" void renderer_get_scale(float *sx, float *sy);
 extern "C" double output_scale_dynamic_factor(void);
+extern "C" void output_scale_render_size(double *w, double *h);
 
 static void tab_display(void) {
     float scale = ImGui::GetFontSize() / 34;
@@ -451,25 +452,32 @@ static void tab_display(void) {
 
     opt_section("Rendering");
     // display order -> RES_* (the ini / enum order predates the menu order)
-    // (up to 4x: 7680 x 4320, 8K - more only ran out of GPU memory, and sat next to 75% in the list)
-    // (Match display in the middle: left from it 75% / 50% / 25%, right Dynamic then 1x-4x; user 2026-10-11)
-    static const char *res[] = {"25%", "50%", "75%", "Match display", "Dynamic", "1x", "2x", "3x", "4x"};
-    static const int res_mode[] = {RES_Q25, RES_Q50, RES_Q75, RES_MATCH, RES_DYNAMIC, 1, 2, 3, 4};
-    enum { RES_MATCH_AT = 3 };
-    enum { NRES = sizeof res_mode / sizeof res_mode[0] };
+    // (Match display in the middle: left from it 75% / 50% / 25%, right Dynamic then the fixed heights; user
+    // 2026-10-11 in LAS Recomp. MPR's own image is 1600 x 900, so LAS's "1x-4x" of 1080p became heights: 4K asked
+    // for by the user 2026-10-23; 8K = 4K supersampled on a 4K screen)
+    enum { RES_MATCH_AT = 3, NRES = 5 + N_RES_LINES };
+    static const char *res[NRES] = {"25%", "50%", "75%", "Match display", "Dynamic"};
+    static const int res_mode[5] = {RES_Q25, RES_Q50, RES_Q75, RES_MATCH, RES_DYNAMIC};
+    for (int i = 0; i < N_RES_LINES; i++) res[5 + i] = g_res_names[i];
     {
         int ri = RES_MATCH_AT;
-        for (int i = 0; i < NRES; i++) if (res_mode[i] == g_settings.res_mode) ri = i;
-        float sx, sy;
-        renderer_get_scale(&sx, &sy);
-        char d[400];
-        int n = snprintf(d, sizeof d, "How sharp the 3D image is. Match display: your screen's own resolution. Dynamic: "
-                                      "as sharp as your GPU keeps at full speed. 1x-4x: the Switch's 1080p times that. "
-                                      "75%% / 50%% / 25%%: a share of the display, for slower machines.\n\nRendering at "
-                                      "%.0f x %.0f.", 1920.0 * sx, 1080.0 * sy);
+        for (int i = 0; i < 5; i++) if (res_mode[i] == g_settings.res_mode) ri = i;
+        for (int i = 0; i < N_RES_LINES; i++)
+            if (g_settings.res_mode == RES_FIXED && g_settings.res_lines == g_res_lines[i]) ri = 5 + i;
+        double rw, rh;
+        output_scale_render_size(&rw, &rh);
+        char d[600];
+        int n = snprintf(d, sizeof d, "How sharp the 3D image is. Match display: your screen's own resolution (a 4K "
+                                      "screen renders 4K). Dynamic: as sharp as your GPU keeps at full speed. 900p: the "
+                                      "Switch's own. 1080p-8K: that many lines, whatever the window - more than the "
+                                      "screen has is scaled down (supersampling, smoother edges). 75%% / 50%% / 25%%: a "
+                                      "share of the display, for slower machines.\n\nRendering at %.0f x %.0f.", rw, rh);
         if (g_settings.res_mode == RES_DYNAMIC)
             snprintf(d + n, sizeof d - n, " Dynamic: %.0f%% of the display right now.", output_scale_dynamic_factor() * 100);
-        if (opt_choice("Internal resolution", &ri, res, NRES, RES_MATCH_AT, d, false)) g_settings.res_mode = res_mode[ri];
+        if (opt_choice("Internal resolution", &ri, res, NRES, RES_MATCH_AT, d, false)) {
+            if (ri < 5) g_settings.res_mode = res_mode[ri];
+            else g_settings.res_mode = RES_FIXED, g_settings.res_lines = g_res_lines[ri - 5];
+        }
     }
     {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 on Windows)
 #ifdef __APPLE__

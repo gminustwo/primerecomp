@@ -47,9 +47,27 @@ extern "C" void controls_bindings_draw(float scale) {
     else snprintf(line, sizeof line, "No controller connected  (%s button names shown)", fam_name[fam % 3]);
     SDL_free(ids);
     ImGui::TextUnformatted(line);
+    {   // face layout: two buttons, the current one lit (bind_set_face_layout swaps the bindings below too)
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Face buttons");
+        static const char *const lay[] = {"Nintendo: A on the right", "Xbox: A on the bottom"};
+        for (int i = 0; i < 2; i++) {
+            ImGui::SameLine();
+            bool cur = g_settings.face_layout == i;
+            if (cur) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.42f, 0.12f, 1));
+            if (ImGui::Button(lay[i]) && !cur) {
+                bind_capture_cancel();
+                bind_set_face_layout(i);
+                settings_save();
+            }
+            if (cur) ImGui::PopStyleColor();
+        }
+    }
     ImGui::PushTextWrapPos(0);
-    ImGui::TextDisabled("Select a binding, then press the new button or key. Esc (or 5 seconds) cancels. A button "
-                        "that's already in use swaps with the old one.");
+    ImGui::TextDisabled("Face buttons: which button is A (and confirms in menus) - the Switch's layout, where A is "
+                        "the right button and B the bottom one, or an Xbox controller's, A at the bottom and B on the "
+                        "right. Select a binding, then press the new button or key. Esc (or 5 seconds) cancels. A "
+                        "button that's already in use swaps with the old one.");
     ImGui::PopTextWrapPos();
 
     int cd, cs, ms;
@@ -106,8 +124,8 @@ extern "C" void controls_bindings_draw(float scale) {
     if (ImGui::Button("Reset keyboard to defaults")) { bind_capture_cancel(); bind_reset(BIND_DEV_KEY); }
     ImGui::EndDisabled();
     ImGui::PushTextWrapPos(0);
-    ImGui::TextDisabled("Bindings apply to the game only. Menus keep the fixed layout (right face button / Enter "
-                        "select, bottom face button / Esc back), and the in-game menu always opens with F1 or Esc, or "
+    ImGui::TextDisabled("Bindings apply to the game only. Menus select with A / Enter and go back with B / Esc (A "
+                        "and B as the face buttons above place them), and the in-game menu always opens with F1 or Esc, or "
                         "the controller's Back + Start held together, or its Home / Guide button - so this page can't be "
                         "locked out. The game's button icons follow the controller bindings.");
     ImGui::PopTextWrapPos();

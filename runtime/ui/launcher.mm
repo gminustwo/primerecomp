@@ -675,11 +675,12 @@ static bool menu_item(const char *label, bool enabled, bool *hovered = NULL, con
     return clicked;
 }
 
-// Controllers, as in the in-game menu (runtime/ui/menu.mm): read straight from SDL, Nintendo layout - the right face
-// button (A) confirms, the bottom one (B) goes back; d-pad / left stick move. (ImGui's own SDL gamepad handling is
-// switched off: it used the Xbox layout and, per the user, didn't work on the start screen.)
+// Controllers, as in the in-game menu (runtime/ui/menu.mm): read straight from SDL; A confirms, B goes back (the right
+// / bottom face buttons, or bottom / right with the Xbox face layout: bind_face_host); d-pad / left stick move.
+// (ImGui's own SDL gamepad handling is switched off: it used the Xbox layout and, per the user, didn't work on the
+// start screen.)
 static ImGuiKey launcher_pad_key(Uint8 b) {
-    switch (b) {
+    switch (bind_face_host(b)) {
     case SDL_GAMEPAD_BUTTON_EAST: return ImGuiKey_GamepadFaceDown;   // A: activate
     case SDL_GAMEPAD_BUTTON_SOUTH: return ImGuiKey_GamepadFaceRight; // B: back
     case SDL_GAMEPAD_BUTTON_NORTH: return ImGuiKey_GamepadFaceUp;
