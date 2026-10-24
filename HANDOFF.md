@@ -20,9 +20,11 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   candidates they then picked **gyro aiming and sharper textures** (both done: dc25199, 2a4aaa3), then **ultrawide**
   (done: 52109d1, 87a6e17), then "the recomp menu / boot up screen: the options and the look" (done: 36d8f16 -
   theme.h palette for the start screen and the F1 menu, the start screen rebuilt for MPR). Wait for their reaction.
-- **Start screen** (launcher.mm): the user's Steam shortcut passes `--play`, which skips it; F1 -> Quit -> Quit to
-  Start Screen reaches it (RT_REBOOT_TITLE; checked there and PLAY back), or they drop `--play` from the launch
-  options. Background: the Tallon IV MP4 from UIMP1.pak (found by size, cached at cache/start_bg.mp4), decoded on the
+- **Start screen** (launcher.mm): since 2026-10-23 the user's Steam shortcut has no launch options (they wanted the
+  start screen), so the exe finds the game as `extracted\` in the playtest folder: a junction to private\game (no
+  copy; "Delete game files" refuses reparse points). F1 -> Quit -> Quit to Start Screen also reaches it
+  (RT_REBOOT_TITLE; checked there and PLAY back).
+  Background: the Tallon IV MP4 from UIMP1.pak (found by size, cached at cache/start_bg.mp4), decoded on the
   launcher's thread at 30 fps into a texture (vk_imgui_texture_update). Screenshots without booting the game:
   run build/lasrecomp.exe private/game (no --play) with LARECOMP_LAUNCHER_SHOT=<frame>[:settings[:<tab>]|:setup|
   :tip|:fail<n>] and LARECOMP_SHOT_PATH. The red title-menu loop isn't a plain MP4 in any pak (compressed?).
@@ -271,7 +273,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 - **Regenerating game code** (after `tools/patches.py` changes):
   `cd tools && ./venv/Scripts/python gen.py main ../private/exefs/main 0x7000000000 ../generated/main`, then `make`.
 - **Updating the playtest build:** the playtest exe is a release (GUI) build, started by Steam directly (its
-  non-Steam shortcut targets lasrecomp.exe with `--play "D:\Games\pcports\MPRRecomp\private\game"`, so Steam
+  non-Steam shortcut targets lasrecomp.exe (no launch options: start screen; extracted\ junction -> private\game), so Steam
   Input applies; it logs to lasrecomp.log itself). Link one with `rm build/lasrecomp.exe && make RELEASE=1
   build/lasrecomp.exe`, copy it and `build/lasgame.dll` / `.dll.id` into `private/playtest/MPRRecomp/` (only while
   the game isn't running), then relink the console dev exe (`rm build/lasrecomp.exe && make`).
