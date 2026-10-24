@@ -70,7 +70,9 @@ void output_scale(double dw, double dh, double bw, double bh, bool reshape_allow
     if (forced < 0) forced = getenv("LARECOMP_SCALE") ? atof(getenv("LARECOMP_SCALE")) : 0;
     if (wide_test < 0) wide_test = getenv("LARECOMP_WIDE_TEST") ? atof(getenv("LARECOMP_WIDE_TEST")) : 0;
     double shape = wide_test > 0 ? wide_test : (dw / dh) / (bw / bh);
-    bool reshape = reshape_allowed && fabs(shape - 1.0) > 0.005;
+    // (wider only: a taller window would narrow the game's view - its vertical field of view stays - so it keeps
+    // the game's shape, with bars)
+    bool reshape = reshape_allowed && shape > 1.005;
     if (!reshape) shape = 1.0;
     // render height in units of the game's own (bh lines)
     double h;
