@@ -879,6 +879,7 @@ uint64_t renderer_present_count(void);
 void renderer_save_texture_tex(TexBackend *b, const char *path);
 static float pass_sx = 1, pass_sy = 1;
 static float vp_sx = 1, vp_sy = 1, vp_ox = 0, vp_oy = 0;
+static bool vp_edge;  // this draw is boxed with the ultrawide edge stretch (draw_): its scissor reaches the window's edges
 static float tex_sc[2][64][2];
 static uint32_t tex_wh[2][64][2];
 
@@ -1073,6 +1074,8 @@ static VkRect2D scissor_rect(void) {
     if (vp_sx != 1 || vp_sy != 1 || vp_ox != 0 || vp_oy != 0) {
         double x0 = floor(x * (double)vp_sx + vp_ox), y0 = floor(y * (double)vp_sy + vp_oy);
         double x1 = ceil(((double)x + sw) * vp_sx + vp_ox), y1 = ceil(((double)y + sh) * vp_sy + vp_oy);
+        if (vp_edge && x <= 0) x0 = 0;  // (the edge stretch draws past the box's sides)
+        if (vp_edge && st.rt.ncolor && st.rt.color[0] && (uint32_t)x + (uint32_t)sw >= st.rt.color[0]->width) x1 = 1e9;
         if (sw >= 16384) x1 = 1e9;
         if (sh >= 16384) y1 = 1e9;
         if (x1 > 1e9) x1 = 1e9;
@@ -1484,7 +1487,7 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey, int g
         p->cmax[2] = np->stages[2].const_offset ? np->stages[2].const_offset : 0x10000;
         p->gkey.glsl = 1;
         p->gkey.flip_y = vkey->flip_y;
-        p->gkey.flip_x = vkey->flip_x;
+        p->gkey.x_mode = vkey->x_mode & 1;  // (no edge stretch with a geometry shader: draw_ doesn't ask for it)
         p->gkey.depth_minus_one = vkey->depth_minus_one;
         p->gkey.gs_in = (uint8_t)gs_in;
         LOG("[vk] program vs %llx fs %llx: geometry shader %llx (input class %d) translated\n", (unsigned long long)p->code[0],
@@ -2849,6 +2852,80 @@ static bool topology(uint32_t mode, VkPrimitiveTopology *t, uint8_t *cls) {
     }
 }
 
+// Draws into a presented image (see renderer.m) when the window's shape differs from the game's: composites fill the
+// window, UI goes in a centred 16:9 box (true: boxed). Composites: draws reading the scene (a scaled texture the
+// target's size), full-screen fades (black / white fills), and plain fills in a frame that composited. Called after
+// begin_pass (pass_sx / pass_sy), once per draw (wide_frame).
+// UI layers (TexBackend.ui_layer): full-size targets the HUD lays over itself through a mesh of its own - the
+// minimap is drawn into one at a small viewport, and a mesh around its spot (at its 16:9 place) brings it onto the
+// HUD. The layer's own draws come out stretched across the wider layer; boxing the mesh that brings it in squeezes it
+// back into the 16:9 middle, in place and in shape (unboxed it sat at the window's far right, stretched). A
+// full-screen quad reading a same-size target is the scene's composite instead (left alone), and a presented target
+// is never a layer (a mesh reading the scene - a distortion effect - would have boxed it).
+static bool ui_boxed(Prog *pr, CmdRec *r) {
+    if (!(fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor && st.rt.color[0] &&
+          renderer_texture_presented(st.rt.color[0])))
+        return false;
+    const NvnTexture *rt = st.rt.color[0];
+    int ntex = pr->fi->ntex < 64 ? pr->fi->ntex : 64;
+    bool reads_scene = false, tex0_scaled = false;
+    for (int i = 0; i < ntex; i++) {
+        NvnTexture *t = shader_texture_object(1, &pr->fi->tex[i]);
+        float sx = 1, sy = 1;
+        if (t) renderer_texture_scale(t, &sx, &sy);
+        bool scaled = sx != 1 || sy != 1;
+        if (i == 0) tex0_scaled = scaled;
+        if (scaled && t->width == rt->width && t->height == rt->height) {
+            TexBackend *tb = (TexBackend *)t->backend;
+            if (tb && !tb->ui_layer && !tb->presented && r->x[2] > 6) {
+                tb->ui_layer = true;
+                LOG("[wide] %ux%u target @%llx is a UI layer (a %llu-vertex mesh lays it over the HUD): boxed\n",
+                    t->width, t->height, (unsigned long long)t->addr, (unsigned long long)r->x[2]);
+            }
+            if (!tb || !tb->ui_layer) reads_scene = true;
+        }
+    }
+    bool fullscreen_quad = r->x[2] <= 6 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
+                           st.viewport[0][2] >= rt->width && st.viewport[0][3] >= rt->height;
+    bool fullscreen_fill = ntex == 0 && fullscreen_quad;
+    if (fullscreen_quad && !reads_scene && ntex == 1 && tex0_scaled) reads_scene = true;
+    static uint64_t wide_frame = ~0ull;
+    if (reads_scene) wide_frame = renderer_present_count();
+    bool fade_fill = false;
+    if (fullscreen_fill && st.ubuf[1][0].addr && st.ubuf[1][0].size >= 12) {
+        const float *c = (const float *)(uintptr_t)st.ubuf[1][0].addr;
+        bool black = c[0] < 0.01f && c[1] < 0.01f && c[2] < 0.01f, white = c[0] > 0.99f && c[1] > 0.99f && c[2] > 0.99f;
+        fade_fill = black || white;
+    }
+    bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_present_count());
+    if (!composite) wide_frame = ~0ull;
+    return !composite;
+}
+
+// Overlays that frame the whole 16:9 screen, by fragment shader hash (the draw path's): their outer edge goes to a
+// wider window's edges (draw_). LARECOMP_EDGE_FSHASH=<hash>,... adds some (finding more); LARECOMP_NO_EDGE_STRETCH=1:
+// none.
+static bool edge_overlay(uint64_t fs_hash) {
+    static const uint64_t known[] = {
+        0xc8eaf61ff0b2c969ull,  // scan visor: the dimmed ring around the lens (a 178-vertex strip)
+        0x405a073135796880ull,  // pause screens: the dimmed backdrop behind the inventory / log book / options
+    };
+    static uint64_t extra[16];
+    static int nextra = -1, off = -1;
+    if (nextra < 0) {
+        nextra = 0;
+        off = getenv("LARECOMP_NO_EDGE_STRETCH") != NULL;
+        for (const char *p = getenv("LARECOMP_EDGE_FSHASH"); p && *p && nextra < 16;) {
+            extra[nextra++] = strtoull(p, (char **)&p, 16);
+            while (*p == ',') p++;
+        }
+    }
+    if (off) return false;
+    for (size_t i = 0; i < sizeof known / sizeof *known; i++) if (fs_hash == known[i]) return true;
+    for (int i = 0; i < nextra; i++) if (fs_hash == extra[i]) return true;
+    return false;
+}
+
 static void draw_(CmdRec *r, bool indexed);
 static void draw(CmdRec *r, bool indexed) {
     PROF_T0();
@@ -2909,6 +2986,22 @@ static void draw_(CmdRec *r, bool indexed) {
         if (st.rt.color[i] && ((st.channel_mask >> (i * 4)) & 0xF)) snapshots_invalidate(st.rt.color[i]);
     begin_pass();
     VkCommandBuffer cb = vk_cmd();
+    // UI boxed into the 16:9 middle of a wider window (ui_boxed). Ultrawide edge stretch, for the game's screen-
+    // framing overlays (edge_overlay): the program's variant whose vertices on the box's left / right edge go to the
+    // window's edge (shader.h ShaderKey.x_mode bit 2) - the scan visor's dimmed ring then reaches the window's sides
+    // with its lens still round. Not for everything boxed: the visor's corner brackets touch the box's edge too, and
+    // smeared out to the window's (badly at 32:9). (Variant still compiling: plain boxing.)
+    bool boxed = ui_boxed(pr, r), edge = false;
+    float edge_k = 1;
+    if (boxed && !pr->has_gs && pass_sx > pass_sy && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
+        st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height &&
+        edge_overlay(g_cur_fs_hash)) {
+        ShaderKey vk2 = vkey;
+        vk2.x_mode |= 2;
+        Prog *p2 = get_program(st.program, &vk2, &fkey, cls0);
+        if (p2 && atomic_load(&p2->state) == 1) pr = p2, edge = true, edge_k = pass_sx / pass_sy;
+    }
+    vp_edge = edge;
 
     uint32_t mode = (uint32_t)r->x[0];
     VkPrimitiveTopology topo;
@@ -3020,7 +3113,7 @@ static void draw_(CmdRec *r, bool indexed) {
 
     // ---- rasterizer
     uint8_t cull = st.poly[0];
-    if (vkey.flip_x) cull = 0;  // (mirror mode's composite: one full-screen quad, either winding)
+    if (vkey.x_mode & 1) cull = 0;  // (mirror mode's composite: one full-screen quad, either winding)
     VkCullModeFlags cm = cull == 1 ? VK_CULL_MODE_FRONT_BIT : cull == 2 ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
     if (ss_need(SS_CULL, ss.cull == cm)) { ss.cull = cm; vkCmdSetCullMode(cb, cm); }
     bool ccw = st.poly[1] == 1;
@@ -3066,7 +3159,9 @@ static void draw_(CmdRec *r, bool indexed) {
     // build the vertex set now and the fragment set after the decision (stage_set fills tex_sc for stage 1).
     if (prof) prof_dyn += SDL_GetTicksNS() - prof_td_;
     PROF_T0();
-    VkDescriptorSet vset = stage_set(pr, pr->set_layout[0], 0, 0, pr->vi, NULL, NULL, 0, 0, 0, NULL);
+    // (the edge stretch's vertex shader: rscale[0].x = how much wider the window is than the box)
+    float vrs0[4] = {edge_k, 1, 0, 0};
+    VkDescriptorSet vset = stage_set(pr, pr->set_layout[0], 0, 0, pr->vi, edge ? vrs0 : NULL, NULL, 0, 0, 0, NULL);
     PROF_ADD(prof_sets);
     VkDescriptorImageInfo fii[64];
     uint64_t prof_tx_ = prof ? SDL_GetTicksNS() : 0;
@@ -3076,38 +3171,18 @@ static void draw_(CmdRec *r, bool indexed) {
         tex_sc[1][i][0] = sc[0]; tex_sc[1][i][1] = sc[1]; tex_wh[1][i][0] = wh[0]; tex_wh[1][i][1] = wh[1];
     }
     if (prof) prof_tex += SDL_GetTicksNS() - prof_tx_;
-    if (fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor && renderer_texture_presented(st.rt.color[0])) {
-        // Draws into the swapchain image (see renderer.m): composites fill the window, UI goes in a centred 16:9 box.
-        bool reads_scene = false;
-        for (int i = 0; i < pr->fi->ntex && i < 64; i++)
-            if ((tex_sc[1][i][0] != 1 || tex_sc[1][i][1] != 1) && tex_wh[1][i][0] == st.rt.color[0]->width &&
-                tex_wh[1][i][1] == st.rt.color[0]->height)
-                reads_scene = true;
-        bool fullscreen_quad = r->x[2] <= 6 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
-                               st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height;
-        bool fullscreen_fill = pr->fi->ntex == 0 && fullscreen_quad;
-        if (fullscreen_quad && !reads_scene && pr->fi->ntex == 1 && (tex_sc[1][0][0] != 1 || tex_sc[1][0][1] != 1)) reads_scene = true;
-        static uint64_t wide_frame = ~0ull;
-        if (reads_scene) wide_frame = renderer_present_count();
-        bool fade_fill = false;
-        if (fullscreen_fill && st.ubuf[1][0].addr && st.ubuf[1][0].size >= 12) {
-            const float *c = (const float *)(uintptr_t)st.ubuf[1][0].addr;
-            bool black = c[0] < 0.01f && c[1] < 0.01f && c[2] < 0.01f, white = c[0] > 0.99f && c[1] > 0.99f && c[2] > 0.99f;
-            fade_fill = black || white;
-        }
-        bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_present_count());
-        if (!composite) wide_frame = ~0ull;
-        if (!composite) {
-            int pw, ph;
-            pass_size(&pw, &ph);
-            float u = fminf(pass_sx, pass_sy);
-            vp_sx = vp_sy = u;
-            vp_ox = (pw - st.rt.color[0]->width * u) * 0.5f;
-            vp_oy = (ph - st.rt.color[0]->height * u) * 0.5f;
-        }
+    if (boxed) {  // (ui_boxed, after begin_pass)
+        int pw, ph;
+        pass_size(&pw, &ph);
+        float u = fminf(pass_sx, pass_sy);
+        vp_sx = vp_sy = u;
+        vp_ox = (pw - st.rt.color[0]->width * u) * 0.5f;
+        vp_oy = (ph - st.rt.color[0]->height * u) * 0.5f;
     }
     {
-        float vx = vp[0] * vp_sx + vp_ox, vw = vp[2] * vp_sx;
+        // (edge stretch: the viewport is the whole target, the vertex shader puts the box in its middle; fragments
+        // and the scissor keep the box's mapping)
+        float vx = edge ? 0 : vp[0] * vp_sx + vp_ox, vw = edge ? vp[2] * pass_sx : vp[2] * vp_sx;
         set_viewport(vx, vp[1] * vp_sy + vp_oy, vw, vp[3] * vp_sy, zn, zf);
         if (g_debug_frame) {
             VkRect2D sr = scissor_rect();

@@ -172,9 +172,12 @@ static void fov_frame(Cpu *c) {
     applied = want;
 }
 
+static void wide_frame(Cpu *c);
+
 void rt_debug_autosave(Cpu *c) {
     debug_teleport(c);
     fov_frame(c);
+    wide_frame(c);
     // Every cutscene skippable, as on a second playthrough (CGameState::mCinematicForceSkippableOverride, which
     // IsCinematicSkippable checks first): the Gameplay tab's "Skip any cutscene", or (debug) LARECOMP_SKIP_CINEMATICS=1,
     // which also skips them (rt_skip_cinematics) - the intro replay reaches the landing site at frame ~5000 instead of
@@ -375,6 +378,34 @@ static void debug_teleport(Cpu *c) {
     free(saved);
 }
 
-// The window may show more than 16:9 (Video tab, aspect ratio unlocked). That needs the game's cameras widened,
-// which isn't done for this game yet: always the original framing.
-bool widescreen_allowed(void) { return false; }
+// Ultrawide (Video tab "Aspect ratio": Unlocked): a window wider than 16:9 widens the render targets (the renderers'
+// output_scale reshape: 16:9 targets drawn wider) and the game's projection. CDisplayManager::UpdateCameraNodes
+// builds the camera's projection every frame from an aspect ratio at [[display manager + 0x10] + 0x98] (16:9), which
+// GetAspectRatioForVisibility (the culling frustum) and CTweakPlayerMP1::GetAspectRatioScalarForAimAndOrbit read too:
+// wide_frame sets it to the window's each gameplay frame. LARECOMP_NO_WIDE=1: always 16:9.
+bool widescreen_allowed(void) {
+    static int off = -1;
+    if (off < 0) off = getenv("LARECOMP_NO_WIDE") != NULL;
+    return g_settings.aspect == ASPECT_UNLOCKED && !off;
+}
+
+static void wide_frame(Cpu *c) {
+    extern double output_scale_shape(void);  // runtime/nvn/output_scale.c: the window's shape / 16:9 (1: not reshaped)
+    uint64_t sm = c->x[0], dm = GUEST_PTR_OK(sm) ? LD64(sm + 0x4e0168) : 0;
+    if (!GUEST_PTR_OK(dm) || LD64(dm) != guest_sym("_ZTV15CDisplayManager") + 0x10) return;
+    uint64_t ps = LD64(dm + 0x10);
+    if (!GUEST_PTR_OK(ps)) return;
+    float *aspect = (float *)(uintptr_t)(ps + 0x98);
+    static float base;  // (the game's own: 16:9)
+    if (!base) {
+        if (*aspect < 1.0f || *aspect > 3.0f) return;
+        base = *aspect;
+        LOG("[wide] the game's aspect ratio: %g\n", base);
+    }
+    float want = (float)(base * (widescreen_allowed() ? output_scale_shape() : 1.0));
+    if (*aspect != want) {
+        static float logged;
+        if (want != logged) LOG("[wide] projection aspect %g -> %g\n", *aspect, want), logged = want;
+        *aspect = want;
+    }
+}

@@ -294,7 +294,7 @@ static void attr_load(Ctx *c, int dst, uint32_t addr, const char *idx) {
         if (addr >= 0x70 && addr < 0x80) {
             c->uses_frag_coord = true;
             int comp = (addr >> 2) & 3;
-            if (comp == 0 && c->key && c->key->flip_x) {  // mirror mode's composite: x mirrored (rscale[65].x = width)
+            if (comp == 0 && c->key && (c->key->x_mode & 1)) {  // mirror mode's composite: x mirrored (rscale[65].x = width)
                 c->uses_rscale = true;
                 strcpy(e, "as_type<uint>(rscale[65][0] - (in.pos[0] - rscale[0][2]) / rscale[0][0])");
             } else if (comp < 2) {  // guest pixel units: the render target may be allocated larger
@@ -2187,9 +2187,10 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         sp(&s, "uint gfind(uint g) { uint n = gmap[%d].x; for (uint i = 0u; i < n; i++) { uint o = g - gmap[i].x; "
                "if (g >= gmap[i].x && o < gmap[i].y) return gmap[i].z + (o >> 2); } return 0xFFFFFFFFu; }\n", GMAP_MAX);
     }
-    if (c->uses_rscale) {
+    // (the ultrawide edge stretch reads rscale[0].x in the vertex epilogue: x_mode bit 1)
+    if (c->uses_rscale || (stage == STAGE_VERTEX && key && (key->x_mode & 2))) {
         sp(&s, "layout(std140, set = %d, binding = 18) uniform RScale { vec4 rscale[%d]; };\n", set,
-           key && key->flip_x ? 66 : 65);  // ([65]: mirror mode's render target width)
+           key && (key->x_mode & 1) ? 66 : 65);  // ([65]: mirror mode's render target width)
         info->uses_rscale = true;
     }
     bool tint = stage == STAGE_FRAGMENT && !dbg && (c->omap_target & 0x7) == 0x7 && (!key || key->rt_kind[0] == 0);
@@ -2257,7 +2258,7 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         if (c->gs_writes_layer) sp(&s, "int gs_layer = 0;\n");
         sp(&s, "void gs_emit() {\n  gl_Position = gs_pos;\n");
         if (key && key->flip_y) sp(&s, "  gl_Position.y = -gl_Position.y;\n");
-        if (key && key->flip_x) sp(&s, "  gl_Position.x = -gl_Position.x;\n");
+        if (key && (key->x_mode & 1)) sp(&s, "  gl_Position.x = -gl_Position.x;\n");
         if (key && key->depth_minus_one) sp(&s, "  gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5f;\n");
         for (int i = 0; i < 32; i++)
             if (c->out_attr_mask & (1u << i)) sp(&s, "  v%d = gs_v%d;\n", i, i);
@@ -2291,8 +2292,11 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     }
     free(body.buf);
     if (stage == STAGE_VERTEX && !(key && key->gs_follows)) {  // (before a geometry shader: it does this)
+        if (key && (key->x_mode & 2))  // ultrawide edge stretch (shader.h ShaderKey.x_mode)
+            sp(&s, "  { float ew_ = gl_Position.w, ex_ = ew_ != 0.0 ? gl_Position.x / ew_ : 0.0;\n"
+                   "    gl_Position.x = abs(ex_) > 0.995 ? sign(ex_) * abs(ew_) : gl_Position.x / rscale[0].x; }\n");
         if (key && key->flip_y) sp(&s, "  gl_Position.y = -gl_Position.y;\n");
-        if (key && key->flip_x) sp(&s, "  gl_Position.x = -gl_Position.x;\n");
+        if (key && (key->x_mode & 1)) sp(&s, "  gl_Position.x = -gl_Position.x;\n");
         if (key && key->depth_minus_one) sp(&s, "  gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5f;\n");
         if (layer_out >= 0) sp(&s, "  gl_Layer = int(v%d[%d]);\n", layer_out >> 4, (layer_out >> 2) & 3);
     } else if (stage == STAGE_FRAGMENT) {
@@ -2536,7 +2540,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     }
     if (stage == STAGE_VERTEX) {
         if (key && key->flip_y) sp(&s, "  out.pos.y = -out.pos.y;\n");
-        if (key && key->flip_x) sp(&s, "  out.pos.x = -out.pos.x;\n");
+        if (key && (key->x_mode & 1)) sp(&s, "  out.pos.x = -out.pos.x;\n");
         if (key && key->depth_minus_one) sp(&s, "  out.pos.z = (out.pos.z + out.pos.w) * 0.5f;\n");
         if (maxwell_dbg_vs && blob == maxwell_dbg_vs) sp(&s, "  if (iid < 64u && vid < 8u) { dbgout[iid * 8u + vid] = out.pos; dbgout[512u + iid * 8u + vid] = %s; }\n", (c->out_attr_mask & 2u) ? "out.v1" : "float4(0)");
         sp(&s, "  return out;\n}\n");

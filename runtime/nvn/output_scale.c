@@ -59,7 +59,9 @@ static void dyn_update(double now, double gpu_ms) {
 double output_scale_dynamic_factor(void) { return g_dyn; }
 
 static double g_render_w = 1920, g_render_h = 1080;
+static _Atomic double g_shape = 1;  // (read by the game thread: runtime/hle/game.c widens the projection by it)
 void output_scale_render_size(double *w, double *h) { *w = g_render_w; *h = g_render_h; }
+double output_scale_shape(void) { return g_shape; }
 
 void output_scale(double dw, double dh, double bw, double bh, bool reshape_allowed, double now, double gpu_ms, OutScale *o) {
     if (bw < 1 || bh < 1) bw = 1920, bh = 1080;
@@ -87,6 +89,7 @@ void output_scale(double dw, double dh, double bw, double bh, bool reshape_allow
     double cap = fmin(MAX_TEX / (bw * sx), MAX_TEX / (bh * sy));
     if (cap < 1.0) { sx *= cap; sy *= cap; }
     o->sx = sx; o->sy = sy; o->shape = shape;
+    g_shape = shape;
     g_render_w = round(bw * sx); g_render_h = round(bh * sy);
     // where the image goes in the window: fills it when reshaped, else a fitted box of the game's shape
     if (reshape) { o->vw = dw; o->vh = dh; }

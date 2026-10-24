@@ -429,8 +429,13 @@ static void tab_display(void) {
     float scale = ImGui::GetFontSize() / 34;
     opt_begin("##video", scale);
     opt_section("Display");
-    // (LAS Recomp's "Aspect ratio - Unlocked" widened Link's Awakening's camera; Metroid Prime draws 16:9 for now:
-    // runtime/hle/game.c widescreen_allowed)
+    {   // (runtime/hle/game.c widescreen_allowed / wide_frame; the renderers' output_scale reshape)
+        const char *aspects[] = {"Unlocked", "Original 16:9"};
+        opt_choice("Aspect ratio", &g_settings.aspect, aspects, 2, ASPECT_UNLOCKED,
+                   "Unlocked: a window wider than 16:9 - an ultrawide screen, 21:9 or 32:9 - shows more of the world "
+                   "to the sides instead of black bars. The visor and HUD keep their shape in the middle; menus and "
+                   "the title screen stay 16:9. Original 16:9: the game's own framing, with bars.");
+    }
     bool fs = g_settings.fullscreen;
     if (opt_toggle("Fullscreen", &fs, false, "Fills the screen. Also: F11, Alt+Enter or Cmd+Ctrl+F.")) {
         g_settings.fullscreen = fs;

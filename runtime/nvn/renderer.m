@@ -889,7 +889,7 @@ static Prog *get_program(NvnProgram *p, ShaderKey *vkey, ShaderKey *fkey) {
     if (prog_tab[slot].key) { Prog *fp = (__bridge Prog *)prog_tab[slot].prog; return fp->failed ? nil : fp; }
     NSString *key = [NSString stringWithFormat:@"%llx/%llx/%@/%@%s", p->stages[0].code_addr, p->stages[1].code_addr,
                      [NSData dataWithBytes:vkey length:sizeof *vkey], [NSData dataWithBytes:fkey->rt_kind length:8],
-                     vkey->flip_x ? "/mirror" : ""];  // (NSData's description elides the middle of the key's bytes)
+                     (vkey->x_mode & 1) ? "/mirror" : ""];  // (NSData's description elides the middle of the key's bytes)
     Prog *pr = cache[key];
     if (pr) {
         prog_tab[slot].key = h;
@@ -1839,7 +1839,7 @@ static void draw(CmdRec *r, bool indexed) {
 
     // rasterizer
     uint8_t cull = st.poly[0];
-    if (vkey.flip_x) cull = 0;  // (mirror mode's composite: one full-screen quad, either winding)
+    if ((vkey.x_mode & 1)) cull = 0;  // (mirror mode's composite: one full-screen quad, either winding)
     [enc setCullMode:cull == 1 ? MTLCullModeFront : cull == 2 ? MTLCullModeBack : MTLCullModeNone];
     bool ccw = st.poly[1] == 1;
     [enc setFrontFacingWinding:(ccw != vkey.flip_y) ? MTLWindingCounterClockwise : MTLWindingClockwise];
@@ -1945,8 +1945,8 @@ static void draw(CmdRec *r, bool indexed) {
     if (pr->fi->uses_rscale) {  // [0] = render target scale, [1 + i] = scale of texture i
         float rs[66][4] = {{vp_sx, vp_sy, vp_ox, vp_oy}};
         for (int i = 0; i < pr->fi->ntex && i < 64; i++) { rs[1 + i][0] = tex_sc[1][i][0]; rs[1 + i][1] = tex_sc[1][i][1]; }
-        if (fkey.flip_x) rs[65][0] = (float)st.rt.color[0]->width;  // (mirror mode: the composite's width, guest pixels)
-        [enc setFragmentBytes:rs length:(NSUInteger)(fkey.flip_x ? 66 : 1 + pr->fi->ntex) * 16 atIndex:RSCALE_BUFFER_INDEX];
+        if ((fkey.x_mode & 1)) rs[65][0] = (float)st.rt.color[0]->width;  // (mirror mode: the composite's width, guest pixels)
+        [enc setFragmentBytes:rs length:(NSUInteger)((fkey.x_mode & 1) ? 66 : 1 + pr->fi->ntex) * 16 atIndex:RSCALE_BUFFER_INDEX];
     }
     if (pr->fi->uses_tint) {  // per-draw tint: the HUD hearts' colour (Cosmetics tab)
         float tint[8] = {0};

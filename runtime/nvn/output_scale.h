@@ -14,3 +14,5 @@ void output_scale(double dw, double dh, double bw, double bh, bool reshape_allow
 double output_scale_dynamic_factor(void);
 // The game image's size at the current scale (the Video tab's "Rendering at ...")
 void output_scale_render_size(double *w, double *h);
+// The window's shape over the game's (1: not reshaped - 16:9 kept): the game's projection is widened by it
+double output_scale_shape(void);

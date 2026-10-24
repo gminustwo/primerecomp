@@ -79,6 +79,8 @@ typedef struct TexBackend {
     uint64_t data_hash, sample_hash, checked_frame, full_frame;
     uint32_t wgen;  // page write tracking generation at the last upload check (textures.c)
     bool scalable, presented;
+    bool ui_layer;  // a full-size layer a mesh lays over a presented image (the HUD's minimap): that mesh is boxed
+                    // like UI, not filled like the scene's composite (exec.c ui_boxed)
     uint64_t touched_frame, frame_cleared;
     uint32_t level_gen;
     float sx, sy;

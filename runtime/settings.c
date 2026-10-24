@@ -98,8 +98,10 @@ void settings_load(void) {
     bool tip_key = false, aspect_key = false;
     while (fgets(line, sizeof line, f)) {
         char key[64];
-        char val[128];
+        char val[128] = "";
         if (sscanf(line, " %63[^= ] = %127[^\n]", key, val) < 1) continue;
+        // (a hand-edited file's Windows line ends: the file is read as bytes, "original\r" didn't match "original")
+        for (size_t n = strnlen(val, sizeof val); n && (val[n - 1] == '\r' || val[n - 1] == ' '); n--) val[n - 1] = 0;
         if (!strcmp(key, "rando_seed")) {
             if (sscanf(line, " %63[^= ] = %127[^\n]", key, val) != 2) val[0] = 0;
             strlcpy(g_settings.rando_seed, val, sizeof g_settings.rando_seed);
