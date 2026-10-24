@@ -172,3 +172,6 @@ Debug recipe: `LARECOMP_DEBUG_FRAME=<n>` (pass images in build/build/, draw log)
 - Ultrawide: the game's projection follows the window's shape (CDisplayManager's aspect ratio), the HUD stays in the
   16:9 middle (the renderer's UI box), the scan visor's ring and the helmet reach the edges, the minimap layer is
   boxed. Checked at 21:9 and 32:9: scene, cutscenes, morph ball, scan visor, pause / map, title.
+- Start screen and menus: Metroid Prime's look (theme.h: deep blue, orange headings, visor cyan), the start screen's
+  background the game's own Tallon IV movie (UIMP1.pak), LAS Recomp's seed picker / update check / font import /
+  aspect question gone, Quit to Start Screen back in the in-game menu.

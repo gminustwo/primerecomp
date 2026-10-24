@@ -8,7 +8,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
   from Steam (its shortcut targets lasrecomp.exe; Steam Input applies). Their log is `lasrecomp.log` there, F9
-  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 87a6e17 (release
+  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 36d8f16 (release
   exe, installed directly: the game was closed; `private/playtest/update/` holds the same build, so
   `Install_update.bat` is harmless). Use the update folder route whenever the game is running.
   `tools/run_game.ps1` now only waits for / stops build/lasrecomp.exe, so tests can run while the user plays.
@@ -18,9 +18,14 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   options - the LA-only ones don't make sense, focus on Metroid ones" (first pass: e12a7f6 - Gameplay tab with
   Field of view and Skip any cutscene; Aspect ratio / Movie audio out; Quit -> Restart Game). From my list of
   candidates they then picked **gyro aiming and sharper textures** (both done: dc25199, 2a4aaa3), then **ultrawide**
-  (done: 52109d1, 87a6e17). Wait for their reaction. Left on the list:
-  - The start screen (launcher.mm) is still all LAS Recomp (seeds, randomizer, LA game files text, the first-PLAY
-    aspect question); the playtest never sees it (`--play`), and Restart Game no longer leads to it.
+  (done: 52109d1, 87a6e17), then "the recomp menu / boot up screen: the options and the look" (done: 36d8f16 -
+  theme.h palette for the start screen and the F1 menu, the start screen rebuilt for MPR). Wait for their reaction.
+- **Start screen** (launcher.mm): the user's Steam shortcut passes `--play`, which skips it; F1 -> Quit -> Quit to
+  Start Screen reaches it (RT_REBOOT_TITLE; checked there and PLAY back), or they drop `--play` from the launch
+  options. Background: the Tallon IV MP4 from UIMP1.pak (found by size, cached at cache/start_bg.mp4), decoded on the
+  launcher's thread at 30 fps into a texture (vk_imgui_texture_update). Screenshots without booting the game:
+  run build/lasrecomp.exe private/game (no --play) with LARECOMP_LAUNCHER_SHOT=<frame>[:settings[:<tab>]|:setup|
+  :tip|:fail<n>] and LARECOMP_SHOT_PATH. The red title-menu loop isn't a plain MP4 in any pak (compressed?).
 - **Ultrawide** (Video -> Aspect ratio, Unlocked by default; wider windows only): game.c wide_frame writes the
   projection's aspect ([[display manager (state manager + 0x4e0168) + 0x10] + 0x98]); exec.c ui_boxed keeps UI drawn
   into presented targets (the HUD pass's HDR target counts) in the 16:9 box; edge_overlay lists the overlays whose
