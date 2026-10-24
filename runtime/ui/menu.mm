@@ -70,7 +70,7 @@ static void set_open(bool open) {
     input_reset();  // nothing held while the menu had focus leaks into the game
     bind_capture_cancel();
     if (open) {
-        static bool opened;  // the controller's cursor: the first tab (Controls) the first time this session, later the
+        static bool opened;  // the controller's cursor: the first tab (Gameplay) the first time this session, later the
         menu_tabs_focus(!opened);  // selected one
         opened = true;
     }
@@ -429,10 +429,8 @@ static void tab_display(void) {
     float scale = ImGui::GetFontSize() / 34;
     opt_begin("##video", scale);
     opt_section("Display");
-    const char *aspects[] = {"Unlocked", "Original 16:9"};
-    opt_choice("Aspect ratio", &g_settings.aspect, aspects, 2, ASPECT_UNLOCKED,
-               "Unlocked: the view fills the window, so wider (or taller) windows show more - up to ultrawide. "
-               "Original 16:9: the game's own framing, with bars.");
+    // (LAS Recomp's "Aspect ratio - Unlocked" widened Link's Awakening's camera; Metroid Prime draws 16:9 for now:
+    // runtime/hle/game.c widescreen_allowed)
     bool fs = g_settings.fullscreen;
     if (opt_toggle("Fullscreen", &fs, false, "Fills the screen. Also: F11, Alt+Enter or Cmd+Ctrl+F.")) {
         g_settings.fullscreen = fs;
@@ -506,6 +504,28 @@ static void tab_display(void) {
     opt_end();
 }
 
+// Gameplay: Metroid Prime's own options (runtime/hle/game.c), live
+static void tab_gameplay(void) {
+    opt_begin("##gameplay", ImGui::GetFontSize() / 34);
+    opt_section("Camera");
+    {
+        float fov = (float)g_settings.fov;
+        const double pi = 3.14159265358979;
+        double across = 2 * atan(tan(g_settings.fov * pi / 360) * 16 / 9) * 180 / pi;
+        char d[400];
+        snprintf(d, sizeof d, "How much of the world the view takes in, in degrees from top to bottom. 55 is the game's "
+                              "own. Wider shows more around you (and makes the world look farther away); the visor "
+                              "and HUD stay as they are. Cutscenes keep their own framing.\n\nNow %d degrees, %.0f across "
+                              "a 16:9 screen.", g_settings.fov, across);
+        if (opt_slider("Field of view", &fov, FOV_MIN, FOV_MAX, 1, FOV_GAME, "%g", d)) g_settings.fov = (int)lroundf(fov);
+    }
+    opt_section("Cutscenes");
+    opt_toggle("Skip any cutscene", &g_settings.skippable_cutscenes, false,
+               "Every cutscene can be skipped with the game's own skip prompt, the first time too. The game normally "
+               "lets you skip only the ones you've seen before.");
+    opt_end();
+}
+
 // Cosmetics: tunic / heart colours, live (runtime/nvn/texpatch.c); never part of a seed
 static void tab_cosmetics(void) {
     opt_begin("##cosmetics", ImGui::GetFontSize() / 34);
@@ -530,35 +550,36 @@ static void tab_audio(void) {
         g_settings.volume = pct / 100.0f;
     opt_toggle("Room reverb", &g_settings.reverb, true,
                "The game's echo in caves, ruins and big rooms.");
-    opt_toggle("Movie audio", &g_settings.movie_audio, true,
-               "Sound in the game's movies (the opening and the ending). Applies the next time a movie starts.");
+    // (LAS Recomp's "Movie audio" - Link's Awakening's opening and ending - isn't shown; larecomp.ini movie_audio
+    // still mutes Metroid Prime's movies, the game over one among them)
     opt_section("Controller");
     opt_toggle("Rumble", &g_settings.rumble, true, "The game's rumble on the controller (missiles, damage...).");
     opt_end();
 }
 
-// Quit: back to the start screen (in game: the game reboots to it) or out to the desktop. Each asks first (progress
-// since the last save is lost); B / Esc or Cancel backs out.
-extern "C" void rt_request_reboot(int kind);  // runtime/main.c (RT_REBOOT_TITLE = 2: the start screen)
+// Quit: restart the game (it reboots to its own title screen: the start screen, with LAS Recomp's seeds and setup,
+// isn't Metroid Prime's) or out to the desktop. Each asks first (progress since the last save is lost); B / Esc or
+// Cancel backs out.
+extern "C" void rt_request_reboot(int kind);  // runtime/main.c (RT_REBOOT_GAME = 1: boot again at once)
 static void tab_quit(float scale, bool in_game) {
-    static int ask;  // 0: the two choices; 1: start screen?; 2: desktop?
+    static int ask;  // 0: the two choices; 1: restart?; 2: desktop?
     if (ask && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
         ask = 0;
     const char *lost = in_game ? "\n\nProgress since your last save is lost." : "";
     char d1[200], d2[200];
-    snprintf(d1, sizeof d1, "Leaves the game and goes back to the LAS Recomp start screen.%s", lost);
-    snprintf(d2, sizeof d2, "Closes LAS Recomp.%s", lost);
+    snprintf(d1, sizeof d1, "Starts Metroid Prime Remastered over, from its title screen.%s", lost);
+    snprintf(d2, sizeof d2, "Closes MPR Recomp.%s", lost);
     opt_begin("##quit", scale);
     opt_section("Quit");
     if (!ask) {
-        if (!in_game) opt_disable_next();  // (already on it)
-        if (opt_action("Quit to Start Screen", "", in_game ? d1 : "You're on the start screen.")) ask = 1;
+        if (!in_game) opt_disable_next();  // (nothing to restart yet)
+        if (opt_action("Restart Game", "", in_game ? d1 : "The game isn't running yet.")) ask = 1;
         if (opt_action("Quit to Desktop", "", d2)) ask = 2;
     } else {
-        if (opt_action(ask == 1 ? "Yes, quit to Start Screen" : "Yes, quit to Desktop", "", ask == 1 ? d1 : d2)) {
+        if (opt_action(ask == 1 ? "Yes, restart the game" : "Yes, quit to Desktop", "", ask == 1 ? d1 : d2)) {
             settings_save();
             if (ask == 1) {
-                rt_request_reboot(2);
+                rt_request_reboot(1);
                 set_open(false);
             } else {
                 SDL_Event q = {};
@@ -670,10 +691,11 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     Tab tabs[11];
     int ntabs = 0;
     if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
-    // (ids 2-6 were LAS Recomp's Save Editor, Randomizer, Warp, Cheats and Gameplay; ids stay: test hooks)
+    // (ids 2-5 were LAS Recomp's Save Editor, Randomizer, Warp and Cheats, 6 its Gameplay - now Metroid Prime's; ids
+    // stay: test hooks)
     // (Cosmetics, id 7: LAS Recomp's tunic / heart colours - nothing to recolour in Metroid Prime, so not shown)
-    static const char *names[] = {"Video", "Audio", "", "", "", "", "", "Cosmetics", "Controls", "Quit"};
-    static const int order[] = {8, 0, 1, 9};  // Controls, Video, Audio, Quit
+    static const char *names[] = {"Video", "Audio", "", "", "", "", "Gameplay", "Cosmetics", "Controls", "Quit"};
+    static const int order[] = {6, 8, 0, 1, 9};  // Gameplay, Controls, Video, Audio, Quit
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT)
         if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
@@ -716,7 +738,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0.19f, 0.27f, 0.22f, 1));
                 ImGui::PushStyleColor(ImGuiCol_TabHovered, ImVec4(0.19f, 0.27f, 0.22f, 1));
             }
-            if (g_focus_tab == -1 && !prelaunch) g_focus_tab = 8;  // (no Prelaunch in game: Controls, the first tab)
+            if (g_focus_tab == -1 && !prelaunch) g_focus_tab = order[0];  // (no Prelaunch in game: the first tab)
             bool focus_here = g_focus_tab == t.id || (g_focus_tab == -100 && t.id == g_tab);
             bool open = ImGui::BeginTabItem(lbl, NULL, f);
             ImGui::PopStyleColor(lit ? 3 : 1);
@@ -759,6 +781,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case -1: prelaunch(scale); break;
                 case 0: tab_display(); break;
                 case 1: tab_audio(); break;
+                case 6: tab_gameplay(); break;
                 case 7: tab_cosmetics(); break;
                 case 8: tab_about(); break;
                 case 9: tab_quit(scale, in_game); break;

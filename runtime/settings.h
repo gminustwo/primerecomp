@@ -22,6 +22,7 @@ enum { PROMPTS_AUTO = 0, PROMPTS_NINTENDO = 1, PROMPTS_XBOX = 2, PROMPTS_PLAYSTA
 // = A, right = B, left = X, top = Y). Swaps the controller bindings (runtime/hle/bindings.c) and the menus' confirm /
 // back buttons.
 enum { FACE_NINTENDO = 0, FACE_XBOX = 1 };
+enum { FOV_GAME = 55, FOV_MIN = 45, FOV_MAX = 90 };
 enum { CHAOS_LETTERS_OFF = 0, CHAOS_LETTERS_EXPLORED = 1, CHAOS_LETTERS_MAP = 2 /* explored, all with the Map */ };
 // System language served to the game (runtime/services/am.c GetDesiredLanguage, services/hid_set.c GetLanguageCode):
 // the game picks its text language from it, as it would from the Switch's own system setting. LANG_AUTO follows the
@@ -44,6 +45,8 @@ typedef struct {
     bool show_fps;
     int frame_rate;      // frames (and game simulation steps) per second: 60 (the Switch's), 120, or 0 = uncapped at 60 Hz
                          // simulation (runtime/hle/game.c); LARECOMP_FPS overrides it
+    int fov;             // first-person vertical field of view in degrees, FOV_MIN..FOV_MAX (55: the game's): game.c
+    bool skippable_cutscenes;  // every cutscene can be skipped, seen before or not (runtime/hle/game.c)
     bool dpad_move;      // the d-pad (and arrow keys) move Link like the stick
     bool move_360;       // analog movement in any direction (the game snaps the stick to 8): runtime/hle/qol.c
     bool blur_removal;   // no tilt-shift blur at the top / bottom of the screen

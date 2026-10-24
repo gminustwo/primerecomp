@@ -112,12 +112,72 @@ int rt_skip_cinematics(void) {  // (also CCameraManager::CheckForCinematicSkip: 
     return skip;
 }
 
+// Field of view (Video tab, g_settings.fov): the first-person camera's vertical FOV, 55 degrees in the game (86
+// horizontal at 16:9). The game takes its default from one float (CCameraManagerMP1::GetDefaultFirstPersonVerticalFOV,
+// unnamed data): the first-person camera when it's made, the morph ball camera on its way back to it, animated cameras
+// handing back. The camera already made keeps its own (CGameCameraMP1: +0x25c the FOV now, +0x280 / +0x284 an
+// interpolation's start / target, +0x278 its time left, +0x270 bit 0 "changed"): that one is set as well while it's
+// the current camera and not interpolating, unless the game aimed it somewhere of its own.
+#define FP_FOV_DEFAULT 0x70020e7a70ull
+static uint64_t g_player_seen;  // the frame the player last updated (rt_player_frame; 0: not yet)
+
+int rt_fov(void) {  // (LARECOMP_FOV: test override)
+    static int env = -2;
+    if (env == -2) env = getenv("LARECOMP_FOV") ? atoi(getenv("LARECOMP_FOV")) : -1;
+    int f = env > 0 ? env : g_settings.fov;
+    return f < FOV_MIN ? FOV_MIN : f > FOV_MAX ? FOV_MAX : f;
+}
+
+static void fov_frame(Cpu *c) {
+    static int ok = -1;
+    float *def = (float *)(uintptr_t)FP_FOV_DEFAULT;
+    if (ok < 0 && !(ok = *def == 55.0f)) LOG("[fov] the default FOV isn't 55 (%g): another game build? FOV left alone\n", *def);
+    if (!ok) return;
+    float want = (float)rt_fov();
+    static float applied = 55.0f;
+    *def = want;
+    // the live camera only in play (the player updated just now: at boot the state manager has no cameras yet, and
+    // looking one up crashed), found as the game does: the camera manager, its current camera's id (the top of its two
+    // override stacks, else its own), CCameraManagerMP1::GetCurrentCamera
+    extern uint64_t vk_frame_counter(void);
+    if (!g_player_seen || vk_frame_counter() > g_player_seen + 2) return;
+    uint64_t sm = c->x[0], holder = *(uint64_t *)(uintptr_t)(sm + 0x4e0150);
+    uint64_t mgr = holder ? *(uint64_t *)(uintptr_t)(holder + 0x30) : 0;
+    if (!mgr) return;
+    uint32_t n2 = LD32(mgr + 0x18), n1 = LD32(mgr + 0x8);
+    uint32_t id = n2 ? LD32(LD64(mgr + 0x20) + 4ull * (n2 - 1)) : n1 ? LD32(LD64(mgr + 0x10) + 4ull * (n1 - 1)) : LD32(mgr);
+    if (id == 0xffffffffu) return;
+    static Cpu saved;
+    saved = *c;
+    c->x[0] = mgr;
+    c->x[1] = sm;
+    guest_call(c, guest_sym("_ZNK17CCameraManagerMP116GetCurrentCameraERK13CStateManager"));
+    uint64_t cam = c->x[0];
+    *c = saved;
+    if (!cam || *(uint64_t *)(uintptr_t)cam != guest_sym("_ZTV21CFirstPersonCameraMP1") + 0x10) return;
+    float *now = (float *)(uintptr_t)(cam + 0x25c), *from = (float *)(uintptr_t)(cam + 0x280);
+    float *target = (float *)(uintptr_t)(cam + 0x284), *left = (float *)(uintptr_t)(cam + 0x278);
+    if (*left <= 0 && *target != want && (*target == 55.0f || *target == applied)) {
+        LOG("[fov] first-person camera %llx: %g -> %g\n", (unsigned long long)cam, *target, want);
+        *now = *from = *target = want;
+        *(uint8_t *)(uintptr_t)(cam + 0x270) |= 1;
+    }
+    applied = want;
+}
+
 void rt_debug_autosave(Cpu *c) {
     debug_teleport(c);
-    // (debug) LARECOMP_SKIP_CINEMATICS=1: every cutscene skippable, as on a second playthrough
-    // (CGameState::mCinematicForceSkippableOverride, which IsCinematicSkippable checks first), and skipped
-    // (rt_skip_cinematics) - the intro replay reaches the landing site at frame ~5000 instead of ~12000
-    if (rt_skip_cinematics()) *(uint8_t *)(uintptr_t)guest_sym("_ZN10CGameState32mCinematicForceSkippableOverrideE") = 1;
+    fov_frame(c);
+    // Every cutscene skippable, as on a second playthrough (CGameState::mCinematicForceSkippableOverride, which
+    // IsCinematicSkippable checks first): the Gameplay tab's "Skip any cutscene", or (debug) LARECOMP_SKIP_CINEMATICS=1,
+    // which also skips them (rt_skip_cinematics) - the intro replay reaches the landing site at frame ~5000 instead of
+    // ~12000. Written each frame while on; turning it off puts the game's 0 back once.
+    {
+        static int was;
+        int on = rt_skip_cinematics() || g_settings.skippable_cutscenes;
+        if (on || was) *(uint8_t *)(uintptr_t)guest_sym("_ZN10CGameState32mCinematicForceSkippableOverrideE") = (uint8_t)on;
+        was = on;
+    }
     static long at = -2;
     if (at == -2) at = getenv("LARECOMP_AUTOSAVE_AT") ? atol(getenv("LARECOMP_AUTOSAVE_AT")) : -1;
     extern uint64_t vk_frame_counter(void);
@@ -189,6 +249,7 @@ void rt_player_frame(Cpu *c) {
     if (every == -2) every = getenv("LARECOMP_POS_LOG") ? atol(getenv("LARECOMP_POS_LOG")) : 0;
     extern uint64_t vk_frame_counter(void);
     uint64_t frame = vk_frame_counter();
+    g_player_seen = frame;
     static uint64_t logged = ~0ull;
     float *m = player_transform(g_player);
     if (every > 0 && m && frame % every == 0 && frame != logged) {

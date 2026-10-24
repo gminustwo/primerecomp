@@ -31,6 +31,8 @@ void opt_begin(const char *id, float scale) {
     if (g_take_first) ImGui::NavMoveRequestCancel();  // (this frame's Down goes to the first row instead)
     g_indent = 0;
     g_desc_hover.clear(), g_desc_focus.clear();
+    static std::string page;  // another page: its own first row's description, not the last page's
+    if (page != id) page = id, g_desc_shown.clear();
     ImVec2 avail = ImGui::GetContentRegionAvail();
     ImGui::PushID(id);
     ImGui::BeginChild("##rows", ImVec2(avail.x * 0.48f, avail.y), ImGuiChildFlags_None, ImGuiWindowFlags_NavFlattened);

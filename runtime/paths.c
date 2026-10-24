@@ -71,7 +71,7 @@ static bool writable(const char *dir) {
 
 static void fail(const char *msg) {
     fprintf(stderr, "%s\n", msg);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", msg, NULL);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "MPR Recomp", msg, NULL);
     exit(1);
 }
 
@@ -106,11 +106,11 @@ void rt_paths_init(void) {
     char msg[1400];
     if (!is_dir(root) || !writable(root) || chdir(root) != 0) {
 #ifdef _WIN32
-        snprintf(msg, sizeof msg, "LAS Recomp can't write to its folder:\n%s\n\nIt keeps game files, saves and seeds "
-                 "next to the program. Move the \"LAS Recomp\" folder somewhere you can write to (e.g. Documents or "
+        snprintf(msg, sizeof msg, "MPR Recomp can't write to its folder:\n%s\n\nIt keeps game files, and saves "
+                 "next to the program. Move the \"MPR Recomp\" folder somewhere you can write to (e.g. Documents or "
                  "Desktop, not Program Files) and start it again.", root);
 #else
-        snprintf(msg, sizeof msg, "LAS Recomp can't write to its data folder:\n%s", root);
+        snprintf(msg, sizeof msg, "MPR Recomp can't write to its data folder:\n%s", root);
 #endif
         fail(msg);
     }
