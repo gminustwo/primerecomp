@@ -8,7 +8,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
   from Steam (its shortcut targets lasrecomp.exe; Steam Input applies). Their log is `lasrecomp.log` there, F9
-  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build e12a7f6 (release
+  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 2a4aaa3 (release
   exe, installed directly: the game was closed; `private/playtest/update/` holds the same build, so
   `Install_update.bat` is harmless). Use the update folder route whenever the game is running.
   `tools/run_game.ps1` now only waits for / stops build/lasrecomp.exe, so tests can run while the user plays.
@@ -16,14 +16,23 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 - **The user confirmed the cannon sounds work** (2026-10-23 evening). Then asked for, in order: 4K working and as
   an option (done: 7fab0aa), the face buttons flippable to an Xbox layout (done: 7fab0aa), then "the recomp menu
   options - the LA-only ones don't make sense, focus on Metroid ones" (first pass: e12a7f6 - Gameplay tab with
-  Field of view and Skip any cutscene; Aspect ratio / Movie audio out; Quit -> Restart Game). Wait for their
-  reaction and their own ideas. Candidates I noted, roughly by value / effort:
+  Field of view and Skip any cutscene; Aspect ratio / Movie audio out; Quit -> Restart Game). From my list of
+  candidates they then picked **gyro aiming and sharper textures** (both done: dc25199, 2a4aaa3). Wait for their
+  reaction. Left on the list:
   - Ultrawide (21:9 / 32:9): needs the camera's aspect (CGameCameraMP1 +0x268 = 1.42? the MP1 value; the engine
     camera's own), the 16:9-only render target scaling (textures.c tex_scalable) and the HUD placement.
-  - Mouse aim / gyro: SDL gyro -> hid SixAxisSensor would feed the game's own pointer (motion) controls.
-  - Anisotropic filtering forced (Vulkan samplers): sharper floors at an angle; check the game's own setting.
   - The start screen (launcher.mm) is still all LAS Recomp (seeds, randomizer, LA game files text, the first-PLAY
     aspect question); the playtest never sees it (`--play`), and Restart Game no longer leads to it.
+- **Gyro** (runtime/hle/motion.c): the game's six-axis imports are HLE'd from SDL's gyro / accelerometer. The user's
+  Steam Controller reports both through Steam (log: "[input] Steam Controller: gyro yes, accelerometer yes"). In
+  the game: Options -> Controls -> Control Scheme -> Pointer / Hybrid; it then calibrates (waits for "at rest").
+  IsSixAxisSensorAtRest is the game's "put down" signal: true too often (a gyro of exactly 0 between test moves)
+  makes it ask "The pointer will now be recentered" every few seconds; now 1.5 s of steadiness. Test runs reach
+  Pointer through the pause menu: MINUS, L (Options), A, A, RIGHT, A, MINUS, then A for "calibrated" (see the
+  2a4aaa3 commit message for the test variables). Ask the user how it feels; sensitivity is the game's own.
+- **Texture filtering** (vulkan/textures.c vk_sampler): MPR makes only 13 samplers (one 2x, the rest trilinear);
+  16x forced on the mipmapped linear ones by default. The FOV lookup crashed after a skipped cutscene (the state
+  manager's game logic is CStateManagerGameLogicDefault between worlds): now needs the MP1 logic's vtable.
 - **4K:** MPR presents 1600x900 (the Switch's docked image, the TV scales it to 1080p); output_scale took 1080 as
   the base, so Match display rendered 5/6 of the window (3200x1800 on the user's 4K screen - their log showed it).
   The scale now follows the presented image's size. Internal resolution: Match / Dynamic / 900p / 1080p / 1440p /

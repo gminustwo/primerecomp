@@ -166,3 +166,6 @@ Debug recipe: `LARECOMP_DEBUG_FRAME=<n>` (pass images in build/build/, draw log)
 - Gameplay tab: Field of view (the game's default first-person FOV and the live camera's, set each frame) and Skip
   any cutscene. Aspect ratio and Movie audio out of the menu; Quit -> Restart Game (reboots to the game's title);
   the window says MPR Recomp.
+- Then, picked by the user: gyro aiming - the game's six-axis sensor calls now read the controller's gyro and
+  accelerometer through SDL (the user's Steam Controller has both), for its own Pointer / Hybrid motion controls -
+  and Texture filtering (16x anisotropic by default; MPR's floors smeared at an angle).
