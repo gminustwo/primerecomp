@@ -10,12 +10,13 @@
 
 #include "option_rows.h"
 #include "osk.h"
+#include "theme.h"
 
 static float g_scale = 1;
 static std::string g_desc_hover, g_desc_focus, g_desc_shown;  // this frame's hovered / selected row, and the last shown
 static std::string g_desc_first;  // the page's first row (shown until a row is selected or hovered)
 
-static const ImU32 kGold = IM_COL32(236, 194, 84, 255);
+static const ImU32 kAccent = theme::u32(theme::accent);  // (the selected / hovered row: theme.h)
 static bool g_next_disabled;
 void opt_disable_next(void) { g_next_disabled = true; }
 static int g_indent;
@@ -44,7 +45,7 @@ void opt_section(const char *title) {
     std::string t = title;
     for (char &c : t) c = (char)toupper((unsigned char)c);
     if (ImGui::GetCursorPosY() > ImGui::GetStyle().WindowPadding.y + 1) ImGui::Dummy(ImVec2(0, 10 * g_scale));
-    ImGui::TextColored(ImVec4(0.55f, 0.58f, 0.52f, 1), "%s", t.c_str());
+    ImGui::TextColored(theme::text_dim, "%s", t.c_str());
 }
 
 // One row: draws it, handles A / click and left / right while selected. Returns 2 (A / click), -1 / +1 (left / right) or 0.
@@ -89,21 +90,21 @@ static int row(const char *label, const std::string &value, bool changed, const 
 
     ImDrawList *dl = ImGui::GetWindowDrawList();
     float r = 9 * g_scale, pad = 16 * g_scale, fs = ImGui::GetFontSize();
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov || foc ? IM_COL32(255, 255, 255, 22) : IM_COL32(0, 0, 0, 40), r);
-    dl->AddRect(p, ImVec2(p.x + w, p.y + h), hov || foc ? (off ? IM_COL32(236, 194, 84, 120) : kGold)
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov || foc ? theme::u32(theme::accent, 0.10f) : IM_COL32(0, 0, 0, 40), r);
+    dl->AddRect(p, ImVec2(p.x + w, p.y + h), hov || foc ? (off ? theme::u32(theme::accent, 0.45f) : kAccent)
                                                         : IM_COL32(255, 255, 255, off ? 18 : 38), r, 0,
                 hov || foc ? 2.0f : 1.0f);
     std::string t = label;
     if (upper)
         for (char &c : t) c = (char)toupper((unsigned char)c);
     float ty = p.y + (h - fs) * 0.5f;
-    ImU32 label_col = off ? IM_COL32(110, 110, 102, 255) : IM_COL32(240, 236, 224, 255);  // (greyed out: clearly dim)
+    ImU32 label_col = off ? IM_COL32(100, 110, 120, 255) : theme::u32(theme::text);  // (greyed out: clearly dim)
     dl->AddText(ImVec2(p.x + pad, ty), label_col, t.c_str());
     float right = p.x + w - pad;  // (the value's right edge)
     if (arrows && !value.empty()) {  // ◀ value ▶, drawn (the fonts have no arrow glyphs); a click on one steps
         float aw = fs * 0.42f, gap = fs * 0.55f, cy = ty + fs * 0.52f;
         float rx = right - aw, lx = rx - gap - ImGui::CalcTextSize(value.c_str()).x - gap - aw;
-        ImU32 ac = off ? IM_COL32(110, 110, 100, 255) : hov || foc ? kGold : IM_COL32(170, 170, 160, 255);
+        ImU32 ac = off ? IM_COL32(100, 110, 120, 255) : hov || foc ? kAccent : IM_COL32(150, 170, 185, 255);
         dl->AddTriangleFilled(ImVec2(lx, cy), ImVec2(lx + aw, cy - aw * 0.75f), ImVec2(lx + aw, cy + aw * 0.75f), ac);
         dl->AddTriangleFilled(ImVec2(rx + aw, cy), ImVec2(rx, cy - aw * 0.75f), ImVec2(rx, cy + aw * 0.75f), ac);
         if (clicked && !off) {
@@ -115,8 +116,8 @@ static int row(const char *label, const std::string &value, bool changed, const 
     }
     if (!value.empty()) {
         float vw = ImGui::CalcTextSize(value.c_str()).x, vx = right - vw;
-        dl->AddText(ImVec2(vx, ty), off ? IM_COL32(110, 110, 102, 255) : changed ? IM_COL32(255, 255, 255, 255)
-                                                                                 : IM_COL32(205, 205, 195, 255), value.c_str());
+        dl->AddText(ImVec2(vx, ty), off ? IM_COL32(100, 110, 120, 255) : changed ? IM_COL32(255, 255, 255, 255)
+                                                                                 : IM_COL32(190, 205, 218, 255), value.c_str());
     }
     ImGui::PopID();
     return step;
@@ -174,7 +175,7 @@ bool opt_radio(const char *label, bool selected, const char *desc) {
     ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
     float r = ImGui::GetFontSize() * 0.32f, cx = b.x - 16 * g_scale - r, cy = (a.y + b.y) * 0.5f;
     ImDrawList *dl = ImGui::GetWindowDrawList();
-    ImU32 col = off ? IM_COL32(150, 150, 140, 255) : selected ? kGold : IM_COL32(205, 205, 195, 255);
+    ImU32 col = off ? IM_COL32(130, 140, 150, 255) : selected ? kAccent : IM_COL32(190, 205, 218, 255);
     dl->AddCircle(ImVec2(cx, cy), r, col, 0, 2.0f);
     if (selected) dl->AddCircleFilled(ImVec2(cx, cy), r * 0.55f, col);
     return chosen && !selected;
@@ -217,7 +218,7 @@ void opt_end(void) {
     ImVec2 p = ImGui::GetCursorScreenPos(), avail = ImGui::GetContentRegionAvail();
     float gap = 24 * g_scale;
     ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + gap * 0.5f, p.y), ImVec2(p.x + gap * 0.5f, p.y + avail.y),
-                                        IM_COL32(236, 194, 84, 110), 1.0f);
+                                        theme::u32(theme::accent, 0.40f), 1.0f);
     ImGui::SetCursorScreenPos(ImVec2(p.x + gap, p.y));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * g_scale, 6 * g_scale));
     ImGui::BeginChild("##desc", ImVec2(0, avail.y), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoNav);

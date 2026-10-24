@@ -69,5 +69,35 @@ extern "C" uint64_t vk_imgui_texture_rgba(const void *rgba, int w, int h) {
     vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     VkImageView view;
     if (vkCreateImageView(g_vk.dev, &vi, NULL, &view) != VK_SUCCESS) return 0;
-    return (uint64_t)ImGui_ImplVulkan_AddTexture(vk_default_sampler(true), view, VK_IMAGE_LAYOUT_GENERAL);
+    uint64_t id = (uint64_t)ImGui_ImplVulkan_AddTexture(vk_default_sampler(true), view, VK_IMAGE_LAYOUT_GENERAL);
+    extern void imgui_texture_remember(uint64_t id, VkImage img, int w, int h);
+    imgui_texture_remember(id, img, w, h);
+    return id;
+}
+
+// Textures made above, for vk_imgui_texture_update (a few: the start screen's background)
+static struct { uint64_t id; VkImage img; int w, h; } g_tex[8];
+void imgui_texture_remember(uint64_t id, VkImage img, int w, int h) {
+    static int next;
+    g_tex[next % 8] = {id, img, w, h};
+    next++;
+}
+
+// New pixels for a texture vk_imgui_texture_rgba made (the start screen's movie, each of its frames): copied in the
+// pending submission's upload commands, between full barriers - the frames before have sampled the image, the frame
+// being drawn samples it next.
+extern "C" void vk_imgui_texture_update(uint64_t id, const void *rgba, int w, int h) {
+    VkImage img = VK_NULL_HANDLE;
+    for (auto &t : g_tex)
+        if (t.id == id && t.w == w && t.h == h) img = t.img;
+    if (!img) return;
+    VkCommandBuffer cb = vk_upload_cmd();
+    VkSpan s = vk_transient_copy(rgba, (uint64_t)w * h * 4, 16);
+    vk_full_barrier(cb);
+    VkBufferImageCopy rg = {};
+    rg.bufferOffset = s.off;
+    rg.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    rg.imageExtent = {(uint32_t)w, (uint32_t)h, 1};
+    vkCmdCopyBufferToImage(cb, s.buf, img, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
+    vk_full_barrier(cb);
 }

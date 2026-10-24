@@ -13,6 +13,7 @@
 
 #include "imgui.h"
 #include "option_rows.h"
+#include "theme.h"
 #include "imgui_internal.h"  // (NavCursorVisible)
 #include "osk.h"
 #ifdef __APPLE__
@@ -290,32 +291,7 @@ static void style_init(void) {
     s.WindowRounding = 14; s.FrameRounding = 8; s.GrabRounding = 8; s.TabRounding = 8; s.ChildRounding = 10;
     s.WindowPadding = ImVec2(28, 24); s.FramePadding = ImVec2(14, 8); s.ItemSpacing = ImVec2(14, 12);
     s.WindowBorderSize = 0; s.ScrollbarSize = 18;
-    ImVec4 *c = s.Colors;
-    ImVec4 gold(0.93f, 0.76f, 0.33f, 1), gold_dim(0.62f, 0.49f, 0.20f, 1), green(0.15f, 0.36f, 0.25f, 1);
-    c[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.09f, 0.08f, 0.94f);
-    c[ImGuiCol_ChildBg] = ImVec4(0.09f, 0.13f, 0.11f, 0.85f);
-    c[ImGuiCol_PopupBg] = ImVec4(0.07f, 0.10f, 0.09f, 0.98f);
-    c[ImGuiCol_Text] = ImVec4(0.96f, 0.94f, 0.88f, 1);
-    c[ImGuiCol_TextDisabled] = ImVec4(0.62f, 0.64f, 0.58f, 1);
-    c[ImGuiCol_FrameBg] = ImVec4(0.13f, 0.19f, 0.16f, 1);
-    c[ImGuiCol_FrameBgHovered] = green;
-    c[ImGuiCol_FrameBgActive] = ImVec4(0.19f, 0.45f, 0.31f, 1);
-    c[ImGuiCol_Button] = ImVec4(0.14f, 0.22f, 0.18f, 1);
-    c[ImGuiCol_ButtonHovered] = green;
-    c[ImGuiCol_ButtonActive] = ImVec4(0.21f, 0.50f, 0.34f, 1);
-    c[ImGuiCol_Header] = green;
-    c[ImGuiCol_HeaderHovered] = ImVec4(0.19f, 0.45f, 0.31f, 1);
-    c[ImGuiCol_HeaderActive] = ImVec4(0.21f, 0.50f, 0.34f, 1);
-    c[ImGuiCol_Tab] = ImVec4(0.12f, 0.18f, 0.15f, 1);
-    c[ImGuiCol_TabHovered] = green;
-    c[ImGuiCol_TabSelected] = ImVec4(0.21f, 0.44f, 0.31f, 1);
-    c[ImGuiCol_TabSelectedOverline] = gold;
-    c[ImGuiCol_CheckMark] = gold;
-    c[ImGuiCol_SliderGrab] = gold_dim;
-    c[ImGuiCol_SliderGrabActive] = gold;
-    c[ImGuiCol_NavCursor] = gold;
-    c[ImGuiCol_Separator] = ImVec4(0.30f, 0.36f, 0.30f, 1);
-    c[ImGuiCol_TitleBg] = c[ImGuiCol_TitleBgActive] = c[ImGuiCol_WindowBg];
+    theme::apply(s);  // (Metroid Prime's cyan / orange / deep blue)
 }
 
 
@@ -382,7 +358,7 @@ static void drain_events(ImGuiIO &io) {
 // Section header in the big font.
 static void header(const char *t) {
     ImGui::PushFont(g_font_big);
-    ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "%s", t);
+    ImGui::TextColored(theme::heading, "%s", t);
     ImGui::PopFont();
     ImGui::Separator();
     ImGui::Spacing();
@@ -587,29 +563,29 @@ static void tab_audio(void) {
     opt_end();
 }
 
-// Quit: restart the game (it reboots to its own title screen: the start screen, with LAS Recomp's seeds and setup,
-// isn't Metroid Prime's) or out to the desktop. Each asks first (progress since the last save is lost); B / Esc or
-// Cancel backs out.
-extern "C" void rt_request_reboot(int kind);  // runtime/main.c (RT_REBOOT_GAME = 1: boot again at once)
+// Quit: back to the start screen (the game reboots to it - MPR Recomp's own since 2026-10-23; e12a7f6 had a
+// "Restart Game" here while it was still LAS Recomp's) or out to the desktop. Each asks first (progress since the
+// last save is lost); B / Esc or Cancel backs out.
+extern "C" void rt_request_reboot(int kind);  // runtime/main.c (RT_REBOOT_TITLE = 2: the start screen)
 static void tab_quit(float scale, bool in_game) {
-    static int ask;  // 0: the two choices; 1: restart?; 2: desktop?
+    static int ask;  // 0: the two choices; 1: start screen?; 2: desktop?
     if (ask && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
         ask = 0;
     const char *lost = in_game ? "\n\nProgress since your last save is lost." : "";
     char d1[200], d2[200];
-    snprintf(d1, sizeof d1, "Starts Metroid Prime Remastered over, from its title screen.%s", lost);
+    snprintf(d1, sizeof d1, "Leaves the game for the MPR Recomp start screen (PLAY starts it again).%s", lost);
     snprintf(d2, sizeof d2, "Closes MPR Recomp.%s", lost);
     opt_begin("##quit", scale);
     opt_section("Quit");
     if (!ask) {
-        if (!in_game) opt_disable_next();  // (nothing to restart yet)
-        if (opt_action("Restart Game", "", in_game ? d1 : "The game isn't running yet.")) ask = 1;
+        if (!in_game) opt_disable_next();  // (already on it)
+        if (opt_action("Quit to Start Screen", "", in_game ? d1 : "You're on the start screen.")) ask = 1;
         if (opt_action("Quit to Desktop", "", d2)) ask = 2;
     } else {
-        if (opt_action(ask == 1 ? "Yes, restart the game" : "Yes, quit to Desktop", "", ask == 1 ? d1 : d2)) {
+        if (opt_action(ask == 1 ? "Yes, quit to Start Screen" : "Yes, quit to Desktop", "", ask == 1 ? d1 : d2)) {
             settings_save();
             if (ask == 1) {
-                rt_request_reboot(1);
+                rt_request_reboot(2);
                 set_open(false);
             } else {
                 SDL_Event q = {};
@@ -636,8 +612,8 @@ static void tab_about(void) {
         for (int i = 1; i < N_LANGUAGES; i++) names[i] = g_language_names[i];
         if (choice("Language", &g_settings.language, names, N_LANGUAGES)) settings_save();
     }
-    hint("The game's text language, as its own system setting. Applies when the game restarts: Quit -> Title "
-         "screen, then Play.");
+    hint("The game's text language, as its own system setting. Applies when the game restarts: Quit -> Quit to "
+         "Start Screen, then Play.");
     ImGui::Spacing();
     header("Controls");
     controls_bindings_draw(ImGui::GetFontSize() / 34);
@@ -666,7 +642,7 @@ static void keyboard_draw(ImGuiIO &io, float scale) {
     ImGui::Begin("##kbd", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                                     ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::PushFont(g_font_big);
-    ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "Enter your name");
+    ImGui::TextColored(theme::heading, "Enter your name");
     ImGui::PopFont();
     static bool was_open, was_pad;
     bool pad = g_last_pad.load(), appearing = !was_open || pad != was_pad;  // (switching device: focus the new one)
@@ -759,14 +735,14 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
             char lbl[64];
             snprintf(lbl, sizeof lbl, prelaunch ? " %s " : "  %s  ", t.name);  // (ten tabs: tighter, so none is cut short)
             ImGui::BeginDisabled(!t.on);  // (out of the game: Save Editor, Warp, Cheats)
-            // focus (controller / keyboard): the tab lights up a little with a gold bar along its bottom, instead of
+            // focus (controller / keyboard): the tab lights up a little with a cyan bar along its bottom, instead of
             // ImGui's outline (it sits 4 px outside the tab and the tab bar's clipping could cut its top off on macOS)
             // (focused_tab: from the frame before - colours go in before the tab is drawn)
             bool lit = focused_tab == t.id && ImGui::GetCurrentContext()->NavCursorVisible;
             ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
             if (lit) {
-                ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0.19f, 0.27f, 0.22f, 1));
-                ImGui::PushStyleColor(ImGuiCol_TabHovered, ImVec4(0.19f, 0.27f, 0.22f, 1));
+                ImGui::PushStyleColor(ImGuiCol_Tab, theme::frame_hot);
+                ImGui::PushStyleColor(ImGuiCol_TabHovered, theme::frame_hot);
             }
             if (g_focus_tab == -1 && !prelaunch) g_focus_tab = order[0];  // (no Prelaunch in game: the first tab)
             bool focus_here = g_focus_tab == t.id || (g_focus_tab == -100 && t.id == g_tab);
@@ -783,7 +759,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
                 float h = 4 * scale > 2 ? 4 * scale : 2;
                 ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(a.x + 2, b.y - h), ImVec2(b.x - 2, b.y),
-                                                          IM_COL32(236, 194, 84, 255));  // (the menu's gold)
+                                                          theme::u32(theme::accent));  // (the menu's cyan)
             }
             if (ImGui::IsItemFocused()) focused_tab = t.id;
             else if (focused_tab == t.id) focused_tab = -99;
@@ -915,7 +891,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         // header as on the start screen's Settings: the title, and a close X in the corner (B / Esc too). ("Title
         // screen" - rt_request_reboot(RT_REBOOT_TITLE) - is to find a new home; user 2026-10-11.)
         ImGui::PushFont(g_font_big);
-        ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "Settings");
+        ImGui::TextColored(theme::heading, "Settings");
         ImGui::PopFont();
         {
             float bx = 44 * scale;
@@ -925,7 +901,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             bool close = ImGui::InvisibleButton("##close", ImVec2(bx, bx), ImGuiButtonFlags_EnableNav);
             ImGui::PopStyleColor();
             bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-            ImU32 col = hot ? IM_COL32(236, 194, 84, 255) : IM_COL32(220, 216, 205, 255);
+            ImU32 col = hot ? theme::u32(theme::accent) : theme::u32(theme::text);
             float m = bx * 0.3f, t = (hot ? 3.0f : 2.4f) * scale * 1.5f;
             ImDrawList *dl = ImGui::GetWindowDrawList();
             if (hot) dl->AddRectFilled(p, ImVec2(p.x + bx, p.y + bx), IM_COL32(255, 255, 255, 20), 8 * scale);
