@@ -156,3 +156,13 @@ Debug recipe: `LARECOMP_DEBUG_FRAME=<n>` (pass images in build/build/, draw log)
 - The user's save is in Magmoor Caverns (Save Station Magmoor A): test runs load it to look at the area they play.
 - Menu: Link's Awakening leftovers hidden (Cosmetics, blur, Hero Mode icon, movement and prompt options).
 - `tools/run_game.ps1` no longer stops the user's playtest game.
+
+## 2026-10-23 (evening): 4K, Xbox face layout, Gameplay tab
+
+- The user confirmed the cannon sounds. 4K: MPR presents 1600x900 and the render scale took Link's Awakening's 1080 as
+  its base, so Match display drew 5/6 of the window (3200x1800 on a 4K screen); the scale follows the presented
+  image now, and Internal resolution offers 900p (Switch) / 1080p / 1440p / 4K / 8K.
+- Controls: Face buttons, Nintendo (by position) or Xbox (by label) layout - bindings and menus.
+- Gameplay tab: Field of view (the game's default first-person FOV and the live camera's, set each frame) and Skip
+  any cutscene. Aspect ratio and Movie audio out of the menu; Quit -> Restart Game (reboots to the game's title);
+  the window says MPR Recomp.

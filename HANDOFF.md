@@ -2,25 +2,46 @@
 
 Where the work stopped, and what to do next. Read with PROGRESS.md (history) and the commit log.
 
-## State (2026-10-23, working on my own while the user is away)
+## State (2026-10-23 evening)
 
 - **Playable:** boot, menus, the whole frigate, onto Tallon IV (the user's own playthrough), 60 / 120 fps.
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
   from Steam (its shortcut targets lasrecomp.exe; Steam Input applies). Their log is `lasrecomp.log` there, F9
-  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 4c6c31a (release
+  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build e12a7f6 (release
   exe, installed directly: the game was closed; `private/playtest/update/` holds the same build, so
   `Install_update.bat` is harmless). Use the update folder route whenever the game is running.
   `tools/run_game.ps1` now only waits for / stops build/lasrecomp.exe, so tests can run while the user plays.
+  (Its `KEY=VALUE` variables stay set in that PowerShell process: two runs in one call share them.)
+- **The user confirmed the cannon sounds work** (2026-10-23 evening). Then asked for, in order: 4K working and as
+  an option (done: 7fab0aa), the face buttons flippable to an Xbox layout (done: 7fab0aa), then "the recomp menu
+  options - the LA-only ones don't make sense, focus on Metroid ones" (first pass: e12a7f6 - Gameplay tab with
+  Field of view and Skip any cutscene; Aspect ratio / Movie audio out; Quit -> Restart Game). Wait for their
+  reaction and their own ideas. Candidates I noted, roughly by value / effort:
+  - Ultrawide (21:9 / 32:9): needs the camera's aspect (CGameCameraMP1 +0x268 = 1.42? the MP1 value; the engine
+    camera's own), the 16:9-only render target scaling (textures.c tex_scalable) and the HUD placement.
+  - Mouse aim / gyro: SDL gyro -> hid SixAxisSensor would feed the game's own pointer (motion) controls.
+  - Anisotropic filtering forced (Vulkan samplers): sharper floors at an angle; check the game's own setting.
+  - The start screen (launcher.mm) is still all LAS Recomp (seeds, randomizer, LA game files text, the first-PLAY
+    aspect question); the playtest never sees it (`--play`), and Restart Game no longer leads to it.
+- **4K:** MPR presents 1600x900 (the Switch's docked image, the TV scales it to 1080p); output_scale took 1080 as
+  the base, so Match display rendered 5/6 of the window (3200x1800 on the user's 4K screen - their log showed it).
+  The scale now follows the presented image's size. Internal resolution: Match / Dynamic / 900p / 1080p / 1440p /
+  4K / 8K (larecomp.ini `resolution = 2160p`). 4K checked on the user's save: same image as 900p, clean edges.
+- **Face layout** (Controls tab, `face_layout = xbox`): bindings.c swaps south<->east, west<->north in the bindings
+  and their defaults; menus confirm through bind_face_host. MPR draws its prompts as font letters (no texture
+  glyphs to restyle), and with the Xbox layout those letters match an Xbox pad's labels.
+- **FOV** (game.c fov_frame): the default first-person FOV is the unnamed float at 0x70020e7a70 (55.0; 0.2 / 750 /
+  1.42 after it), read by CCameraManagerMP1::GetDefaultFirstPersonVerticalFOV. The live camera: camera manager =
+  [[state manager + 0x4e0150] + 0x30], current camera id from its stacks, CCameraManagerMP1::GetCurrentCamera,
+  vtable CFirstPersonCameraMP1. Calling it at boot (no player yet) crashed - guarded by the player's last update.
 - **The user's save** (`private/playtest/MPRRecomp/save/save_0/save.bin`: **Save Station Magmoor A** - they went
   Chozo Ruins -> Magmoor; 3%, 0:33, 5 missiles) loads in test runs: copy it to `<scratch>/save_0/save.bin`, run
   with `LARECOMP_SAVE_DIR=<scratch>`, the intro replay's A presses and `LARECOMP_SKIP_CINEMATICS=1`: the save
   loads at frame ~4100, play from ~5500. The door ahead leads into Burning Trail (Chozo stone corridor); the
   elevator to Chozo Ruins North is up the corridor. MINUS opens the map (room names), PLUS the pause menu.
-- **New from the user (2026-10-23): "if you load my save there are no cannon sounds"** - fixed in 01308e1
-  (splitters, which carry most sound effects in play, were ignored; also the I3DL2 reverb, delay and biquad
-  effects). Rumble added in 8f9ae7c (it was dropped). Wait for their confirmation; ask about any sound that's
-  missing or wrongly balanced, and how the rumble feels (Steam Controller through Steam Input).
+- **"If you load my save there are no cannon sounds"** - fixed in 01308e1 and confirmed by the user. Rumble added
+  in 8f9ae7c (it was dropped): ask how it feels (Steam Controller through Steam Input).
 - **Next, from the user:**
   1. "The door still is black" - which door is unknown (its capture was overwritten before F9 got its own
      folders). Ask for an F9 + F8 at it; then teleport there (LARECOMP_TELEPORT; far rooms also need
