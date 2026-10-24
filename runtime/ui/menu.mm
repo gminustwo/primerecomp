@@ -500,6 +500,17 @@ static void tab_display(void) {
     opt_choice("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,
                "Smooths jagged edges of the game image before it is scaled to the window. SMAA: finds the edges and "
                "blends only along them, so textures stay sharp. Most useful at a lower internal resolution.");
+    {
+        static const char *const af[] = {"Game's own", "2x", "4x", "8x", "16x"};
+        static const int levels[] = {0, 2, 4, 8, 16};
+        int ai = 4;
+        for (int i = 0; i < 5; i++) if (levels[i] == g_settings.aniso) ai = i;
+        if (opt_choice("Texture filtering", &ai, af, 5, 4,
+                       "Anisotropic filtering: floors, walls and paths seen at a shallow angle stay sharp into the "
+                       "distance instead of blurring. 16x is the sharpest and costs next to nothing on a recent GPU. "
+                       "Game's own: the Switch's filtering.", false))
+            g_settings.aniso = levels[ai];
+    }
     // (LAS Recomp's "Remove blur" and "Hide Hero Mode icon" are gone: Link's Awakening only)
     opt_end();
 }

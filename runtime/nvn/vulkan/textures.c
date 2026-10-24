@@ -11,6 +11,7 @@
 #include "../astc.h"
 #include "../renderer.h"
 #include "../texpatch.h"
+#include "../../settings.h"
 
 // ================================================================== formats
 typedef struct { VkFormat vf; uint8_t expand_rgb, alpha_one; } VkFmt;
@@ -1005,8 +1006,58 @@ static VkCompareOp compare_op(uint32_t f) {
     }
 }
 
+// Texture filtering (Video tab, g_settings.aniso; LARECOMP_ANISO overrides): anisotropic filtering forced on the
+// game's mipmapped, linearly filtered samplers (depth compare ones aside), so floors and walls seen at an angle keep
+// their detail instead of fading into smaller mips. 0 = the game's own. A change applies at once: each sampler is made
+// again on its next use (backend_gen). Samplers are shared by their settings - the same few hundred serve every pool
+// entry, switching back finds the old ones, and Vulkan's sampler count limit (4000) stays far off.
+static int aniso_setting(void) {
+    static int env = -2;
+    if (env == -2) env = getenv("LARECOMP_ANISO") ? atoi(getenv("LARECOMP_ANISO")) : -1;
+    return env >= 0 ? env : g_settings.aniso;
+}
+
+typedef struct {
+    VkFilter mag, min;
+    VkSamplerMipmapMode mip;
+    VkSamplerAddressMode u, v, w;
+    float min_lod, max_lod, bias, aniso;
+    VkBool32 aniso_on, compare_on;
+    VkCompareOp compare;
+    VkBorderColor border;
+    float border_rgba[4];
+} SamplerKey;
+
+static VkSampler sampler_shared(const VkSamplerCreateInfo *si, const float *border_rgba) {
+    static struct { SamplerKey k; VkSampler s; } *tab;
+    static int n, cap;
+    SamplerKey k;
+    memset(&k, 0, sizeof k);  // (padding: keys compare with memcmp)
+    k.mag = si->magFilter, k.min = si->minFilter, k.mip = si->mipmapMode;
+    k.u = si->addressModeU, k.v = si->addressModeV, k.w = si->addressModeW;
+    k.min_lod = si->minLod, k.max_lod = si->maxLod, k.bias = si->mipLodBias;
+    k.aniso_on = si->anisotropyEnable, k.aniso = si->anisotropyEnable ? si->maxAnisotropy : 0;
+    k.compare_on = si->compareEnable, k.compare = si->compareEnable ? si->compareOp : 0;
+    k.border = si->borderColor;
+    if (si->borderColor == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT) memcpy(k.border_rgba, border_rgba, 16);
+    for (int i = 0; i < n; i++)
+        if (!memcmp(&tab[i].k, &k, sizeof k)) return tab[i].s;
+    if (n == cap) tab = realloc(tab, (cap = cap ? cap * 2 : 64) * sizeof *tab);
+    VK_CHECK(vkCreateSampler(g_vk.dev, si, NULL, &tab[n].s));
+    tab[n].k = k;
+    return tab[n++].s;
+}
+
 VkSampler vk_sampler(NvnSamplerDesc *d) {
-    if (d->backend) return (VkSampler)d->backend;
+    static int aniso = -1;
+    static uint32_t gen = 1;
+    int a = aniso_setting();
+    if (a != aniso) {
+        if (aniso >= 0) LOG("[sampler] texture filtering: %dx anisotropic%s\n", a > 1 ? a : 1, a > 1 ? "" : " (the game's own)");
+        if (aniso >= 0) gen++;
+        aniso = a;
+    }
+    if (d->backend && d->backend_gen == gen) return (VkSampler)d->backend;
     VkSamplerCreateInfo si = {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     si.magFilter = d->mag_filter == 1 ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
     uint32_t mf = d->min_filter;
@@ -1031,6 +1082,20 @@ VkSampler vk_sampler(NvnSamplerDesc *d) {
     if (si.maxLod < si.minLod) si.maxLod = si.minLod;
     si.mipLodBias = d->lod_bias;
     if (d->max_aniso > 1) { si.anisotropyEnable = VK_TRUE; si.maxAnisotropy = fminf(d->max_aniso, 16); }
+    // forced: a linear minifying filter between mips (3: linear, mip nearest; 5: trilinear), linear magnification
+    if (a > 1 && (mf == 3 || mf == 5) && si.magFilter == VK_FILTER_LINEAR && !d->compare_mode && a > si.maxAnisotropy) {
+        si.anisotropyEnable = VK_TRUE;
+        si.maxAnisotropy = (float)a;
+    }
+    if (si.anisotropyEnable) {
+        float lim = g_vk.props.limits.maxSamplerAnisotropy;
+        if (si.maxAnisotropy > lim) si.maxAnisotropy = lim;
+        if (si.maxAnisotropy <= 1) si.anisotropyEnable = VK_FALSE;
+    }
+    if (getenv("LARECOMP_LOG_SAMPLERS"))
+        LOG("[sampler] min %u mag %u lod %g..%g bias %g aniso %g -> %g wrap %u %u compare %u\n", mf, d->mag_filter,
+            d->lod_min, d->lod_max, d->lod_bias, d->max_aniso, si.anisotropyEnable ? si.maxAnisotropy : 1, d->wrap[0],
+            d->wrap[1], d->compare_mode);
     static float lodmin = -1;
     if (lodmin < 0) lodmin = getenv("LARECOMP_LOD_MIN") ? (float)atof(getenv("LARECOMP_LOD_MIN")) : 0;
     if (lodmin > 0 && mf > 1) si.minLod = fmaxf(si.minLod, lodmin);
@@ -1053,9 +1118,9 @@ VkSampler vk_sampler(NvnSamplerDesc *d) {
             si.pNext = &cb;
         } else si.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     }
-    VkSampler s;
-    VK_CHECK(vkCreateSampler(g_vk.dev, &si, NULL, &s));
+    VkSampler s = sampler_shared(&si, d->border);
     d->backend = (void *)s;
+    d->backend_gen = gen;
     return s;
 }
 

@@ -38,6 +38,8 @@ typedef struct {
     int res_lines;       // RES_FIXED: render height in lines, one of g_res_lines (2160 = 4K)
     int upscaler;        // UPSCALE_*: how a lower internal resolution reaches the window (MetalFX: macOS, FSR 1: Windows)
     int antialias;       // AA_*: anti-aliasing of the game image before it is scaled to the window
+    int aniso;           // texture filtering: anisotropic level forced on the game's mipmapped samplers (2..16), 0 =
+                         // the game's own (runtime/nvn/vulkan/textures.c vk_sampler, renderer.m)
     float volume;        // master volume, 1 = 100%
     bool reverb;         // room reverb effect
     bool rumble;         // controller rumble (runtime/hle/input.c)

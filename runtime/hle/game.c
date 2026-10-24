@@ -139,13 +139,20 @@ static void fov_frame(Cpu *c) {
     // the live camera only in play (the player updated just now: at boot the state manager has no cameras yet, and
     // looking one up crashed), found as the game does: the camera manager, its current camera's id (the top of its two
     // override stacks, else its own), CCameraManagerMP1::GetCurrentCamera
+    // The camera manager hangs off the state manager's game logic (+0x4e0150) - when that is MP1's: between worlds
+    // it can be CStateManagerGameLogicDefault, whose +0x30 isn't a pointer (a crash as gameplay began after a
+    // skipped cutscene)
     extern uint64_t vk_frame_counter(void);
     if (!g_player_seen || vk_frame_counter() > g_player_seen + 2) return;
-    uint64_t sm = c->x[0], holder = *(uint64_t *)(uintptr_t)(sm + 0x4e0150);
-    uint64_t mgr = holder ? *(uint64_t *)(uintptr_t)(holder + 0x30) : 0;
-    if (!mgr) return;
+#define GUEST_PTR_OK(p) ((p) >= 0x7000000000ull && (p) < 0x7f00000000ull && !((p) & 7))
+    uint64_t sm = c->x[0], logic = GUEST_PTR_OK(sm) ? LD64(sm + 0x4e0150) : 0;
+    if (!GUEST_PTR_OK(logic) || LD64(logic) != guest_sym("_ZTV25CStateManagerGameLogicMP1") + 0x10) return;
+    uint64_t mgr = LD64(logic + 0x30);
+    if (!GUEST_PTR_OK(mgr)) return;
     uint32_t n2 = LD32(mgr + 0x18), n1 = LD32(mgr + 0x8);
-    uint32_t id = n2 ? LD32(LD64(mgr + 0x20) + 4ull * (n2 - 1)) : n1 ? LD32(LD64(mgr + 0x10) + 4ull * (n1 - 1)) : LD32(mgr);
+    uint64_t stack = n2 ? LD64(mgr + 0x20) : n1 ? LD64(mgr + 0x10) : 0;
+    if (n2 > 64 || n1 > 64 || ((n2 || n1) && !GUEST_PTR_OK(stack & ~7ull))) return;
+    uint32_t id = n2 ? LD32(stack + 4ull * (n2 - 1)) : n1 ? LD32(stack + 4ull * (n1 - 1)) : LD32(mgr);
     if (id == 0xffffffffu) return;
     static Cpu saved;
     saved = *c;
@@ -154,7 +161,7 @@ static void fov_frame(Cpu *c) {
     guest_call(c, guest_sym("_ZNK17CCameraManagerMP116GetCurrentCameraERK13CStateManager"));
     uint64_t cam = c->x[0];
     *c = saved;
-    if (!cam || *(uint64_t *)(uintptr_t)cam != guest_sym("_ZTV21CFirstPersonCameraMP1") + 0x10) return;
+    if (!GUEST_PTR_OK(cam) || LD64(cam) != guest_sym("_ZTV21CFirstPersonCameraMP1") + 0x10) return;
     float *now = (float *)(uintptr_t)(cam + 0x25c), *from = (float *)(uintptr_t)(cam + 0x280);
     float *target = (float *)(uintptr_t)(cam + 0x284), *left = (float *)(uintptr_t)(cam + 0x278);
     if (*left <= 0 && *target != want && (*target == 55.0f || *target == applied)) {

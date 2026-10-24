@@ -14,6 +14,7 @@
 #include "maxwell/shader.h"
 #include "nvn.h"
 #include "renderer.h"
+#include "../settings.h"
 
 static id<MTLDevice> dev;
 static id<MTLCommandBuffer> cmdbuf;
@@ -976,6 +977,10 @@ static id<MTLSamplerState> sampler_for(NvnSamplerDesc *d) {
     sd.lodMinClamp = d->lod_min;
     sd.lodMaxClamp = d->lod_max > 1000 ? FLT_MAX : d->lod_max;
     if (d->max_aniso > 1) sd.maxAnisotropy = (NSUInteger)fminf(d->max_aniso, 16);
+    // Texture filtering (g_settings.aniso, as vulkan/textures.c vk_sampler; here for samplers made after a change)
+    if (g_settings.aniso > 1 && (mf == 3 || mf == 5) && d->mag_filter == 1 && !d->compare_mode &&
+        (NSUInteger)g_settings.aniso > sd.maxAnisotropy)
+        sd.maxAnisotropy = (NSUInteger)g_settings.aniso;
     if (d->lod_bias != 0 && getenv("LARECOMP_LOG_BIAS"))
         LOG("[sampler] lod bias %g (min filter %u, aniso %g)\n", d->lod_bias, mf, d->max_aniso);
     static float lodmin = -1;  // LARECOMP_LOD_MIN=<n>: skip the n sharpest mips everywhere (aliasing experiments)

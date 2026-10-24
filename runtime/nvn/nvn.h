@@ -45,6 +45,7 @@ typedef struct {
     float lod_min, lod_max, lod_bias, max_aniso;
     float border[4];
     void *backend;
+    uint32_t backend_gen;  // (Vulkan: the texture filtering setting backend was made for - vk_sampler)
 } NvnSamplerDesc;
 
 typedef struct {
