@@ -1,10 +1,37 @@
-# Handoff: 2026-10-23
+# Handoff: 2026-10-25
 
 Where the work stopped, and what to do next. Read with PROGRESS.md (history) and the commit log.
 
-## State (2026-10-23 evening)
+## State (2026-10-25)
 
-- **NEXT (stopped here for the night, user's request): the Landing Site lighting / rain report.** The user loaded
+- **The user is preparing a beta build ("PrimeRecomp").** They asked for, and got (both in the playtest build, wait
+  for their reaction):
+  1. **Name and icon** (8ae0b90): window / message boxes / start screen / packages say PrimeRecomp; docs/icon is
+     Samus' helmet (SVG source; the .ico's 16-48 px sizes drawn without the rounded square's margin; Windows keeps
+     the .exe's icon). The exe is still `lasrecomp.exe` (their Steam shortcut targets it, and the start screen
+     builds lasgame.dll against `lasrecomp.dll.a`, whose import name is the exe's: renaming means both).
+  2. **The menu from a controller** (8ae0b90): L3+R3 opens / closes it (they tried that; Steam takes Guide). The
+     overlay's Quit tab closes the game (the game's own pause menu also has Options -> Quit Game, to its title).
+  3. **Mouse and keyboard like Halo** (33b4872): game.c `mouse_look` (from rt_player_frame, each gameplay frame):
+     yaw = player transform turned about y via CActorMP1::SetTransform; pitch = player +0x5cc (current) / +0x5d0
+     (desired), radians, up positive, +-70 deg, plus `ResetTo` on the IIR filter at [player+0x1628] (else the game
+     averages it away). Gates: +0x4d4 morph state 0, +0x4e0 orbit state 0, +0x1610 bit 0 clear, first-person camera
+     current; otherwise the motion goes to the right stick (ball camera). input.c: relative mouse mode while
+     game_in_play (player updated within 2 frames) + focus + no overlay; mouse buttons / wheel are key bindings
+     (BIND_MOUSE_*, 512+); beam slots 1-4 = X + d-pad dir; menu keys outside play (Enter / Space A, Esc / Backspace
+     B, Q / E L / R, arrows d-pad), fixed at press time. Esc = Minus (pause) by default, so the overlay is F1 only.
+     Old keyboard bindings (no `bind_keys = fps` line) are ignored: the user's LAS-era ones were.
+     Tests: scratchpad tools/save_run.ps1 <tag> <secs> <LARECOMP_INPUT extra> <HOST_INPUT> (loads save2/);
+     HOST_INPUT `mouse:<dx>/<dy>:<frames>`, `key:Mouse Left`; LARECOMP_LOOK_LOG=<n>.
+     Not checked: beam keys 1-4 (the test save has only the Power Beam), real mouse capture by hand (scripted runs
+     never capture), the feel of the default sensitivity (0.044 deg per count; Source's 2.0).
+  - **Shipping the beta (next, ask the user how: a zip for testers? a GitHub release?):** `make dist` needs `make
+    deps-windows` (LGPL FFmpeg), `make gen-helper` (frozen generator, python.org 3.12) and tools/fetch_zig.sh - none
+    are built on this machine yet. VERSION comes from launcher.mm's LARECOMP_VERSION. Publishing is outward-facing:
+    confirm first.
+- **Landing Site lighting (64959de, in the playtest build since 2026-10-25):** ask the user whether the dark spots
+  by the ship are gone. The door-shield check is done (frigate force field refraction unchanged, A/B).
+- **Older notes (2026-10-23), the Landing Site lighting / rain report.** The user loaded
   their save (Landing Site, by the ship) and reported "lighting issues when I walk forward or around the area where
   I saved" (F9 capture: `private/playtest/MPRRecomp/build/f9_13830/`, log backed up in `log_backup/
   lasrecomp_2026-10-23_2131_f9.log`) and "the rain effect isn't always appearing on Samus' visor or the arm
@@ -23,8 +50,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
     change behavior on this route: the probe blend target and the refraction mip chain (@729215c000 1024x512) -
     the latter is worth a look at a blue door's shield (the refraction case the sharing was made for).
     In the blend zone the scene is now dim-but-lit (an overcast corner: probe0 or probe1 alone look the same as the
-    blend, so the weights are right); crossing the zone edge is smooth. NOT installed in the playtest yet: next,
-    a door-shield check, then a release build for the user.
+    blend, so the weights are right); crossing the zone edge is smooth. Installed 2026-10-25.
   - **Repro:** copy of the user's save in scratchpad save2/; scratchpad tools/probe_route.ps1 <exe> <wd> <tag>
     [root] (load, walk left from the ship into the blend zone at about (-363, -31, -310), turn in place, shots),
     probe_cross.ps1 (step back out: the blend stops at frame 7722), probe_edge.ps1. New logs: LARECOMP_LOG_CUBE_PASS
@@ -38,7 +64,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
   from Steam (its shortcut targets lasrecomp.exe; Steam Input applies). Their log is `lasrecomp.log` there, F9
-  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 36d8f16 (release
+  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 33b4872 (release
   exe, installed directly: the game was closed; `private/playtest/update/` holds the same build, so
   `Install_update.bat` is harmless). Use the update folder route whenever the game is running.
   `tools/run_game.ps1` now only waits for / stops build/lasrecomp.exe, so tests can run while the user plays.

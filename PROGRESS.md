@@ -175,3 +175,12 @@ Debug recipe: `LARECOMP_DEBUG_FRAME=<n>` (pass images in build/build/, draw log)
 - Start screen and menus: Metroid Prime's look (theme.h: deep blue, orange headings, visor cyan), the start screen's
   background the game's own Tallon IV movie (UIMP1.pak), LAS Recomp's seed picker / update check / font import /
   aspect question gone, Quit to Start Screen back in the in-game menu.
+
+## 2026-10-25: PrimeRecomp, mouse and keyboard
+
+- The user is preparing a beta: the project is called PrimeRecomp now (window, start screen, packages) with a new
+  icon, Samus' helmet. The in-game menu opens with both sticks pressed in (Steam keeps the Guide button).
+- Mouse and keyboard as in a PC shooter: the mouse turns Samus and aims up and down directly (not through the
+  right stick), WASD, clicks to shoot and lock on, Space to jump, keys for visors, beams, map and pause; Esc and
+  Enter work the game's menus. Everything rebinds in the Controls tab, mouse buttons included.
+- The Landing Site's dark spots (the reflection probe blend) fix is in the playtest build.
