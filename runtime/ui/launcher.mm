@@ -87,9 +87,9 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 
 static const uint8_t BUILD_ID[8] = {0x67, 0xc9, 0xca, 0x14, 0x28, 0x22, 0x27, 0x52};  // Metroid Prime Remastered v1.0.0 main
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
-// it): alpha_<n> for now. (LAS Recomp's start screen asked its GitHub releases for updates; PrimeRecomp has none yet,
+// it): v<major>.<minor>.<patch>. (LAS Recomp's start screen asked its GitHub releases for updates; PrimeRecomp has none yet,
 // so nothing is asked.)
-#define LARECOMP_VERSION "alpha_1"
+#define LARECOMP_VERSION "v0.0.1"
 
 // "Alpha 1" / "Beta 2" / "Version 1.0.0"
 static std::string tag_label(const std::string &t) {

@@ -6,7 +6,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 
 - **The user is preparing a beta build ("PrimeRecomp").** They asked for, and got (both in the playtest build, wait
   for their reaction):
-  1. **Name and icon** (8ae0b90): window / message boxes / start screen / packages say PrimeRecomp; docs/icon is
+  1. **Name and icon** (a1324f5): window / message boxes / start screen / packages say PrimeRecomp; docs/icon is
      Samus' helmet (SVG source; the .ico's 16-48 px sizes drawn without the rounded square's margin; Windows keeps
      the .exe's icon). The Windows exe is `primerecomp.exe` since 2026-10-25 (user's request), its import library
      `primerecomp.dll.a`: primegame.dll imports from the exe by name, so a primegame.dll linked before the rename doesn't
@@ -20,9 +20,9 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
      internal symbols (lasgame_tables) and code comments about LA's history (upstream cherry-picks).
      **The user's Steam shortcut must be retargeted to primerecomp.exe** (they were told how; Steam was running, so
      shortcuts.vdf was left alone). The old lasrecomp.exe is gone from the playtest folder.
-  2. **The menu from a controller** (8ae0b90): L3+R3 opens / closes it (they tried that; Steam takes Guide). The
+  2. **The menu from a controller** (a1324f5): L3+R3 opens / closes it (they tried that; Steam takes Guide). The
      overlay's Quit tab closes the game (the game's own pause menu also has Options -> Quit Game, to its title).
-  3. **Mouse and keyboard like Halo** (33b4872): game.c `mouse_look` (from rt_player_frame, each gameplay frame):
+  3. **Mouse and keyboard like Halo** (7dd445a): game.c `mouse_look` (from rt_player_frame, each gameplay frame):
      yaw = player transform turned about y via CActorMP1::SetTransform; pitch = player +0x5cc (current) / +0x5d0
      (desired), radians, up positive, +-70 deg, plus `ResetTo` on the IIR filter at [player+0x1628] (else the game
      averages it away). Gates: +0x4d4 morph state 0, +0x4e0 orbit state 0, +0x1610 bit 0 clear, first-person camera
@@ -39,7 +39,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
     deps-windows` (LGPL FFmpeg), `make gen-helper` (frozen generator, python.org 3.12) and tools/fetch_zig.sh - none
     are built on this machine yet. VERSION comes from launcher.mm's LARECOMP_VERSION. Publishing is outward-facing:
     confirm first.
-- **Landing Site lighting (64959de, in the playtest build since 2026-10-25):** ask the user whether the dark spots
+- **Landing Site lighting (9ed0ce8, in the playtest build since 2026-10-25):** ask the user whether the dark spots
   by the ship are gone. The door-shield check is done (frigate force field refraction unchanged, A/B).
 - **Older notes (2026-10-23), the Landing Site lighting / rain report.** The user loaded
   their save (Landing Site, by the ship) and reported "lighting issues when I walk forward or around the area where
@@ -74,17 +74,17 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
   from Steam (its shortcut targets primerecomp.exe; Steam Input applies). Their log is `primerecomp.log` there, F9
-  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 33b4872 (release
+  captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 7dd445a (release
   exe, installed directly: the game was closed; `private/playtest/update/` holds the same build, so
   `Install_update.bat` is harmless). Use the update folder route whenever the game is running.
   `tools/run_game.ps1` now only waits for / stops build/primerecomp.exe, so tests can run while the user plays.
   (Its `KEY=VALUE` variables stay set in that PowerShell process: two runs in one call share them.)
 - **The user confirmed the cannon sounds work** (2026-10-23 evening). Then asked for, in order: 4K working and as
-  an option (done: 7fab0aa), the face buttons flippable to an Xbox layout (done: 7fab0aa), then "the recomp menu
-  options - the LA-only ones don't make sense, focus on Metroid ones" (first pass: e12a7f6 - Gameplay tab with
+  an option (done: 3242f35), the face buttons flippable to an Xbox layout (done: 3242f35), then "the recomp menu
+  options - the LA-only ones don't make sense, focus on Metroid ones" (first pass: e4e173a - Gameplay tab with
   Field of view and Skip any cutscene; Aspect ratio / Movie audio out; Quit -> Restart Game). From my list of
-  candidates they then picked **gyro aiming and sharper textures** (both done: dc25199, 2a4aaa3), then **ultrawide**
-  (done: 52109d1, 87a6e17), then "the recomp menu / boot up screen: the options and the look" (done: 36d8f16 -
+  candidates they then picked **gyro aiming and sharper textures** (both done: 351955a, 99095a7), then **ultrawide**
+  (done: 98939ba, 6a5673c), then "the recomp menu / boot up screen: the options and the look" (done: 46ef506 -
   theme.h palette for the start screen and the F1 menu, the start screen rebuilt for MPR). Wait for their reaction.
 - **Start screen** (launcher.mm): since 2026-10-23 the user's Steam shortcut has no launch options (they wanted the
   start screen), so the exe finds the game as `extracted\` in the playtest folder: a junction to private\game (no
@@ -109,7 +109,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   IsSixAxisSensorAtRest is the game's "put down" signal: true too often (a gyro of exactly 0 between test moves)
   makes it ask "The pointer will now be recentered" every few seconds; now 1.5 s of steadiness. Test runs reach
   Pointer through the pause menu: MINUS, L (Options), A, A, RIGHT, A, MINUS, then A for "calibrated" (see the
-  2a4aaa3 commit message for the test variables). Ask the user how it feels; sensitivity is the game's own.
+  99095a7 commit message for the test variables). Ask the user how it feels; sensitivity is the game's own.
 - **Texture filtering** (vulkan/textures.c vk_sampler): MPR makes only 13 samplers (one 2x, the rest trilinear);
   16x forced on the mipmapped linear ones by default. The FOV lookup crashed after a skipped cutscene (the state
   manager's game logic is CStateManagerGameLogicDefault between worlds): now needs the MP1 logic's vtable.
@@ -129,8 +129,8 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   with `LARECOMP_SAVE_DIR=<scratch>`, the intro replay's A presses and `LARECOMP_SKIP_CINEMATICS=1`: the save
   loads at frame ~4100, play from ~5500. The door ahead leads into Burning Trail (Chozo stone corridor); the
   elevator to Chozo Ruins North is up the corridor. MINUS opens the map (room names), PLUS the pause menu.
-- **"If you load my save there are no cannon sounds"** - fixed in 01308e1 and confirmed by the user. Rumble added
-  in 8f9ae7c (it was dropped): ask how it feels (Steam Controller through Steam Input).
+- **"If you load my save there are no cannon sounds"** - fixed in 6ac22d7 and confirmed by the user. Rumble added
+  in 9030dd6 (it was dropped): ask how it feels (Steam Controller through Steam Input).
 - **Next, from the user:**
   1. "The door still is black" - which door is unknown (its capture was overwritten before F9 got its own
      folders). Ask for an F9 + F8 at it; then teleport there (LARECOMP_TELEPORT; far rooms also need
@@ -175,7 +175,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   The send ring is fed; the output passes through (`LARECOMP_AUX_RETURN=1` reads the return: +23 ms, and stale
   samples whenever the game's audio thread misses a 5 ms frame). (fnprof doesn't count WriteAuxReturnBuffer:
   tiny SDK thunks aren't counted - don't conclude "never called" from a missing fnprof entry.)
-- **Rumble** (8f9ae7c): hid 201 / 206 (SendVibrationValue(s)) -> SDL_RumbleGamepad, npad 0 + handheld, left
+- **Rumble** (9030dd6): hid 201 / 206 (SendVibrationValue(s)) -> SDL_RumbleGamepad, npad 0 + handheld, left
   device -> left motor. Idle frames send zeros (CRumbleManager "HardStop" -> CNXJoyCon_NPad::StopVibration every
   frame is normal); missiles give ~0.6. Menu: Audio -> Rumble; `LARECOMP_LOG_RUMBLE=1`.
 
@@ -246,18 +246,18 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 
 ## Open
 
-1. ~~Intermittent hang~~: the condvar lost wakeup, fixed in 2012c44. If a freeze recurs, the log has a
+1. ~~Intermittent hang~~: the condvar lost wakeup, fixed in 2990649. If a freeze recurs, the log has a
    "[hang] no frame presented" thread dump. (Old notes:) once in about eight intro replays, the game froze just after frame 9097 (no log
    output, process alive). Not reproduced with `LARECOMP_HANG_DUMP=30` set. Next time: run with
    `LARECOMP_HANG_DUMP=30` and look at the guest threads' waits.
 2. ~~The arm cannon is teal-green~~: correct - its material colour is white and the third-person model's cannon
    is the same grey-green. (Old notes:) Its albedo (tex2, ASTC sRGB 8x5) really is grey-teal and the shader multiplies
    it by `cb4[0].rgb` (a material colour), so the colour must come from that constant. Check against a reference
-   image of the Power Suit in MPR before chasing it. `LARECOMP_DEBUG_DATA` printed the wrong buffers until 422cc4e (hardware cbuf c is
+   image of the Power Suit in MPR before chasing it. `LARECOMP_DEBUG_DATA` printed the wrong buffers until 63d020d (hardware cbuf c is
    `st.ubuf[stage][c - 3]`), so the "cb4 = 0 0 0" reading was wrong: look again.
-3. ~~Frame 7000 of the intro replay is black~~: the fog volume bug, fixed in 422cc4e.
+3. ~~Frame 7000 of the intro replay is black~~: the fog volume bug, fixed in 63d020d.
 4. Save slot area name `<ERROR>` with a forced autosave: check with a save made at a real save station.
-5. ~~Two other geometry shaders are still dropped~~: translated since fd5c33e (with the map's). (Old notes:) (`gs 729c002100`, `729c004100`, logged once per program with
+5. ~~Two other geometry shaders are still dropped~~: translated since 6f29b43 (with the map's). (Old notes:) (`gs 729c002100`, `729c004100`, logged once per program with
    the frame: 5131 and 10558 of the intro replay). Full geometry shaders: the vertex shader only outputs world
    positions (v0), the GS projects the triangle with c[3] matrices, culls (EXIT) and emits (OUT, past the first
    0x800 bytes - dump more to see it). Their draws are depth-only into the main depth buffer and draw nothing

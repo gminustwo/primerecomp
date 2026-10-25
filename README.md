@@ -1,25 +1,71 @@
 # PrimeRecomp
 
-A static recompilation of *Metroid Prime Remastered* (Nintendo Switch, 2023, v1.0.0, title ID `010012101468C000`)
-into a native Windows application. **Beta:** the game is playable from the start through Tallon IV; expect rough
-edges (see [PROGRESS.md](PROGRESS.md)).
+**PrimeRecomp** runs *Metroid Prime Remastered* (Nintendo Switch, 2023) natively on Windows. The game's code is
+statically recompiled - translated ahead of time from the Switch's ARM64 code into C and compiled for your PC - and
+the Switch's system services and NVN graphics are reimplemented on Windows and Vulkan. No emulator runs.
 
-The game's AArch64 code is translated to C ahead of time and compiled for the host. Its system calls, services and
-NVN graphics calls are implemented natively (Vulkan on Windows and Linux, Metal on macOS). No emulator runs.
+> [!IMPORTANT]
+> **PrimeRecomp is built on [LAS Recomp](https://github.com/peiikai/LASRecomp) by
+> [Peiikai](https://github.com/peiikai) and the LAS Recomp contributors.** LAS Recomp is the static recompilation of
+> *The Legend of Zelda: Link's Awakening* for Switch, and nearly everything that makes PrimeRecomp possible is their
+> work: the recompiler that turns Switch code into C, the Horizon OS kernel and services, the NVN-to-Vulkan renderer
+> and shader translator, audio, input, the start screen, the in-game menu and the setup that builds the game on your
+> own PC. PrimeRecomp adapts that work to Metroid Prime Remastered. Please star
+> [LAS Recomp](https://github.com/peiikai/LASRecomp) too. Full credits are [below](#credits).
 
 > [!NOTE]
-> **No game files are included.** This repository holds no game code, assets, keys or firmware, and nothing built
-> from them. Everything derived from the game stays in `private/` (gitignored). You need your own legally obtained
-> copy of Metroid Prime Remastered v1.0.0, with no updates applied.
+> **No game files are included.** You need your own copy of Metroid Prime Remastered for Nintendo Switch,
+> version 1.0.0 (no updates), dumped from your own console. Nothing from the game is in this repository or in the
+> release downloads; the game is recompiled on your PC from your files the first time you set it up.
+
+![The PrimeRecomp start screen](docs/start_screen.jpg)
+
+![Samus at the Landing Site on Tallon IV](docs/landing_site.jpg)
+
+## Status: v0.0.1 (early beta)
+
+This is the first public build. The game boots, the Frigate Orpheon plays through, and Tallon IV is playable (the
+Landing Site, Chozo Ruins and Magmoor Caverns have been played so far), with saving and loading. Expect bugs:
+graphics glitches (some lighting, visor effects such as rain drops missing at times), and possibly crashes or
+freezes in areas nobody has reached yet. Windows only for now.
+
+If something goes wrong, please open an [issue](https://github.com/gminustwo/primerecomp/issues) and attach
+`primerecomp.log` from the PrimeRecomp folder (it always holds the latest run; `primerecomp.previous.log` the run
+before). For a graphics problem, press **F9** at the spot: it saves a capture of that frame in `build\f9_<frame>\`
+(zip it up), and **F8** notes your position in `positions.txt`.
+
+## Requirements
+
+- Windows 10 or 11, 64-bit
+- A CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Zen or newer)
+- A GPU with a Vulkan 1.3 driver (any current NVIDIA, AMD or Intel driver)
+- About 15 GB of free disk space (the game files are copied in, about 7 GB, plus the recompiled game)
+- Your own Metroid Prime Remastered v1.0.0 game files, **extracted**: a folder holding `exefs` and `romfs`
+  (extract both from your own dump with your usual Switch tools)
+
+## Getting started
+
+1. Download `PrimeRecomp-v0.0.1-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
+   extract it somewhere you can write to (e.g. Documents or a games folder - not Program Files).
+2. Run `primerecomp.exe`. The start screen asks for your game files: choose the folder that holds `exefs` and
+   `romfs`, then **Set up**. It copies what it needs and recompiles the game on your PC. This happens once and
+   takes several minutes.
+3. Press **Play**.
+
+Everything PrimeRecomp writes - game files, saves, settings (`primerecomp.ini`), logs - stays in its own folder.
 
 ## Controls
 
-Controller (the game's own Dual Stick layout) or keyboard and mouse, as in a PC shooter:
+A controller works out of the box (Xbox, PlayStation, Switch Pro, Steam Controller and others), using the game's
+own Dual Stick layout. With a controller that has a gyro you can use the game's Pointer / Hybrid motion aiming
+(pause, Options -> Controls -> Control Scheme).
+
+Keyboard and mouse play like a PC shooter:
 
 | | |
 |---|---|
 | Move | WASD |
-| Aim / turn | Mouse (Controls tab: sensitivity, invert) |
+| Aim / turn | Mouse (sensitivity and invert in PrimeRecomp's menu, Controls tab) |
 | Shoot (hold: charge) | Left click |
 | Lock on / scan (hold) | Right click |
 | Jump | Space |
@@ -30,42 +76,137 @@ Controller (the game's own Dual Stick layout) or keyboard and mouse, as in a PC 
 | Map | Tab |
 | Pause menu | Esc |
 
-In the game's menus Enter / Space confirm, Esc goes back and Q / E switch pages. Everything can be rebound in
-PrimeRecomp's own menu (Controls tab): **F1**, or on a controller both sticks pressed in (or Back + Start). Its Quit
-tab closes the game.
+In the game's menus Enter / Space confirm, Esc goes back and Q / E switch pages. Everything can be rebound.
 
-## Based on LAS Recomp
+**PrimeRecomp's own menu** (graphics, controls, audio, quitting): **F1**, or on a controller both sticks pressed in
+(or Back + Start). Fullscreen: F11 or Alt+Enter.
 
-This project is a fork of [LAS Recomp](https://github.com/peiikai/LASRecomp) by Peiikai and contributors (MIT),
-the static recompilation of *The Legend of Zelda: Link's Awakening*, starting from upstream commit `b846e72`. The
-generator (`tools/gen.py`, `tools/lifter.py`), the Horizon kernel and services, and the NVN-to-Vulkan/Metal
-renderer come from there, and the full upstream history is kept. Upstream is the `lasrecomp` git remote, so its
-fixes can be cherry-picked.
+## Features
 
-Link's Awakening's game code (its instruction patches, the hooks into its memory under `runtime/hle/`, the
-randomizer, its cheats and cosmetics and their UI) has been removed. Its texture patcher (button prompts) is still in
-the tree, dormant, and so are its developer names (the `LARECOMP_*` test variables, some internal symbols), kept so
-upstream fixes still apply; see [PROGRESS.md](PROGRESS.md).
+- Mouse aim that turns and aims directly, as in a PC shooter; full keyboard, mouse and controller rebinding
+- Any resolution up to 8K, AMD FSR 1 upscaling, SMAA anti-aliasing, anisotropic texture filtering
+- Ultrawide and any aspect ratio (the HUD stays in the 16:9 middle), adjustable field of view
+- 60 or 120 frames per second
+- Gyro aiming with controllers that have one, rumble
+- Any cutscene skippable
 
-## Layout
+## Building from source
 
-    private/            your game files and everything made from them (gitignored)
-      exefs/            main, sdk, subsdk0, main.npdm (from your own NSP)
-      generated/        tools/gen.py output
-    tools/              generator, lifter, analysis scripts
-    runtime/            kernel, services, loader, dispatcher, NVN renderer, UI
-      hle/game.c        what the runtime asks about the running game (this is where MPR-specific code goes)
+See [docs/BUILD-windows.md](docs/BUILD-windows.md). In short: `tools\setup_windows.ps1` installs MSYS2 and the
+tools; with your own extracted game files in `extracted/`, `make gen` recompiles the game and `make` builds
+`build/primerecomp.exe`. `make dist` packages a release.
 
-## Generating the game code
+Developer notes: [PROGRESS.md](PROGRESS.md) (history) and [HANDOFF.md](HANDOFF.md) (current state). Link's
+Awakening's game code (its patches, its memory hooks, the randomizer, cheats and cosmetics) has been removed; LAS
+Recomp's developer names (the `LARECOMP_*` test variables, some internal symbols) are kept on purpose, so fixes
+still move between the two projects easily.
 
-    python -m venv .venv && .venv/Scripts/python -m pip install lz4 capstone unicorn
-    cd tools
-    ../.venv/Scripts/python gen.py sdk  ../private/exefs/sdk  0x7006000000 ../private/generated/sdk  --simd c
-    ../.venv/Scripts/python gen.py main ../private/exefs/main 0x7000000000 ../private/generated/main --simd c
+## Credits
 
-Building and running follow [docs/BUILD-windows.md](docs/BUILD-windows.md) (inherited from LAS Recomp; not yet
-updated for MPR).
+### LAS Recomp
+
+PrimeRecomp is a fork of [LAS Recomp](https://github.com/peiikai/LASRecomp) (MIT), starting from upstream commit
+`b846e72`, and keeps its full history.
+
+- **[Peiikai](https://github.com/peiikai)** - created LAS Recomp and wrote the great majority of it: the static
+  recompiler and its ARM64 lifter, the Horizon kernel and system services, the NVN graphics layer and its Vulkan
+  and Metal renderers, the Maxwell shader translator, audio, input and rumble, saves, the start screen and the
+  in-game menu, and the on-PC setup that recompiles the game from the player's own files.
+
+**LAS Recomp contributors** - code they sent to LAS Recomp lives on in PrimeRecomp. In LAS Recomp's own words
+(GitHub handles, in order of first contribution):
+- **[@dvilelaf](https://github.com/dvilelaf)** - the System language setting (#15), packaging fix for the game code
+  generator helper (#10), and the task forwarder fix for the level-transition crash (#34, issue #19)
+- **[@Tensorlong](https://github.com/Tensorlong)** - Metal half-precision fix for the white Link on M1 Macs (#18)
+- **[@mansarip](https://github.com/mansarip)** - support for unrecognised controllers through a simple mapping file (#26)
+- **[@we11adam](https://github.com/we11adam)** - shared fonts served per language instead of one Japanese font (#27),
+  and the zh-Hans / zh-Hant codes for Chinese (#25)
+- **[@Maganra](https://github.com/Maganra)** - Linux page write tracking (userfaultfd + PAGEMAP_SCAN) for the Vulkan
+  vertex cache and texture checks (#42)
+- **[@hjqcan](https://github.com/hjqcan)** - centralized game patch and runtime addresses (#57); CRLF settings
+  parsing and Traditional Chinese locale detection (#53); Windows game thread stacks reserved instead of committed,
+  about 9 GB less memory committed (#107); the Vulkan fence fix for reused submission slots (#108); x86 rounding
+  without x87 state changes (#115); movie memory freed on close, source change and reboot (#112); Vulkan stopping
+  cleanly on GPU timeouts (#127); a strict Vulkan validation mode for automated tests (#128); Windows session logs
+  (#114); resumable game-code builds: a cancelled or interrupted setup picks up where it stopped (#56); randomizer
+  check flags kept with committed saves (#170); save write fixes that keep a failed save from losing data (#169,
+  merged in #182)
+- **[@gitarre1234rr5](https://github.com/gitarre1234rr5)** - controller rumble: the game's vibration on your
+  controller (#104), and a regression test for the kernel's timed condition-variable wait (#88)
+- **[@rkammoun](https://github.com/rkammoun)** - diagnosed and patched the Metal 16-sampler limit behind the black
+  walls in the Ukuku Prairie cave (#215, fixed in #216)
+
+Thanks also to everyone who reported issues and tested LAS Recomp builds, and to
+[Dusklight](https://github.com/TwilitRealm/dusklight) by the TwilitRealm team, which inspired LAS Recomp's start
+screen.
+
+### Other projects
+
+- [Ryujinx](https://github.com/Ryujinx/Ryujinx) (MIT) - PrimeRecomp's audio effects (reverb, I3DL2 reverb, delay,
+  aux, splitters) are ported from Ryujinx's audio renderer, and some shader instruction decoding follows its decoders
+- [envytools](https://github.com/envytools/envytools) - NVIDIA GPU documentation used for the shader translator
+- [Switchbrew](https://switchbrew.org) and the Switch homebrew and emulation communities' documentation
+
+### Libraries and tools
+
+- [SDL 3](https://libsdl.org) - windowing, input, audio (zlib license)
+- [FFmpeg](https://ffmpeg.org) - movie playback (LGPL)
+- [Dear ImGui](https://github.com/ocornut/imgui) - the in-game menu and start screen (MIT)
+- [Baloo 2](https://github.com/EkType/Baloo2) by Ek Type - the start screen's font (SIL Open Font License 1.1,
+  `third_party/fonts/Baloo2/OFL.txt`)
+- [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) - the renderer (MIT)
+- [SMAA](https://github.com/iryoku/smaa) by Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro and
+  Diego Gutierrez - the anti-aliasing option (MIT, `third_party/smaa/LICENSE.txt`)
+- [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) - the upscaler option,
+  ported to GLSL (MIT)
+- [shaderc](https://github.com/google/shaderc) - GLSL to SPIR-V (Apache 2.0)
+- [Zig](https://ziglang.org) - its C compiler (`zig cc`: Clang and LLD) builds the game code on your PC during setup
+  (MIT; LLVM, Clang, LLD: Apache 2.0 with LLVM exceptions)
+- The game code generator (`tools/gen.py`) is packed by [PyInstaller](https://pyinstaller.org) (GPL 2.0+ with the
+  bootloader exception) into a standalone helper. It bundles CPython (PSF License),
+  [Capstone](https://www.capstone-engine.org) (BSD 3-clause; disassembly), [Unicorn](https://www.unicorn-engine.org)
+  (GPL 2.0; Python bindings BSD; resolves jump tables) and [python-lz4](https://github.com/python-lz4/python-lz4)
+  (BSD 3-clause, with LZ4: BSD 2-clause)
+
+## Legal
+
+PrimeRecomp is a fan project. It is not affiliated with, endorsed by or sponsored by Nintendo or Retro Studios.
+*Metroid* and *Metroid Prime* are trademarks of Nintendo. No game files, game code, assets or fonts are included -
+not in this repository and not in release builds. You must provide your own legally obtained copy of the game.
 
 ## License
 
-MIT, as upstream. See [LICENSE](LICENSE).
+PrimeRecomp's code - LAS Recomp's code and the changes made for Metroid Prime Remastered - is open source under the
+[MIT License](LICENSE) (copyright Peiikai, and the PrimeRecomp contributors for their changes). Third-party
+components keep their own licenses: Dear ImGui (MIT), Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT),
+code ported from Ryujinx (MIT), the Baloo 2 font (SIL OFL 1.1), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked
+dynamically), shaderc (Apache 2.0), the Zig compiler (MIT; its LLVM / Clang / LLD: Apache 2.0 with LLVM exceptions;
+its C library headers keep their own licenses) and the game code generator helper's bundled libraries listed above
+(Unicorn is under the GPL: the helper is a separate program the setup runs, and its sources are this repository plus
+Unicorn's published sources). The license covers PrimeRecomp's code only - it grants nothing for Nintendo's game,
+which you must supply yourself.
+
+### Source code of bundled third-party components
+
+The Windows release includes these components; their source code for the exact versions shipped is available here:
+
+| Component | Version | License | Source |
+|---|---|---|---|
+| FFmpeg (LGPL configuration: only the codecs the game's movies use) | 9.0.2 | LGPL 2.1+ | https://ffmpeg.org/releases/ |
+| SDL 3 | 3.4.18 | zlib | https://github.com/libsdl-org/SDL/releases/tag/release-3.4.18 |
+| shaderc (GLSL to SPIR-V) | 2026.4 | Apache 2.0 | https://github.com/google/shaderc |
+| libiconv (used by SDL 3) | 1.19 | LGPL 2.1+ | https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.19.tar.gz |
+| GCC runtime: libgcc, libstdc++ | 16.2.0 | GPL 3.0 with the GCC Runtime Library Exception | https://gcc.gnu.org/ |
+| winpthreads (mingw-w64) | 14.0.0 | MIT / BSD | https://www.mingw-w64.org/ |
+| Zig (builds the game code during setup; includes LLVM, Clang, LLD) | 0.17.0 | MIT; LLVM: Apache 2.0 with LLVM exceptions | https://ziglang.org/download/0.17.0/zig-0.17.0.tar.xz |
+| PyInstaller (packs the game code generator) | 6.22.3 | GPL 2.0+ with bootloader exception | https://github.com/pyinstaller/pyinstaller/releases/tag/v6.22.3 |
+| CPython (game code generator) | 3.12.10 | PSF | https://github.com/python/cpython/releases/tag/v3.12.10 |
+| Capstone (game code generator) | 5.0.9 | BSD 3-clause | https://pypi.org/project/capstone/5.0.9/ |
+| Unicorn (game code generator) | 2.1.4 | GPL 2.0 (Python bindings: BSD) | https://pypi.org/project/unicorn/2.1.4/, https://github.com/unicorn-engine/unicorn |
+| python-lz4 (game code generator; includes LZ4) | 4.4.5 | BSD 3-clause; LZ4: BSD 2-clause | https://pypi.org/project/lz4/4.4.5/ |
+| Baloo 2 font (SemiBold) | 1.640 | SIL OFL 1.1 | https://github.com/EkType/Baloo2 |
+| SMAA (shader and lookup textures, built in) | 2013 (repository master) | MIT | https://github.com/iryoku/smaa |
+
+The build scripts that fetch and build these (with checksums) are in this repository: `tools/build_deps_windows.sh`
+and `tools/primegen.spec`. The Windows build takes SDL 3, shaderc, libiconv and the compiler runtime from MSYS2's
+UCRT64 packages (https://packages.msys2.org, which links each package's source).
