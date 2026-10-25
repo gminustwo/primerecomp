@@ -35,10 +35,13 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
      HOST_INPUT `mouse:<dx>/<dy>:<frames>`, `key:Mouse Left`; LARECOMP_LOOK_LOG=<n>.
      Not checked: beam keys 1-4 (the test save has only the Power Beam), real mouse capture by hand (scripted runs
      never capture), the feel of the default sensitivity (0.044 deg per count; Source's 2.0).
-  - **Shipping the beta (next, ask the user how: a zip for testers? a GitHub release?):** `make dist` needs `make
-    deps-windows` (LGPL FFmpeg), `make gen-helper` (frozen generator, python.org 3.12) and tools/fetch_zig.sh - none
-    are built on this machine yet. VERSION comes from launcher.mm's LARECOMP_VERSION. Publishing is outward-facing:
-    confirm first.
+  - **v0.0.1 is released** (2026-10-25, the user's request): https://github.com/gminustwo/primerecomp/releases/tag/v0.0.1,
+    tag v0.0.1 on 4b1e840, asset PrimeRecomp-v0.0.1-windows.zip (sha256 d470ad62...2d4c, built by `make dist` from
+    that commit). Checked before publishing: fresh setups from the zip reach READY (build/disttest*, one with
+    LARECOMP_GAMEBUILD_FLAKY=1), and the packaged exe, with no MSYS2 on PATH, boots to the title screen at 60 fps.
+    No game files in the zip. For the next release: bump launcher.mm's LARECOMP_VERSION and the README's version /
+    zip name, `make dist` (deps-windows, gen-helper and zig are built now), retest a fresh setup, then tag and
+    `gh release create`.
 - **Landing Site lighting (9ed0ce8, in the playtest build since 2026-10-25):** ask the user whether the dark spots
   by the ship are gone. The door-shield check is done (frigate force field refraction unchanged, A/B).
 - **Older notes (2026-10-23), the Landing Site lighting / rain report.** The user loaded
