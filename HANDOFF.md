@@ -8,8 +8,12 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   for their reaction):
   1. **Name and icon** (8ae0b90): window / message boxes / start screen / packages say PrimeRecomp; docs/icon is
      Samus' helmet (SVG source; the .ico's 16-48 px sizes drawn without the rounded square's margin; Windows keeps
-     the .exe's icon). The exe is still `lasrecomp.exe` (their Steam shortcut targets it, and the start screen
-     builds lasgame.dll against `lasrecomp.dll.a`, whose import name is the exe's: renaming means both).
+     the .exe's icon). The Windows exe is `primerecomp.exe` since 2026-10-25 (user's request), its import library
+     `primerecomp.dll.a`: lasgame.dll imports from the exe by name, so a lasgame.dll linked before the rename doesn't
+     load with the new exe (relinked; its GAMELIB_ID doesn't change). macOS / Linux binaries are still `lasrecomp`;
+     the log / settings files are still lasrecomp.log / larecomp.ini.
+     **The user's Steam shortcut must be retargeted to primerecomp.exe** (they were told how; Steam was running, so
+     shortcuts.vdf was left alone). The old lasrecomp.exe is gone from the playtest folder.
   2. **The menu from a controller** (8ae0b90): L3+R3 opens / closes it (they tried that; Steam takes Guide). The
      overlay's Quit tab closes the game (the game's own pause menu also has Options -> Quit Game, to its title).
   3. **Mouse and keyboard like Halo** (33b4872): game.c `mouse_look` (from rt_player_frame, each gameplay frame):
@@ -63,11 +67,11 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 - **Playable:** boot, menus, the whole frigate, onto Tallon IV (the user's own playthrough), 60 / 120 fps.
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
-  from Steam (its shortcut targets lasrecomp.exe; Steam Input applies). Their log is `lasrecomp.log` there, F9
+  from Steam (its shortcut targets primerecomp.exe; Steam Input applies). Their log is `lasrecomp.log` there, F9
   captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 33b4872 (release
   exe, installed directly: the game was closed; `private/playtest/update/` holds the same build, so
   `Install_update.bat` is harmless). Use the update folder route whenever the game is running.
-  `tools/run_game.ps1` now only waits for / stops build/lasrecomp.exe, so tests can run while the user plays.
+  `tools/run_game.ps1` now only waits for / stops build/primerecomp.exe, so tests can run while the user plays.
   (Its `KEY=VALUE` variables stay set in that PowerShell process: two runs in one call share them.)
 - **The user confirmed the cannon sounds work** (2026-10-23 evening). Then asked for, in order: 4K working and as
   an option (done: 7fab0aa), the face buttons flippable to an Xbox layout (done: 7fab0aa), then "the recomp menu
@@ -82,7 +86,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   (RT_REBOOT_TITLE; checked there and PLAY back).
   Background: the Tallon IV MP4 from UIMP1.pak (found by size, cached at cache/start_bg.mp4), decoded on the
   launcher's thread at 30 fps into a texture (vk_imgui_texture_update). Screenshots without booting the game:
-  run build/lasrecomp.exe private/game (no --play) with LARECOMP_LAUNCHER_SHOT=<frame>[:settings[:<tab>]|:setup|
+  run build/primerecomp.exe private/game (no --play) with LARECOMP_LAUNCHER_SHOT=<frame>[:settings[:<tab>]|:setup|
   :tip|:fail<n>] and LARECOMP_SHOT_PATH. The red title-menu loop isn't a plain MP4 in any pak (compressed?).
 - **Ultrawide** (Video -> Aspect ratio, Unlocked by default; wider windows only): game.c wide_frame writes the
   projection's aspect ([[display manager (state manager + 0x4e0168) + 0x10] + 0x98]); exec.c ui_boxed keeps UI drawn
@@ -329,7 +333,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 - **Regenerating game code** (after `tools/patches.py` changes):
   `cd tools && ./venv/Scripts/python gen.py main ../private/exefs/main 0x7000000000 ../generated/main`, then `make`.
 - **Updating the playtest build:** the playtest exe is a release (GUI) build, started by Steam directly (its
-  non-Steam shortcut targets lasrecomp.exe (no launch options: start screen; extracted\ junction -> private\game), so Steam
-  Input applies; it logs to lasrecomp.log itself). Link one with `rm build/lasrecomp.exe && make RELEASE=1
-  build/lasrecomp.exe`, copy it and `build/lasgame.dll` / `.dll.id` into `private/playtest/MPRRecomp/` (only while
-  the game isn't running), then relink the console dev exe (`rm build/lasrecomp.exe && make`).
+  non-Steam shortcut targets primerecomp.exe (no launch options: start screen; extracted\ junction -> private\game), so
+  Steam Input applies; it logs to lasrecomp.log itself). Link one with `rm build/primerecomp.exe && make RELEASE=1
+  build/primerecomp.exe`, copy it and `build/lasgame.dll` / `.dll.id` into `private/playtest/MPRRecomp/` (only while
+  the game isn't running), then relink the console dev exe (`rm build/primerecomp.exe && make`).
