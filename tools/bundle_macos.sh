@@ -1,16 +1,15 @@
 #!/bin/bash
-# make app: build/PrimeRecomp.app from <exe> (default build/mac15/lasrecomp). Contents/MacOS: the executable;
+# make app: build/PrimeRecomp.app from <exe> (default build/mac15/primerecomp). Contents/MacOS: the executable;
 # Contents/Frameworks: every non-system dylib it loads (SDL3, FFmpeg; from build/deps, else Homebrew), load
-# paths rewritten to @rpath; Contents/Resources: the icon, the seed generator helper (build/helper/rando-gen, when
-# built: runtime/ui/rando_tab.mm generator_cmd) and what the start screen builds the game code with on the player's
-# machine (runtime/gamebuild.c): the generator helper (build/helper/lasgen), the compiler (build/zig, tools/fetch_zig.sh)
+# paths rewritten to @rpath; Contents/Resources: the icon and what the start screen builds the game code with on the player's
+# machine (runtime/gamebuild.c): the generator helper (build/helper/primegen), the compiler (build/zig, tools/fetch_zig.sh)
 # and the headers the code is compiled against (gamelib-src/). Ad-hoc signed. No game files, game code or fonts: the
 # app keeps those in ~/Library/Application Support/<bundle id> (runtime/paths.h).
 # MACOS_MIN=<x.y>: LSMinimumSystemVersion, and every Mach-O inside must be built for it or older (else it fails and
 # lists them); without it the newest minimum found inside is used.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-EXE=${1:-build/mac15/lasrecomp}
+EXE=${1:-build/mac15/primerecomp}
 APP="build/PrimeRecomp.app"
 DEPS=$PWD/build/deps
 BUNDLE_ID=$(sed -n 's/^#define RT_BUNDLE_ID "\(.*\)"/\1/p' runtime/paths.h)
@@ -20,11 +19,10 @@ case "$VERSION" in
     beta_*) VERSION="0.9.${VERSION#beta_}" ;;
     v*) VERSION="${VERSION#v}" ;;
 esac
-HELPER=build/helper/rando-gen
-GEN_HELPER=build/helper/lasgen
+GEN_HELPER=build/helper/primegen
 ZIG=build/zig
 [ -x "$EXE" ] || { echo "no $EXE"; exit 1; }
-[ -x "$GEN_HELPER/lasgen" ] || { echo "no $GEN_HELPER (make gen-helper)"; exit 1; }
+[ -x "$GEN_HELPER/primegen" ] || { echo "no $GEN_HELPER (make gen-helper)"; exit 1; }
 [ -x "$ZIG/zig" ] || { echo "no $ZIG (tools/fetch_zig.sh)"; exit 1; }
 # the app must hold no game code: that's built on the player's machine (grep without -q: with pipefail, nm cut off
 # early would hide a match)
@@ -33,10 +31,9 @@ if nm "$EXE" | grep ' _f_70' >/dev/null; then echo "$EXE has game code linked in
 rm -rf "$APP"
 C="$APP/Contents"
 mkdir -p "$C/MacOS" "$C/Frameworks" "$C/Resources"
-cp "$EXE" "$C/MacOS/lasrecomp"
-strip -S "$C/MacOS/lasrecomp"  # (debug-map entries only: the symbols crash reports name functions by stay)
-if [ -x "$HELPER/rando-gen" ]; then cp -R "$HELPER" "$C/Resources/rando-gen"; else echo "note: no $HELPER (make rando-helper)"; fi
-cp -R "$GEN_HELPER" "$C/Resources/lasgen"
+cp "$EXE" "$C/MacOS/primerecomp"
+strip -S "$C/MacOS/primerecomp"  # (debug-map entries only: the symbols crash reports name functions by stay)
+cp -R "$GEN_HELPER" "$C/Resources/primegen"
 cp -R "$ZIG" "$C/Resources/zig"
 mkdir "$C/Resources/gamelib-src"
 cp runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
@@ -59,7 +56,7 @@ find_dep() {  # dep as referenced by (the original of) $2 -> a real file
 }
 deps_of() { otool -L "$1" | tail -n +2 | awk '{print $1}' | grep -v "^$(otool -D "$1" | tail -n +2 | head -1)\$" || true; }
 origin() { local s; s="$(dirname "$1")/.$(basename "$1").src"; if [ -f "$s" ]; then cat "$s"; else echo "$1"; fi; }
-queue="$C/MacOS/lasrecomp"
+queue="$C/MacOS/primerecomp"
 copied=" "
 while [ -n "$queue" ]; do
     f=${queue%%|*}; [ "$queue" = "$f" ] && queue= || queue=${queue#*|}
@@ -80,8 +77,8 @@ while [ -n "$queue" ]; do
 done
 rm -f "$C/Frameworks"/.*.src
 rpaths() { otool -l "$1" | awk '/LC_RPATH/ {getline; getline; print $2}'; }
-for r in $(rpaths "$C/MacOS/lasrecomp"); do install_name_tool -delete_rpath "$r" "$C/MacOS/lasrecomp"; done
-install_name_tool -add_rpath "@executable_path/../Frameworks" "$C/MacOS/lasrecomp"
+for r in $(rpaths "$C/MacOS/primerecomp"); do install_name_tool -delete_rpath "$r" "$C/MacOS/primerecomp"; done
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$C/MacOS/primerecomp"
 for f in "$C/Frameworks"/*.dylib; do  # (their own build rpaths, if any: point them at the bundle instead)
     for r in $(rpaths "$f"); do install_name_tool -delete_rpath "$r" "$f"; done
     install_name_tool -add_rpath "@loader_path" "$f" 2>/dev/null || true
@@ -110,7 +107,7 @@ cat > "$C/Info.plist" <<EOF
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
-    <key>CFBundleExecutable</key><string>lasrecomp</string>
+    <key>CFBundleExecutable</key><string>primerecomp</string>
     <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
     <key>CFBundleName</key><string>PrimeRecomp</string>
     <key>CFBundleDisplayName</key><string>PrimeRecomp</string>
@@ -130,8 +127,8 @@ printf 'APPL????' > "$C/PkgInfo"
 
 # ---- ad-hoc signature (Apple Silicon refuses to run unsigned code; the rewrites above invalidated the originals):
 # every Mach-O inside first, then the bundle
-while read -r f; do [ "$f" = "$C/MacOS/lasrecomp" ] || codesign -f -s - "$f" 2>/dev/null; done < <(machos)
+while read -r f; do [ "$f" = "$C/MacOS/primerecomp" ] || codesign -f -s - "$f" 2>/dev/null; done < <(machos)
 codesign -f -s - "$APP"
 codesign --verify --strict "$APP"
-if find "$APP" -name 'lasgame*' | grep . >/dev/null; then echo "game code inside $APP"; exit 1; fi
+if find "$APP" -name 'primegame*' | grep . >/dev/null; then echo "game code inside $APP"; exit 1; fi
 echo "$APP: $(du -sh "$APP" | cut -f1), $(ls "$C/Frameworks" | wc -l | tr -d ' ') dylibs, macOS $MIN+"

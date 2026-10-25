@@ -1,6 +1,6 @@
 # PyInstaller spec: the game code generator (tools/gen.py and its modules) as a standalone onedir helper, so the start
 # screen's setup can build the game code on the player's machine without Python (runtime/gamebuild.c).
-# `make gen-helper` -> build/helper/lasgen/ (lasgen[.exe] + _internal/). Same command line as gen.py. Inside the
+# `make gen-helper` -> build/helper/primegen/ (primegen[.exe] + _internal/). Same command line as gen.py. Inside the
 import glob
 import importlib.util
 import os
@@ -36,9 +36,9 @@ exe = EXE(
     a.scripts,
     [('hash_seed=0', None, 'OPTION')],  # (the same output every run)
     exclude_binaries=True,
-    name='lasgen',
+    name='primegen',
     console=True,  # stderr = the progress lines the runtime reads (no window: CREATE_NO_WINDOW)
     strip=sys.platform == 'darwin',
     upx=False,
 )
-coll = COLLECT(exe, a.binaries, a.datas, strip=sys.platform == 'darwin', upx=False, name='lasgen')
+coll = COLLECT(exe, a.binaries, a.datas, strip=sys.platform == 'darwin', upx=False, name='primegen')

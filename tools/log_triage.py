@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Log triage for GitHub issues: a short summary of the lasrecomp.log files attached to an issue.
+"""Log triage for GitHub issues: a short summary of the primerecomp.log files attached to an issue.
 
 .github/workflows/log_triage.yml runs it when an issue is opened / edited or a comment is added. It reads the issue
 and its comments through the GitHub API, downloads the attached logs (github.com/user-attachments/files/... links
-whose file name starts with "lasrecomp", at most MAX_BYTES each), and keeps ONE bot comment per issue up to date
+whose file name starts with "primerecomp", at most MAX_BYTES each), and keeps ONE bot comment per issue up to date
 with a summary of the newest logs, plus a "log: crash" / "log: device-lost" / "log: ok" label for the newest one.
 
 Everything in an issue and in a log is untrusted data: it is only ever parsed here, never run or handed to a shell.
@@ -24,7 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-MARKER = "<!-- lasrecomp-log-triage -->"
+MARKER = "<!-- primerecomp-log-triage -->"
 MAX_BYTES = 20 * 1024 * 1024  # per log
 MAX_LOGS = 3                  # newest logs summarised per comment
 LABELS = {"crash": ("log: crash", "b60205", "Newest attached log ends in a crash or hang"),
@@ -207,11 +207,11 @@ def summarise(r):
 def render(entries, total):
     """entries: newest first, (source description, parse result or error string)"""
     out = [MARKER,
-           "This is an automatic summary of the LAS Recomp log files attached to this issue. It only reads the logs, "
+           "This is an automatic summary of the PrimeRecomp log files attached to this issue. It only reads the logs, "
            "so a person will still look at the details.",
            "",
-           "For a new report, please attach `lasrecomp.log` from LAS Recomp's data folder (it always holds the latest "
-           "run; `lasrecomp-backup-*.log` there are the earlier runs)."]
+           "For a new report, please attach `primerecomp.log` from PrimeRecomp's data folder (it always holds the latest "
+           "run; `primerecomp-backup-*.log` there are the earlier runs)."]
     for k, (src, r) in enumerate(entries):
         out += ["", f"#### {'Newest log' if k == 0 else 'Earlier log'}: {src}"]
         out.append(summarise(r) if isinstance(r, dict) else f"- Could not read this log: {clean(r, 120)}")
@@ -230,7 +230,7 @@ class Api:
         url = path if path.startswith("https://") else f"https://api.github.com/repos/{self.repo}/{path}"
         req = urllib.request.Request(url, method=method, data=json.dumps(body).encode() if body is not None else None,
                                      headers={"Authorization": f"Bearer {self.token}", "Accept": "application/vnd.github+json",
-                                              "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "lasrecomp-log-triage"})
+                                              "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "primerecomp-log-triage"})
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = resp.read()
             link = resp.headers.get("Link", "")
@@ -258,7 +258,7 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
 def download(url):
     if not ATTACH_RE.fullmatch(url): raise ValueError("not a GitHub attachment link")
     opener = urllib.request.build_opener(_Redirects)
-    req = urllib.request.Request(url, headers={"User-Agent": "lasrecomp-log-triage"})  # (no token: public files)
+    req = urllib.request.Request(url, headers={"User-Agent": "primerecomp-log-triage"})  # (no token: public files)
     with opener.open(req, timeout=60) as resp:
         if int(resp.headers.get("Content-Length") or 0) > MAX_BYTES: raise ValueError("log larger than 20 MB")
         data = resp.read(MAX_BYTES + 1)
@@ -267,11 +267,11 @@ def download(url):
 
 
 def attachments(text):
-    """lasrecomp*.log / *.txt attachment links in a body, in order, without repeats"""
+    """primerecomp*.log / *.txt attachment links in a body, in order, without repeats"""
     seen, out = set(), []
     for u in ATTACH_RE.findall(text or ""):
         name = urllib.parse.unquote(u.rsplit("/", 1)[1]).lower()
-        if name.startswith("lasrecomp") and name.endswith((".log", ".txt")) and u not in seen:
+        if name.startswith("primerecomp") and name.endswith((".log", ".txt")) and u not in seen:
             seen.add(u)
             out.append(u)
     return out
@@ -293,7 +293,7 @@ def run_issue():
             if MARKER in (c.get("body") or "") and c["user"]["login"] == "github-actions[bot]": mine = c
             continue
         found += [(u, f"comment from {c['created_at'][:10]}", c["html_url"]) for u in attachments(c.get("body"))]
-    if not found: print("no lasrecomp log attached: nothing to do"); return
+    if not found: print("no primerecomp log attached: nothing to do"); return
     newest = list(reversed(found))[:MAX_LOGS]
     entries = []
     for u, where, link in newest:

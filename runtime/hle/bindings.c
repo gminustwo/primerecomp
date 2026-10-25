@@ -1,5 +1,5 @@
 // Control remapping: tables runtime/hle/input.c reads on every input event (so a change applies at once), the
-// capture used by the "click a binding, then press" UI, and their larecomp.ini lines. See runtime/input_bind.h.
+// capture used by the "click a binding, then press" UI, and their primerecomp.ini lines. See runtime/input_bind.h.
 #include <SDL3/SDL.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -80,7 +80,7 @@ static const char *const k_actions[BIND_KEY_COUNT] = {
     "Move forward", "Move back", "Strafe left", "Strafe right", "Look up", "Look down", "Turn left", "Turn right",
     "Power Beam", "Wave Beam", "Ice Beam", "Plasma Beam",
 };
-// controller buttons by position (larecomp.ini)
+// controller buttons by position (primerecomp.ini)
 static const char *const k_pad_ini[PADB_HOST_COUNT] = {
     "south", "east", "west", "north", "back", "guide", "start", "lstick", "rstick", "lshoulder", "rshoulder",
     "dpad_up", "dpad_down", "dpad_left", "dpad_right", "misc1", "rpaddle1", "lpaddle1", "rpaddle2", "lpaddle2",
@@ -273,7 +273,7 @@ bool bind_capture_event(const SDL_Event *e) {
     }
 }
 
-// ------------------------------------------------------------------ larecomp.ini
+// ------------------------------------------------------------------ primerecomp.ini
 // "bind_keys = fps" comes before the bind_key_* lines: keyboard bindings saved before the shooter layout (Link's
 // Awakening's K/J/L/I era) aren't loaded - those players start on the new defaults.
 static bool keys_fps;

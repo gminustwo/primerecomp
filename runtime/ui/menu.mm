@@ -534,21 +534,6 @@ static void tab_gameplay(void) {
     opt_end();
 }
 
-// Cosmetics: tunic / heart colours, live (runtime/nvn/texpatch.c); never part of a seed
-static void tab_cosmetics(void) {
-    opt_begin("##cosmetics", ImGui::GetFontSize() / 34);
-    opt_section("Colors");
-    opt_choice("Tunic color", &g_settings.tunic, g_tunic_colours, N_TUNIC_COLOURS, 0,
-               "Link's tunic color. Default: the game's own (or the randomizer seed's).");
-    opt_choice("Heart color", &g_settings.hearts, g_heart_colours, N_HEART_COLOURS, 0,
-               "The color of the hearts on the HUD.");
-    if (opt_action("Random colors", "", "Picks a random tunic and heart color (any other color, Default included).")) {
-        g_settings.tunic = (g_settings.tunic + 1 + rand() % (N_TUNIC_COLOURS - 1)) % N_TUNIC_COLOURS;
-        g_settings.hearts = (g_settings.hearts + 1 + rand() % (N_HEART_COLOURS - 1)) % N_HEART_COLOURS;
-    }
-    opt_end();
-}
-
 static void tab_audio(void) {
     opt_begin("##audio", ImGui::GetFontSize() / 34);
     opt_section("Sound");
@@ -558,7 +543,7 @@ static void tab_audio(void) {
         g_settings.volume = pct / 100.0f;
     opt_toggle("Room reverb", &g_settings.reverb, true,
                "The game's echo in caves, ruins and big rooms.");
-    // (LAS Recomp's "Movie audio" - Link's Awakening's opening and ending - isn't shown; larecomp.ini movie_audio
+    // (LAS Recomp's "Movie audio" - Link's Awakening's opening and ending - isn't shown; primerecomp.ini movie_audio
     // still mutes Metroid Prime's movies, the game over one among them)
     opt_section("Controller");
     opt_toggle("Rumble", &g_settings.rumble, true, "The game's rumble on the controller (missiles, damage...).");
@@ -724,7 +709,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     // (ids 2-5 were LAS Recomp's Save Editor, Randomizer, Warp and Cheats, 6 its Gameplay - now Metroid Prime's; ids
     // stay: test hooks)
     // (Cosmetics, id 7: LAS Recomp's tunic / heart colours - nothing to recolour in Metroid Prime, so not shown)
-    static const char *names[] = {"Video", "Audio", "", "", "", "", "Gameplay", "Cosmetics", "Controls", "Quit"};
+    static const char *names[] = {"Video", "Audio", "", "", "", "", "Gameplay", "", "Controls", "Quit"};
     static const int order[] = {6, 8, 0, 1, 9};  // Gameplay, Controls, Video, Audio, Quit
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT)
         if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
@@ -812,7 +797,6 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case 0: tab_display(); break;
                 case 1: tab_audio(); break;
                 case 6: tab_gameplay(); break;
-                case 7: tab_cosmetics(); break;
                 case 8: tab_about(); break;
                 case 9: tab_quit(scale, in_game); break;
                 }

@@ -1,11 +1,11 @@
-// User settings (larecomp.ini next to the executable's working directory), edited from the in-game menu.
+// User settings (primerecomp.ini in the data folder; larecomp.ini before 2026-10-25), edited from the in-game menu.
 #pragma once
 #include <stdbool.h>
 
 enum { ASPECT_UNLOCKED = 0, ASPECT_ORIGINAL = 1 };
 enum { RES_MATCH = 0, /* 1..8: LAS's 1x..8x, now RES_FIXED */ RES_DYNAMIC = 9, RES_Q75 = 10, RES_Q25 = 11, RES_Q50 = 12,
        RES_FIXED = 13 /* g_settings.res_lines lines */ };
-// (11 was 67% of the display: larecomp.ini "67%" now loads as RES_Q75)
+// (11 was 67% of the display: "67%" in the settings file now loads as RES_Q75)
 // The fixed render heights the Video tab offers (lines; 900 = the Switch's docked image) and their names
 enum { N_RES_LINES = 5 };
 extern const int g_res_lines[N_RES_LINES];
@@ -25,7 +25,6 @@ enum { FACE_NINTENDO = 0, FACE_XBOX = 1 };
 enum { FOV_GAME = 55, FOV_MIN = 45, FOV_MAX = 90 };
 #define MOUSE_SENS_MIN 0.1f  // (mouse aim sensitivity range: Controls tab)
 #define MOUSE_SENS_MAX 10.0f
-enum { CHAOS_LETTERS_OFF = 0, CHAOS_LETTERS_EXPLORED = 1, CHAOS_LETTERS_MAP = 2 /* explored, all with the Map */ };
 // System language served to the game (runtime/services/am.c GetDesiredLanguage, services/hid_set.c GetLanguageCode):
 // the game picks its text language from it, as it would from the Switch's own system setting. LANG_AUTO follows the
 // host locale ($LC_ALL / $LC_MESSAGES / $LANG); the rest are the codes of the languages the game has text for.
@@ -55,35 +54,18 @@ typedef struct {
     bool mouse_aim;      // the mouse turns and tilts the view itself (runtime/hle/game.c), captured while playing
     float mouse_sens;    // mouse aim: 1 = 0.044 degrees per mouse count (MOUSE_SENS_MIN..MAX)
     bool mouse_invert;   // mouse aim: moving the mouse forward looks down
-    bool steam_controller_direct;  // (larecomp.ini only) SDL's own Steam Controller driver, for its gyro without
+    bool steam_controller_direct;  // (settings file only) SDL's own Steam Controller driver, for its gyro without
                                    // Steam Input (the window code sets SDL_HINT_JOYSTICK_HIDAPI_STEAM)
-    bool dpad_move;      // the d-pad (and arrow keys) move Link like the stick
-    bool move_360;       // analog movement in any direction (the game snaps the stick to 8): runtime/hle/qol.c
-    bool blur_removal;   // no tilt-shift blur at the top / bottom of the screen
-    bool hide_hero_icon; // no Hero Mode icon on the HUD
-    bool mirror_mode;    // the world mirrored left to right (Gameplay tab): renderers + runtime/hle/input.c
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language
-    int prompts;         // PROMPTS_*: button glyphs (auto = follow the controller SDL reports): runtime/nvn/texpatch.c
     int face_layout;     // FACE_*: which face button is A (set through bind_set_face_layout: it swaps the bindings)
-    bool inv_keys;       // randomizer: show every dungeon's keys on the pause menu's Items page
-    bool tracker;        // randomizer: check tracker on the pause menu's Map page
-    int chaos_letters;   // CHAOS_LETTERS_*: room-shuffle doorway letters on the dungeon map
-    bool aspect_asked;   // the start screen's one-time "authentic 16:9 or unlocked?" question was answered
     bool menu_tip_seen;  // the start screen's one-time "how to open the menu" note was shown (first PLAY ever)
-    // cheats (runtime/ui/cheats.mm), applied every frame while a save is loaded
-    bool cheat_hearts;   // health kept full
-    bool cheat_ammo;     // bombs / arrows / magic powder kept full (for the bags Link owns)
-    bool cheat_rupees;   // rupees kept at 999
-    bool cheat_hookshot; // hookshot latches onto any surface (Gameplay tab; runtime/hle/hookshot.c; seeds made with it: always)
-    bool no_buff_drops;  // no Guardian Acorns / Pieces of Power (Gameplay tab; runtime/hle/qol.c; seeds made with it: always)
-    // difficulty (runtime/ui/difficulty.mm)
-    float diff_damage;   // damage taken multiplier (1 = normal)
-    bool diff_ohko;      // any hit kills
-    bool diff_hero;      // Hero Mode flag forced on in the loaded save (2x damage, no recovery hearts)
-    // cosmetics (runtime/ui/cosmetics.mm; applied live by runtime/nvn/texpatch.c), never part of a seed
-    int tunic;           // index into g_tunic_colours (0 = Default: the game's / the seed's own)
-    int hearts;          // index into g_heart_colours (0 = Default red)
-    char rando_seed[128];  // active randomizer seed (rando/<name>/), empty = vanilla
+    // Link's Awakening's texture patches (runtime/nvn/texpatch.c) still read these; nothing sets them any more (they
+    // match none of Metroid Prime's textures), and the settings file no longer has them
+    bool hide_hero_icon; // no Hero Mode icon on the HUD
+    int prompts;         // PROMPTS_*: button glyphs (auto = follow the controller SDL reports)
+    int tunic;           // index into g_tunic_colours (0 = Default)
+    int hearts;          // index into g_heart_colours (0 = Default)
+    char rando_seed[128];  // (runtime/main.c: LAS's randomizer seed argument) always empty
 } Settings;
 
 enum { N_TUNIC_COLOURS = 13, N_HEART_COLOURS = 9 };

@@ -1,9 +1,8 @@
-# LAS Recomp on Linux (x86-64, aarch64)
+# PrimeRecomp on Linux (x86-64, aarch64)
 
-Status: branch `linux-beta2`. Builds and runs the game on Vulkan (with your own game files) on x86-64, checked before
-each release by `make smoketest`. aarch64 is **experimental**: cross-compiled, its start screen checked under emulation,
-the game itself untested on real hardware - community reports decide (see the end). `make appimage` / `make appimages`
-package the release AppImages.
+Status: **not yet built for PrimeRecomp.** The Linux platform layer and AppImage packaging come from the port this
+project grew out of (where they ran on x86-64, aarch64 experimental); nothing here has been tried with Metroid Prime
+Remastered yet. `make appimage` / `make appimages` package AppImages.
 
 ## Running the AppImage
     chmod +x LAS.Recomp-beta_4-linux-x86_64.AppImage
@@ -13,9 +12,9 @@ Needs: a distribution with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 
 (Mesa RADV / ANV / NVK / Turnip / Asahi Honeykrisp, or NVIDIA's), and on x86-64 a CPU with AVX2 (2013 or newer).
 The start screen asks for the folder with your own game files and sets them up.
 
-Everything the app writes lives in `~/.local/share/lasrecomp` (`$XDG_DATA_HOME/lasrecomp`): game files (`extracted/`),
-saves, seeds, settings (`larecomp.ini`), shader caches, imported fonts. Started without a terminal the log is
-`~/.local/share/lasrecomp/lasrecomp.log` (from a terminal it prints there instead). `LARECOMP_DATA_ROOT=<dir>` uses
+Everything the app writes lives in `~/.local/share/primerecomp` (`$XDG_DATA_HOME/primerecomp`): game files (`extracted/`),
+saves, seeds, settings (`primerecomp.ini`), shader caches, imported fonts. Started without a terminal the log is
+`~/.local/share/primerecomp/primerecomp.log` (from a terminal it prints there instead). `LARECOMP_DATA_ROOT=<dir>` uses
 another folder.
 
 Controllers work as on the other systems (SDL3's gamepad support, bundled): Xbox, PlayStation (DualShock 4,
@@ -39,10 +38,10 @@ Then from the repo root:
     python3 -m venv tools/venv && tools/venv/bin/pip install lz4 capstone unicorn
     make -j         # the start screen only (no game code yet): set up the game files there, or put extracted/ here
     make gen        # once: recompile the game from your own game files
-    make -j         # -> build/lasrecomp and the game code library build/lasgame.so
+    make -j         # -> build/primerecomp and the game code library build/primegame.so
 
-Run `./build/lasrecomp` from the repo root: with `extracted/` in the starting folder it uses that folder for
-everything (dev mode) instead of `~/.local/share/lasrecomp`.
+Run `./build/primerecomp` from the repo root: with `extracted/` in the starting folder it uses that folder for
+everything (dev mode) instead of `~/.local/share/primerecomp`.
 
 `ARCH` picks the target, separately from the OS: the generated code differs per arch (aarch64 runs the guest's
 FP/SIMD as inline asm, like Apple Silicon; x86-64 lowers it to C with `-march=x86-64-v3`, like Windows). `make gen`
@@ -50,36 +49,22 @@ passes the matching `--simd`. A cross build (`ARCH=aarch64` on an x86-64 machine
 keeps its own `generated-aarch64/` and `build/aarch64/`. Distributions that name shaderc's library
 `libshaderc_shared.so` need `SHADERC=-lshaderc_shared`.
 
-The randomizer from a source checkout uses LAS-Randomizer's own venv (Python 3.12):
-
-    python3.12 -m venv third_party/LAS-Randomizer/venv
-    third_party/LAS-Randomizer/venv/bin/pip install -r third_party/LAS-Randomizer/requirements.txt
-
 ## AppImages
 Needs podman, and for aarch64 QEMU user emulation with binfmt (`sudo apt install podman qemu-user qemu-user-binfmt`).
 
-    make appimage                # this machine's arch -> build/dist/LAS Recomp-<version>-linux-<arch>.AppImage
+    make appimage                # this machine's arch -> build/dist/PrimeRecomp-<version>-linux-<arch>.AppImage
     make appimage ARCH=aarch64   # cross-compiled from x86-64
     make appimages               # both
 
 Everything is built in Ubuntu 22.04 containers (`tools/linux/Containerfile`), so the result runs on glibc 2.35+:
 SDL3, an LGPL-only FFmpeg (only the movie codecs, as on Windows / macOS), and shaderc from pinned sources
 (`tools/linux/build_deps.sh`), then the game against them (`tools/linux/package.sh`). aarch64 is cross-compiled in
-the amd64 container against the arm64 image's root filesystem (`build/linux/aarch64/sysroot`). The seed generator
-helper (`tools/linux/rando_helper.sh`, PyInstaller) is frozen in a container of its own arch; on arm64 that runs
-under QEMU and builds oead and keystone-engine from source the first time (no arm64 wheels on PyPI; cached in
-`build/linux/aarch64/wheels`). The generated game code comes from the host (`generated/`, `generated-aarch64/`;
+the amd64 container against the arm64 image's root filesystem (`build/linux/aarch64/sysroot`). The game code generator
+helper (`tools/linux/gen_helper.sh`, PyInstaller) is frozen in a container of its own arch (on arm64 under QEMU). The
+generated game code comes from the host (`generated/`, `generated-aarch64/`;
 `make appimage` runs `make gen` for it when missing).
 
-Release check of the x86-64 AppImage (`make smoketest`, tools/linux/smoketest.sh, ~7 minutes on this kind of machine):
-three launches of the AppImage itself - the start screen; a session from a test save warping to four overworld spots
-and every dungeon's entrance; and a seed generated from the in-game Randomizer tab, switched to live, the save loaded
-on it, then deleted. Each step is checked in the log and by a screenshot. `build/smoke/report.txt` ends with READY FOR
-RELEASE or NOT READY; `build/smoke/sheet.png` shows every screenshot. It needs `extracted/` in the checkout and a test
-save outside git (`~/.local/share/lasrecomp-smoketest/save`, or `LARECOMP_SMOKE_SAVE`): copy `save/` from any build
-after starting a new game once.
-
-The AppImage holds `lasrecomp`, `rando-gen/`, the start screen font and the bundled libraries (SDL3,
+The AppImage holds `primerecomp`, `primegen/`, `zig/`, the start screen font and the bundled libraries (SDL3,
 FFmpeg, shaderc). Not bundled: glibc, libstdc++, the Vulkan loader and the GPU drivers (always the system's). No game
 files or fonts.
 
@@ -101,14 +86,14 @@ The aarch64 AppImage is experimental: built on x86-64, only its start screen has
    `deviceName`, `driverName` and `driverInfo`.
 3. **What happened**: start screen? extraction? in game? where it stopped, any visual problems (screenshots help).
    With a controller: its model, and whether it works (the log names it: `[input] gamepad: ...`).
-4. **The log**: `~/.local/share/lasrecomp/lasrecomp.log` (or the terminal output when started from a terminal).
+4. **The log**: `~/.local/share/primerecomp/primerecomp.log` (or the terminal output when started from a terminal).
    A crash writes `*** signal ...` and a backtrace there; attach the whole file.
 5. **A crash backtrace with gdb** when the log's isn't enough:
 
        ./LAS.Recomp-beta_4-linux-aarch64.AppImage --appimage-extract    # -> squashfs-root/
-       cd ~/.local/share/lasrecomp
+       cd ~/.local/share/primerecomp
        gdb -batch -ex 'handle SIGSEGV nostop noprint pass' -ex run -ex 'thread apply all bt 20' \
-           --args ~/squashfs-root/usr/bin/lasrecomp > gdb.txt 2>&1
+           --args ~/squashfs-root/usr/bin/primerecomp > gdb.txt 2>&1
 
    (Adjust the `squashfs-root` path to where you extracted it. The game itself uses SIGSEGV for memory watches, hence
    the `handle` line; a real crash still ends in the backtrace. Attach `gdb.txt`.)

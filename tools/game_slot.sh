@@ -1,4 +1,4 @@
-# Sourced by the test scripts before they start ./build/lasrecomp: a new test copy of the game starts only while the
+# Sourced by the test scripts before they start ./build/primerecomp: a new test copy of the game starts only while the
 # Mac has at least 10 GB free (each copy takes ~2 GB; too many at once ran it out of memory). Launches are taken one
 # at a time and the next waits ~20 s, so the copy just started has grown before memory is measured again.
 # LARECOMP_MIN_FREE_GB (default 10), LARECOMP_SLOT_DIR.
@@ -20,10 +20,10 @@ echo $$ > "$L/pid"
 until [ "$(game_free_gb)" -ge "$GAME_MIN_FREE_GB" ]; do sleep 5; done
 ( sleep 20; rm -rf "$L" ) >/dev/null 2>&1 &
 GAME_SLOT=  # (nothing to release at exit)
-# test runs never write the player's larecomp.ini: a scratch copy unless the caller gave LARECOMP_SETTINGS
+# test runs never write the player's primerecomp.ini: a scratch copy unless the caller gave LARECOMP_SETTINGS
 if [ -z "$LARECOMP_SETTINGS" ]; then
     mkdir -p build/test_ini
     LARECOMP_SETTINGS="build/test_ini/settings_$$.ini"
-    cp larecomp.ini "$LARECOMP_SETTINGS" 2>/dev/null || : > "$LARECOMP_SETTINGS"
+    cp primerecomp.ini "$LARECOMP_SETTINGS" 2>/dev/null || : > "$LARECOMP_SETTINGS"
     export LARECOMP_SETTINGS
 fi

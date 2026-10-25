@@ -1,4 +1,4 @@
-# Log triage: when an issue or a comment has an attached lasrecomp.log (a github.com/user-attachments/files/... link),
+# Log triage: when an issue or a comment has an attached primerecomp.log (a github.com/user-attachments/files/... link),
 # tools/log_triage.py keeps one bot comment on the issue with a short summary of the newest logs (build, system, GPU,
 # settings, how the run ended, frame rate, notable lines) and a "log: crash" / "log: device-lost" / "log: ok" label.
 #

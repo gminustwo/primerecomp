@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=PrimeRecomp
+Comment=Metroid Prime Remastered, recompiled (bring your own game files)
+Exec=primerecomp
+Icon=primerecomp
+Categories=Game;
+Terminal=false

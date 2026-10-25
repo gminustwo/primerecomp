@@ -102,7 +102,7 @@ static void args_free(Args *a) {
 
 // ------------------------------------------------------------------ the tools
 typedef struct {
-    char gen[1100], gen_script[1100];  // generator: lasgen, or (source checkout) the venv's python + tools/gen.py
+    char gen[1100], gen_script[1100];  // generator: primegen, or (source checkout) the venv's python + tools/gen.py
     char cc[1100];                     // compiler: zig (as `zig cc`), or LARECOMP_CC / clang
     bool zig;
     char inc[1100], entry[1100], hle[1100];  // headers the game code includes, tools/gamelib_entry.c, HLE names
@@ -121,7 +121,7 @@ static bool find_tools(Tools *t) {
     memset(t, 0, sizeof *t);
     const char *e = getenv("LARECOMP_GEN");
     if (e && *e) snprintf(t->gen, sizeof t->gen, "%s", e);
-    else if (!rt_resource("lasgen" SEP "lasgen" PLAT_EXE_SUFFIX, NULL, t->gen, sizeof t->gen) &&
+    else if (!rt_resource("primegen" SEP "primegen" PLAT_EXE_SUFFIX, NULL, t->gen, sizeof t->gen) &&
              !(rt_resource(NULL, "tools/" PLAT_VENV_PYTHON, t->gen, sizeof t->gen) &&
                rt_resource(NULL, "tools/gen.py", t->gen_script, sizeof t->gen_script)))
         return false;

@@ -20,7 +20,7 @@ static void profile(Service *s, IpcReq *req, IpcResp *resp) {
         memset(resp->data, 0, 0x38);
         memcpy(resp->data, g_user_id, 16);
         *(uint64_t *)(resp->data + 16) = 1600000000;
-        strcpy((char *)resp->data + 24, "Link");
+        strcpy((char *)resp->data + 24, "Samus");
         resp_size(resp, 0x38);
         if (req->cmd == 0 && out_buf(req, 0)) memset((void *)(uintptr_t)out_buf(req, 0)->addr, 0, out_buf(req, 0)->size);
         break;

@@ -11,6 +11,7 @@ generated-*/
 build/
 /cache/
 save/
+/primerecomp.ini
 /larecomp.ini
 # tools and Python environments (machine-specific)
 tools/venv/

@@ -119,7 +119,7 @@ void plat_thread_realtime(uint64_t period_ns) {
 }
 
 // ---- process
-// Release builds are GUI-subsystem executables (no console window): stdout / stderr go to lasrecomp.log next to the
+// Release builds are GUI-subsystem executables (no console window): stdout / stderr go to primerecomp.log next to the
 // exe, and a fatal error shows a message box (plat_fatal_notice) instead of vanishing. Processes started by this one
 // (the start screen re-executing itself for the game) append to the same log.
 static char g_log_path[MAX_PATH];
@@ -131,12 +131,18 @@ static void log_to_file_without_console(void) {
     if (!n || n >= sizeof exe) return;
     char *slash = strrchr(exe, '\\');
     if (slash) slash[1] = 0;
-    snprintf(g_log_path, sizeof g_log_path, "%slasrecomp.log", exe);
+    snprintf(g_log_path, sizeof g_log_path, "%sprimerecomp.log", exe);
     bool append = getenv("LASRECOMP_LOG_APPEND") != NULL;
     if (!append) {  // the run before this one stays readable (started straight from Steam: no .bat rotates it)
-        char prev[MAX_PATH];
-        snprintf(prev, sizeof prev, "%slasrecomp.previous.log", exe);
+        char prev[MAX_PATH], old[MAX_PATH];
+        snprintf(prev, sizeof prev, "%sprimerecomp.previous.log", exe);
         MoveFileExA(g_log_path, prev, MOVEFILE_REPLACE_EXISTING);
+        // (the log was lasrecomp.log until 2026-10-25: the last one of those becomes the previous log once)
+        snprintf(old, sizeof old, "%slasrecomp.log", exe);
+        if (MoveFileExA(old, prev, MOVEFILE_REPLACE_EXISTING)) {
+            snprintf(old, sizeof old, "%slasrecomp.previous.log", exe);
+            DeleteFileA(old);
+        }
     }
     if (!freopen(g_log_path, append ? "ab" : "wb", stderr)) { g_log_path[0] = 0; return; }
     setvbuf(stderr, NULL, _IONBF, 0);

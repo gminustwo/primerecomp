@@ -54,7 +54,7 @@ IMGUI_OBJ := $(B)/imgui/imgui.o $(B)/imgui/imgui_draw.o $(B)/imgui/imgui_tables.
 ifeq ($(PLATFORM),macos)
 SDL      := $(or $(DEPS),/opt/homebrew/opt/sdl3)
 FFMPEG   := $(or $(DEPS),/opt/homebrew/opt/ffmpeg)
-EXE      := $(B)/lasrecomp
+EXE      := $(B)/primerecomp
 DEPINC   := -I$(SDL)/include -I$(FFMPEG)/include
 LDFLAGS  := -L$(SDL)/lib -lSDL3 -Wl,-rpath,$(SDL)/lib -L$(FFMPEG)/lib -lavformat -lavcodec -lavutil -lswscale -Wl,-rpath,$(FFMPEG)/lib \
             -framework CoreFoundation -framework Foundation -framework Metal -framework MetalFX -framework QuartzCore -framework AppKit -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers
@@ -62,11 +62,11 @@ BACKEND_SRC := $(wildcard runtime/nvn/*.m)
 BACKEND_OBJ := $(patsubst runtime/%.m,$(B)/rt/%.o,$(BACKEND_SRC))
 IMGUI_OBJ += $(B)/imgui/imgui_impl_metal.o
 UIFLAGS  := -fobjc-arc
-GAMELIB  := $(B)/lasgame.dylib
+GAMELIB  := $(B)/primegame.dylib
 GAMELIB_LDFLAGS := -dynamiclib -undefined dynamic_lookup  # (the runtime functions it calls: the app's own)
 GAMELIB_SHARED := -shared -Wl,-undefined,dynamic_lookup  # (the same, for the start screen's build: zig cc)
 else ifeq ($(PLATFORM),linux)
-EXE      := $(B)/lasrecomp
+EXE      := $(B)/primerecomp
 DEPINC   := $(if $(DEPS),-I$(DEPS)/include)
 ifeq ($(ARCH),x86_64)
 GENARCH  ?= -march=x86-64-v3  # as on Windows: AVX2 + FMA for the lifted FP/SIMD code (checked at startup)
@@ -81,7 +81,7 @@ BACKEND_SRC := $(wildcard runtime/nvn/vulkan/*.c) $(wildcard runtime/nvn/vulkan/
 BACKEND_OBJ := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(BACKEND_SRC)))
 IMGUI_OBJ += $(B)/imgui/imgui_impl_vulkan.o
 UIFLAGS  := -x c++  # the .mm UI sources are plain C++ apart from __APPLE__ blocks
-GAMELIB  := $(B)/lasgame.so
+GAMELIB  := $(B)/primegame.so
 GAMELIB_LDFLAGS := -shared -fuse-ld=lld  # (the runtime functions it calls: the app's own, -rdynamic)
 GAMELIB_SHARED := -shared
 else
@@ -92,14 +92,14 @@ GENARCH  ?= -march=x86-64-v3  # AVX2 + FMA for the lifted FP/SIMD code (simd.h);
 GENFLAGS += -D_FILE_OFFSET_BITS=64 $(GENARCH)
 LDFLAGS  := -fuse-ld=lld -Wl,--stack,16777216 $(if $(DEPS),-L$(DEPS)/lib) -lSDL3 -lavformat -lavcodec -lavutil -lswscale \
             -lvulkan-1 -lwinmm -lole32 -lshell32 -lcomdlg32 -luuid -lshaderc_shared \
-            $(if $(RELEASE),-Wl$(comma)--subsystem$(comma)windows)  # release: no console window (log -> lasrecomp.log)
+            $(if $(RELEASE),-Wl$(comma)--subsystem$(comma)windows)  # release: no console window (log -> primerecomp.log)
 BACKEND_SRC := $(wildcard runtime/nvn/vulkan/*.c) $(wildcard runtime/nvn/vulkan/*.cpp)
 BACKEND_OBJ := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(BACKEND_SRC)))
 BACKEND_OBJ += $(B)/rt/platform/windows_rc.o  # the .exe's icon (Explorer, taskbar)
 WINDRES  ?= windres
 IMGUI_OBJ += $(B)/imgui/imgui_impl_vulkan.o
 UIFLAGS  := -x c++ $(OSFLAGS)  # the .mm UI sources are plain C++ apart from __APPLE__ blocks
-GAMELIB  := $(B)/lasgame.dll
+GAMELIB  := $(B)/primegame.dll
 # the runtime functions it calls: exported by the .exe, linked through its import library
 LDFLAGS  += -Wl,--export-all-symbols -Wl,--out-implib,$(B)/primerecomp.dll.a
 GAMELIB_LDFLAGS := -shared -fuse-ld=lld $(B)/primerecomp.dll.a
@@ -211,8 +211,8 @@ deps:
 	MACOS_MIN=$(APP_MIN) tools/build_deps_macos.sh
 app:
 	@[ -f build/deps/lib/libSDL3.0.dylib ] || { echo "make deps first"; exit 1; }
-	$(MAKE) B=$(APP_B) MACOS_MIN=$(APP_MIN) DEPS=$(CURDIR)/build/deps $(APP_B)/lasrecomp
-	MACOS_MIN=$(APP_MIN) tools/bundle_macos.sh $(APP_B)/lasrecomp
+	$(MAKE) B=$(APP_B) MACOS_MIN=$(APP_MIN) DEPS=$(CURDIR)/build/deps $(APP_B)/primerecomp
+	MACOS_MIN=$(APP_MIN) tools/bundle_macos.sh $(APP_B)/primerecomp
 
 # macOS release disk image (the .app + an Applications shortcut to drag it onto): build/dist/PrimeRecomp-<v>-macOS.dmg
 dmg: app
@@ -223,7 +223,7 @@ dmg: app
 # tools/fetch_zig.sh slimmed by tools/zig_slim.sh: its runtime built ahead of time, gamelib-src/, the exe's import library)
 # and the DLLs they load (runs without MSYS2). No game code. The exe is a release build in $(WIN_B):
 # linked against the LGPL FFmpeg from `make deps-windows` (MSYS2's is a GPLv3 build) and without a console window
-# (RELEASE=1: the log goes to lasrecomp.log next to the exe, fatal errors show a message box). Its DLLs are looked up
+# (RELEASE=1: the log goes to primerecomp.log next to the exe, fatal errors show a message box). Its DLLs are looked up
 # with build/deps-win/bin first (the FFmpeg DLL names are the same as MSYS2's GPL ones). vulkan-1.dll is left
 # out: every Vulkan driver installs the loader in System32. Saves, seeds and game files go next to the exe at run time.
 # Needs: Windows 10+ x64, a Vulkan 1.3 driver, an AVX2 CPU (GENARCH x86-64-v3; checked at startup).
@@ -233,14 +233,14 @@ deps-windows:
 	tools/build_deps_windows.sh
 dist:
 	@[ -f build/deps-win/lib/libavcodec.dll.a ] || { echo "make deps-windows first (LGPL FFmpeg)"; exit 1; }
-	@[ -d build/helper/lasgen ] || { echo "make gen-helper first (the game code generator)"; exit 1; }
+	@[ -d build/helper/primegen ] || { echo "make gen-helper first (the game code generator)"; exit 1; }
 	@[ -x build/zig/zig.exe ] || { echo "tools/fetch_zig.sh first (the compiler)"; exit 1; }
 	$(MAKE) B=$(WIN_B) DEPS=$(CURDIR)/build/deps-win RELEASE=1 $(WIN_B)/primerecomp.exe
 	! nm $(WIN_B)/primerecomp.exe | grep ' f_70' >/dev/null  # (no game code inside)
 	rm -rf build/dist && mkdir -p "$(DIST)/gamelib-src"
 	cp $(WIN_B)/primerecomp.exe $(WIN_B)/primerecomp.dll.a "$(DIST)/"
 	tools/zig_slim.sh $(strip $(filter-out -Iruntime,$(GENFLAGS)))  # (zig with its runtime built ahead of time)
-	cp -R build/helper/lasgen "$(DIST)/"
+	cp -R build/helper/primegen "$(DIST)/"
 	cp -R build/zig-slim "$(DIST)/zig"
 	cp runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
 	    "$(DIST)/gamelib-src/"
@@ -264,14 +264,14 @@ GEN_PY  ?= py -3.12
 GEN_VPY := build/gen-venv/Scripts/python.exe
 endif
 
-# The game code generator, the same way (tools/lasgen.spec): build/helper/lasgen/, shipped as lasgen/ next to the exe or
+# The game code generator, the same way (tools/primegen.spec): build/helper/primegen/, shipped as primegen/ next to the exe or
 # in Contents/Resources. The start screen's setup runs it on the player's own game files (runtime/gamebuild.c).
 gen-helper: build/gen-venv/.ok
 	$(if $(filter windows,$(PLATFORM)),USERPROFILE="$$(cygpath -w ~ 2>/dev/null || echo $$HOME)") \
 	$(GEN_VPY) -m PyInstaller --noconfirm --clean --log-level WARN --distpath build/helper --workpath build/pyinstaller \
-	    tools/lasgen.spec
-	$(if $(filter windows,$(PLATFORM)),$(GEN_VPY) tools/pe_no_cfg.py build/helper/lasgen/lasgen.exe)
-	@du -sh build/helper/lasgen
+	    tools/primegen.spec
+	$(if $(filter windows,$(PLATFORM)),$(GEN_VPY) tools/pe_no_cfg.py build/helper/primegen/primegen.exe)
+	@du -sh build/helper/primegen
 
 build/gen-venv/.ok:
 	$(GEN_PY) -m venv build/gen-venv
@@ -286,11 +286,8 @@ appimage:
 appimages:
 	tools/linux/appimage.sh x86_64
 	tools/linux/appimage.sh aarch64
-# release check of the x86-64 AppImage: start screen, into the game, warps to the overworld and every dungeon
-smoketest:
-	tools/linux/smoketest.sh
 
-.PHONY: dmg all gen gen-helper gen-objs runtime-objs deps deps-windows app dist appimage appimages smoketest
+.PHONY: dmg all gen gen-helper gen-objs runtime-objs deps deps-windows app dist appimage appimages
 
 build/test_shaders: tools/test_shaders.m runtime/nvn/maxwell/translate.c runtime/nvn/maxwell/shader.h
 	clang -O1 -fobjc-arc -framework Metal -framework Foundation -o $@ tools/test_shaders.m runtime/nvn/maxwell/translate.c

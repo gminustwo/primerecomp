@@ -1,5 +1,5 @@
 // Control remapping (runtime/hle/bindings.c): which controller button / key drives each Switch input. Edited from
-// the in-game menu's Controls tab and the start screen (runtime/ui/controls_ui.mm), saved in larecomp.ini.
+// the in-game menu's Controls tab and the start screen (runtime/ui/controls_ui.mm), saved in primerecomp.ini.
 // Menus (the overlay, the start screen) never use these: they keep the fixed default layout (only the face layout
 // moves their A / B), so no binding can lock the player out.
 #pragma once
@@ -38,7 +38,7 @@ extern int16_t g_bind_key[BIND_KEY_COUNT];  // SDL_Scancode / BIND_MOUSE_* per i
 const char *bind_input_name(int slot);         // "A", "D-pad Up", "Left stick Up"
 const char *bind_input_action(int slot);       // what Metroid Prime does with it on foot ("Shoot beam"), or ""
 const char *bind_pad_label(int host, int fam); // controller button in the pad family's own words (fam: input_pad_family)
-const char *bind_key_label(int host);          // key or mouse button name, as larecomp.ini stores it
+const char *bind_key_label(int host);          // key or mouse button name, as primerecomp.ini stores it
 int bind_key_from_name(const char *name);      // bind_key_label's name -> keyboard binding value (0: unknown)
 int bind_label_family(void);                   // the connected controller's family (also on the start screen)
 void bind_reset(int dev);
@@ -57,11 +57,11 @@ bool bind_capture_event(const SDL_Event *e);
 // Last change for the UI: 0 none, 1 set, 2 swapped (with *other), 3 cancelled, 4 timed out, 5 reset; *serial bumps
 int bind_last_result(int *dev, int *slot, int *other, int *serial);
 
-// larecomp.ini: bind_pad_<input> / bind_key_<input> (only the ones that differ from the defaults are written)
+// primerecomp.ini: bind_pad_<input> / bind_key_<input> (only the ones that differ from the defaults are written)
 bool bind_settings_load(const char *key, const char *val);
 void bind_settings_save(FILE *f);
 
-// bind_* names (larecomp.ini): Switch input "a", "zl", "ls_up"... -> slot; controller button "south"... -> PADB value
+// bind_* names (primerecomp.ini): Switch input "a", "zl", "ls_up"... -> slot; controller button "south"... -> PADB value
 int bind_slot_from_name(const char *name);
 int bind_pad_from_name(const char *name);
 
@@ -69,7 +69,7 @@ int bind_pad_from_name(const char *name);
 int bind_prompt_host(int slot);
 
 // Face layout (g_settings.face_layout, FACE_*): set swaps the face buttons in the current bindings (and the defaults
-// they're compared with); load (larecomp.ini) sets the layout's defaults, before the bind_pad_* lines. face_host: a
+// they're compared with); load (primerecomp.ini) sets the layout's defaults, before the bind_pad_* lines. face_host: a
 // controller button as the Nintendo layout sees it (the menus' confirm / back go through it).
 void bind_set_face_layout(int layout);
 void bind_load_face_layout(int layout);

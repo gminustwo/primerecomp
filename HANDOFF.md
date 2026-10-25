@@ -9,9 +9,15 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   1. **Name and icon** (8ae0b90): window / message boxes / start screen / packages say PrimeRecomp; docs/icon is
      Samus' helmet (SVG source; the .ico's 16-48 px sizes drawn without the rounded square's margin; Windows keeps
      the .exe's icon). The Windows exe is `primerecomp.exe` since 2026-10-25 (user's request), its import library
-     `primerecomp.dll.a`: lasgame.dll imports from the exe by name, so a lasgame.dll linked before the rename doesn't
-     load with the new exe (relinked; its GAMELIB_ID doesn't change). macOS / Linux binaries are still `lasrecomp`;
-     the log / settings files are still lasrecomp.log / larecomp.ini.
+     `primerecomp.dll.a`: primegame.dll imports from the exe by name, so a primegame.dll linked before the rename doesn't
+     load with the new exe (relinked; its GAMELIB_ID doesn't change). Then (same day, user's request: "rename any
+     references to the LA port") the log is primerecomp.log (+ .previous.log; the last primerecomp.log becomes the
+     previous log once), the settings primerecomp.ini (larecomp.ini renamed and saved again on first start, without
+     LA's keys), the game library primegame.dll, the generator helper primegen (tools/primegen.spec), macOS / Linux
+     names likewise (bundle id io.github.primerecomp, ~/.local/share/primerecomp; untested). LA-only leftovers removed:
+     the dead settings (cheats, randomizer, difficulty, tracker...), the hidden Cosmetics tab, d-pad walking, the
+     Linux randomizer helper (now tools/linux/gen_helper.sh) and LA smoke test. Kept on purpose: LARECOMP_* variables,
+     internal symbols (lasgame_tables) and code comments about LA's history (upstream cherry-picks).
      **The user's Steam shortcut must be retargeted to primerecomp.exe** (they were told how; Steam was running, so
      shortcuts.vdf was left alone). The old lasrecomp.exe is gone from the playtest folder.
   2. **The menu from a controller** (8ae0b90): L3+R3 opens / closes it (they tried that; Steam takes Guide). The
@@ -67,7 +73,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 - **Playable:** boot, menus, the whole frigate, onto Tallon IV (the user's own playthrough), 60 / 120 fps.
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
-  from Steam (its shortcut targets primerecomp.exe; Steam Input applies). Their log is `lasrecomp.log` there, F9
+  from Steam (its shortcut targets primerecomp.exe; Steam Input applies). Their log is `primerecomp.log` there, F9
   captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 33b4872 (release
   exe, installed directly: the game was closed; `private/playtest/update/` holds the same build, so
   `Install_update.bat` is harmless). Use the update folder route whenever the game is running.
@@ -334,6 +340,6 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   `cd tools && ./venv/Scripts/python gen.py main ../private/exefs/main 0x7000000000 ../generated/main`, then `make`.
 - **Updating the playtest build:** the playtest exe is a release (GUI) build, started by Steam directly (its
   non-Steam shortcut targets primerecomp.exe (no launch options: start screen; extracted\ junction -> private\game), so
-  Steam Input applies; it logs to lasrecomp.log itself). Link one with `rm build/primerecomp.exe && make RELEASE=1
-  build/primerecomp.exe`, copy it and `build/lasgame.dll` / `.dll.id` into `private/playtest/MPRRecomp/` (only while
+  Steam Input applies; it logs to primerecomp.log itself). Link one with `rm build/primerecomp.exe && make RELEASE=1
+  build/primerecomp.exe`, copy it and `build/primegame.dll` / `.dll.id` into `private/playtest/MPRRecomp/` (only while
   the game isn't running), then relink the console dev exe (`rm build/primerecomp.exe && make`).

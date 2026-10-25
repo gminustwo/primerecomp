@@ -43,8 +43,9 @@ renderer come from there, and the full upstream history is kept. Upstream is the
 fixes can be cherry-picked.
 
 Link's Awakening's game code (its instruction patches, the hooks into its memory under `runtime/hle/`, the
-randomizer and its UI) has been removed. Some of LA's presentation features (button prompt textures, cosmetics) and
-its names (`lasrecomp`, `LARECOMP_*`) are still in the tree; see [PROGRESS.md](PROGRESS.md).
+randomizer, its cheats and cosmetics and their UI) has been removed. Its texture patcher (button prompts) is still in
+the tree, dormant, and so are its developer names (the `LARECOMP_*` test variables, some internal symbols), kept so
+upstream fixes still apply; see [PROGRESS.md](PROGRESS.md).
 
 ## Layout
 

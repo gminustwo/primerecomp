@@ -222,7 +222,7 @@ const char *rt_host_fn_name(uint64_t pc, uint64_t *offset) {
 }
 
 static const char *host_sym(uint64_t pc, uint64_t *offset) {
-    // (game functions first: they live in lasgame.dll, which the OS lookup can only name as a whole)
+    // (game functions first: they live in primegame.dll, which the OS lookup can only name as a whole)
     const char *s = rt_host_fn_name(pc, offset);
     return s ? s : plat_symbol(pc, offset);
 }

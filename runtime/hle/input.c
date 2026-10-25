@@ -303,7 +303,7 @@ static _Atomic int32_t script_lx, script_ly, script_rx, script_ry;
 
 // Tests of the bindings, through them like a real player:
 // LARECOMP_HOST_INPUT="frame:key:<SDL key name>:frames,frame:pad:<button>:frames,..." holds a host key / controller
-//   button (names as in larecomp.ini's bind_* lines: "Z", "Keypad 0", "south", "ltrigger"...);
+//   button (names as in primerecomp.ini's bind_* lines: "Z", "Keypad 0", "south", "ltrigger"...);
 //   "frame:lstick:<x>/<y>:frames" holds the controller's left stick there (raw SDL units, y up: a drifting stick).
 // "frame:type:<text>" types <text> as real key events (down, text, up per character), through the overlay menu / name
 //   entry first like a player's typing; "{Escape}" (any SDL key name) presses that key. No ',' or ':' in <text>.
@@ -537,15 +537,6 @@ static void fill_state(Cpu *c) {
     int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx) + script_lx), ly = clamp_axis((menu ? 0 : key_ly + pad_ly) + script_ly);
     int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx + mouse_rx) + script_rx);
     int32_t ry = clamp_axis((menu ? 0 : key_ry + pad_ry + mouse_ry) + script_ry);
-    // d-pad / arrow keys walk (setting) while the stick is at rest. "At rest" has a dead zone: a controller's stick
-    // never reads exactly 0 (a DualSense rests at a few hundred), which used to turn the d-pad off altogether.
-    if (!menu && g_settings.dpad_move && (int64_t)lx * lx + (int64_t)ly * ly < 8000ll * 8000) {
-        uint64_t d = key_buttons | pad_buttons | script_buttons;
-        int dx = (int)((d >> BTN_RIGHT) & 1) - (int)((d >> BTN_LEFT) & 1);
-        int dy = (int)((d >> BTN_UP) & 1) - (int)((d >> BTN_DOWN) & 1);
-        int32_t m = dx && dy ? 23170 : 32767;  // diagonals: same speed (32767 / sqrt 2)
-        if (dx || dy) lx = dx * m, ly = dy * m;
-    }
     // stick directions also appear as buttons (bits 16-23)
     if (lx < -16000) b |= 1ull << 16;
     if (ly > 16000) b |= 1ull << 17;
