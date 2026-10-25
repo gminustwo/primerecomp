@@ -396,13 +396,14 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
             if (r != 0) {
                 char last[300];
                 log_tail(u->log, last, sizeof last);
-                // Two more tries before the setup fails: compilers crash at random on CPUs that are unstable under
-                // full load (a fresh setup on an i9-14900K: clang crashed on one file - its crash report ends in a
-                // row of asterisks - which then compiled cleanly, alone and in a second setup).
-                bool crashed = last[0] == '*';
-                if (u->tries < 2) {
+                // Four more tries before the setup fails: compilers crash at random on CPUs that are unstable under
+                // full load (fresh setups on an i9-14900K, 32 compiles at once: about one compile in a hundred
+                // crashed - access violations at random addresses, or clang's crash report, which ends in a row of
+                // asterisks - and twice in a row on one file once; every such file then compiled cleanly).
+                bool crashed = last[0] == '*' || strstr(last, "<unknown module>");
+                if (u->tries < 4) {
                     u->tries++;
-                    LOG("[gamebuild] compiling %s failed (%s), trying again (%d of 2)\n", u->src,
+                    LOG("[gamebuild] compiling %s failed (%s), trying again (%d of 4)\n", u->src,
                         crashed ? "the compiler crashed" : last, u->tries);
                     PlatProc p = start_compile(&t, u);
                     if (p) { run[k].p = p; continue; }
