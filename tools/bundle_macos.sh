@@ -1,5 +1,5 @@
 #!/bin/bash
-# make app: build/LAS Recomp.app from <exe> (default build/mac15/lasrecomp). Contents/MacOS: the executable;
+# make app: build/PrimeRecomp.app from <exe> (default build/mac15/lasrecomp). Contents/MacOS: the executable;
 # Contents/Frameworks: every non-system dylib it loads (SDL3, FFmpeg; from build/deps, else Homebrew), load
 # paths rewritten to @rpath; Contents/Resources: the icon, the seed generator helper (build/helper/rando-gen, when
 # built: runtime/ui/rando_tab.mm generator_cmd) and what the start screen builds the game code with on the player's
@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 EXE=${1:-build/mac15/lasrecomp}
-APP="build/LAS Recomp.app"
+APP="build/PrimeRecomp.app"
 DEPS=$PWD/build/deps
 BUNDLE_ID=$(sed -n 's/^#define RT_BUNDLE_ID "\(.*\)"/\1/p' runtime/paths.h)
 VERSION=$(sed -n 's/^#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)
@@ -112,8 +112,8 @@ cat > "$C/Info.plist" <<EOF
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleExecutable</key><string>lasrecomp</string>
     <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
-    <key>CFBundleName</key><string>LAS Recomp</string>
-    <key>CFBundleDisplayName</key><string>LAS Recomp</string>
+    <key>CFBundleName</key><string>PrimeRecomp</string>
+    <key>CFBundleDisplayName</key><string>PrimeRecomp</string>
     <key>CFBundleIconFile</key><string>icon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>

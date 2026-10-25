@@ -144,7 +144,7 @@ static bool capturing() { return g_open.load() || g_kbd.load() == 1; }
 extern "C" bool menu_input_captured(void) { return capturing(); }
 
 bool menu_handle_event(const SDL_Event *e) {
-    static bool back_down, start_down;
+    static bool back_down, start_down, ls_down, rs_down;
     if (g_open.load() && bind_capture_event(e)) return true;  // Controls tab waiting for a new binding: it takes the press
     if (e->type == SDL_EVENT_KEY_DOWN) g_last_pad = false;
     if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) g_last_pad = true;
@@ -200,9 +200,13 @@ bool menu_handle_event(const SDL_Event *e) {
         bool down = e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
         if (e->gbutton.button == SDL_GAMEPAD_BUTTON_BACK) back_down = down;
         if (e->gbutton.button == SDL_GAMEPAD_BUTTON_START) start_down = down;
-        if (down && !typing && ((back_down && start_down) || e->gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE)) {
+        if (e->gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_STICK) ls_down = down;
+        if (e->gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) rs_down = down;
+        // (Steam keeps the Guide button for its own overlay: both stick presses together are the chord players try)
+        bool chord = (back_down && start_down) || (ls_down && rs_down);
+        if (down && !typing && (chord || e->gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE)) {
             LOG("[menu] %s by controller %s\n", g_open.load() ? "closed" : "opened",
-                e->gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE ? "Guide" : "Minus+Plus");
+                e->gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE ? "Guide" : ls_down && rs_down ? "L3+R3" : "Minus+Plus");
             set_open(!g_open.load());
             return true;
         }
@@ -563,7 +567,7 @@ static void tab_audio(void) {
     opt_end();
 }
 
-// Quit: back to the start screen (the game reboots to it - MPR Recomp's own since 2026-10-23; e12a7f6 had a
+// Quit: back to the start screen (the game reboots to it - PrimeRecomp's own since 2026-10-23; e12a7f6 had a
 // "Restart Game" here while it was still LAS Recomp's) or out to the desktop. Each asks first (progress since the
 // last save is lost); B / Esc or Cancel backs out.
 extern "C" void rt_request_reboot(int kind);  // runtime/main.c (RT_REBOOT_TITLE = 2: the start screen)
@@ -573,8 +577,8 @@ static void tab_quit(float scale, bool in_game) {
         ask = 0;
     const char *lost = in_game ? "\n\nProgress since your last save is lost." : "";
     char d1[200], d2[200];
-    snprintf(d1, sizeof d1, "Leaves the game for the MPR Recomp start screen (PLAY starts it again).%s", lost);
-    snprintf(d2, sizeof d2, "Closes MPR Recomp.%s", lost);
+    snprintf(d1, sizeof d1, "Leaves the game for the PrimeRecomp start screen (PLAY starts it again).%s", lost);
+    snprintf(d2, sizeof d2, "Closes PrimeRecomp.%s", lost);
     opt_begin("##quit", scale);
     opt_section("Quit");
     if (!ask) {

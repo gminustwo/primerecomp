@@ -149,8 +149,8 @@ static void log_to_file_without_console(void) {
 static void require_cpu(void) {
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("bmi2")) return;
-    MessageBoxA(NULL, "MPR Recomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or newer).",
-                "MPR Recomp", MB_ICONERROR | MB_OK);
+    MessageBoxA(NULL, "PrimeRecomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or newer).",
+                "PrimeRecomp", MB_ICONERROR | MB_OK);
     ExitProcess(1);
 }
 
@@ -158,7 +158,7 @@ static void require_cpu(void) {
 void plat_fatal_notice(void) {
     if (!g_log_path[0]) return;
     fflush(stderr);
-    char text[1024] = "MPR Recomp stopped because of an error.";
+    char text[1024] = "PrimeRecomp stopped because of an error.";
     FILE *f = fopen(g_log_path, "rb");
     if (f) {
         static char tail[16384];
@@ -174,17 +174,17 @@ void plat_fatal_notice(void) {
         if (line) {
             char *end = strchr(line, '\n');
             if (end) *end = 0;
-            snprintf(text, sizeof text, "MPR Recomp stopped because of an error:\n\n%.600s", line);
+            snprintf(text, sizeof text, "PrimeRecomp stopped because of an error:\n\n%.600s", line);
             if (strstr(line, "Vulkan") || strstr(line, "VK_") || strstr(line, "vk")) {
                 size_t l = strlen(text);
-                snprintf(text + l, sizeof text - l, "\n\nMPR Recomp needs a graphics driver with Vulkan 1.3: install the "
+                snprintf(text + l, sizeof text - l, "\n\nPrimeRecomp needs a graphics driver with Vulkan 1.3: install the "
                          "latest driver for your GPU (NVIDIA, AMD or Intel).");
             }
         }
     }
     size_t l = strlen(text);
     snprintf(text + l, sizeof text - l, "\n\nDetails: %s", g_log_path);
-    MessageBoxA(NULL, text, "MPR Recomp", MB_ICONERROR | MB_OK);
+    MessageBoxA(NULL, text, "PrimeRecomp", MB_ICONERROR | MB_OK);
 }
 
 void plat_init(void) {

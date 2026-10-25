@@ -1,4 +1,4 @@
-# MPR Recomp
+# PrimeRecomp
 
 A static recompilation of *Metroid Prime Remastered* (Nintendo Switch, 2023, v1.0.0, title ID `010012101468C000`)
 into a native Windows application. **Early bring-up: it does not boot yet.** See [PROGRESS.md](PROGRESS.md).

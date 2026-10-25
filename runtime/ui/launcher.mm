@@ -1,6 +1,6 @@
 // Start screen, shown before the game boots (user 2026-10-08, styled after Dusklight's launcher; Metroid Prime's look
 // since 2026-10-23 - theme.h): PLAY, SETTINGS, QUIT, game-files status at the lower left. Nothing of the game ships
-// with MPR Recomp: on first launch the user picks the folder with their own game files (v1.0.0), we check the main
+// with PrimeRecomp: on first launch the user picks the folder with their own game files (v1.0.0), we check the main
 // module's build id, copy the files and build the game's data image; PLAY stays disabled until that worked. The
 // background is the game's own movie of Tallon IV turning in space (from the user's files), on a loop.
 //
@@ -87,7 +87,7 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 
 static const uint8_t BUILD_ID[8] = {0x67, 0xc9, 0xca, 0x14, 0x28, 0x22, 0x27, 0x52};  // Metroid Prime Remastered v1.0.0 main
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
-// it): alpha_<n> for now. (LAS Recomp's start screen asked its GitHub releases for updates; MPR Recomp has none yet,
+// it): alpha_<n> for now. (LAS Recomp's start screen asked its GitHub releases for updates; PrimeRecomp has none yet,
 // so nothing is asked.)
 #define LARECOMP_VERSION "alpha_1"
 
@@ -158,7 +158,7 @@ static void set_failure(int k) {
         "Choose the folder that holds the game files.",
         "Choose the folder that holds the game files.",
         "Make sure there's about 16 GB free and try again.",
-        "MPR Recomp needs version 1.0.0 of the game, without updates.",
+        "PrimeRecomp needs version 1.0.0 of the game, without updates.",
         "Some files are missing. Choose the folder again; if it happens again, copy your extracted game files again.",
         "Make sure there's about 2 GB free and try again. If it keeps happening, report it on GitHub."};
     if (k >= 1 && k <= 6) set_job(head[k], true, hint[k]);
@@ -251,7 +251,7 @@ static void *extract_thread(void *) {
     if (exefs.empty() || romfs.empty()) { set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND); goto done; }
     if (!build_id_ok(exefs + "/main")) { set_failure(FAIL_VERSION); goto done; }
     {
-        // (the picked folder can't be MPR Recomp's own copy: setting up again deletes that first)
+        // (the picked folder can't be PrimeRecomp's own copy: setting up again deletes that first)
         char a[4096], b[4096];
         mkdir(g_root.c_str(), 0755);
         if (realpath(exefs.c_str(), a) && realpath(g_root.c_str(), b) && !strncmp(a, b, strlen(b)) &&
@@ -463,7 +463,7 @@ extern "C" void menu_apply_window_requests(void *sdl_window);
 extern "C" int g_start_screen;  // runtime/hle/game.c: the start screen is up (no game loaded: don't read its memory)
 static float g_menu_gap = 0.35f;  // space under each item, in line heights
 
-// The first PLAY ever (settings.menu_tip_seen): a note on opening the MPR Recomp menu in game (it isn't obvious),
+// The first PLAY ever (settings.menu_tip_seen): a note on opening the PrimeRecomp menu in game (it isn't obvious),
 // OK starts the game. Returns true once OK is pressed. (LAS Recomp asked "authentic 16:9 or unlocked?" first; the
 // Aspect ratio setting only matters on windows wider than 16:9, so that isn't asked.)
 static bool g_tip_test;  // (LARECOMP_LAUNCHER_SHOT=<frame>:tip)
@@ -481,14 +481,14 @@ static bool menu_tip(float s) {
     ImGui::PopStyleVar(2);
     if (open) {
         ImGui::SetWindowFontScale(1.25f);
-        // the controller's home button first (what players reach for: the PS button on a DualSense), the combo second
+        // both sticks pressed in first (Steam keeps the home button for its overlay), then the home button
         static const char *const home[] = {"Home button", "Xbox button", "PlayStation button"};  // (bind_label_family)
-        static const char *const pad[] = {"Minus + Plus", "View + Menu", "Create + Options"};
+        static const char *const sticks[] = {"both sticks pressed in", "LS + RS pressed in", "L3 + R3"};
         ImGui::PushTextWrapPos(0);
-        ImGui::TextUnformatted("MPR Recomp has its own menu: field of view, gyro aiming, resolution, controls and more.");
+        ImGui::TextUnformatted("PrimeRecomp has its own menu: field of view, gyro aiming, resolution, controls and more.");
         ImGui::Spacing();
         int fam = bind_label_family() % 3;
-        ImGui::Text("Open it in game with F1 or Esc, or on a controller with the %s (or %s together).", home[fam], pad[fam]);
+        ImGui::Text("Open it in game with F1 or Esc, or on a controller with %s (or the %s).", sticks[fam], home[fam]);
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, 14 * s));
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 180 * s) * 0.5f);
@@ -709,7 +709,7 @@ static void prelaunch_tab(float sc) {
         ImGui::PushFont(g_font_menu);
         ImGui::TextColored(theme::warn, "Are you sure?");
         ImGui::PopFont();
-        ImGui::Text("This deletes MPR Recomp's copy of the game files (%.1f GB).", gb);
+        ImGui::Text("This deletes PrimeRecomp's copy of the game files (%.1f GB).", gb);
         ImGui::TextDisabled("Saves and settings are kept. Your own game files aren't touched.");
         if (rt_dev_mode()) {  // (a source checkout: the files are the project's own extracted/)
             bool abs = !g_root.empty() && (g_root[0] == '/' || (g_root.size() > 1 && g_root[1] == ':'));
@@ -719,7 +719,7 @@ static void prelaunch_tab(float sc) {
         ImGui::Spacing();
         if (ImGui::Button("Delete", ImVec2(220 * sc, 0))) {
             bool ok = rt_remove_game_files(g_root.c_str());  // (runtime/paths.c: only what the extraction made)
-            set_job(ok ? "Game files deleted." : "Could not delete the game files (not in MPR Recomp's data folder?).", !ok);
+            set_job(ok ? "Game files deleted." : "Could not delete the game files (not in PrimeRecomp's data folder?).", !ok);
             g_files_deleted = true, gb = -1;
             ImGui::CloseCurrentPopup();
         }
@@ -734,7 +734,7 @@ static void prelaunch_tab(float sc) {
     ImGui::Spacing();
     heading("About");
     ImGui::PushTextWrapPos(0);
-    ImGui::Text("MPR Recomp %s - Metroid Prime Remastered, recompiled to run natively on this computer.",
+    ImGui::Text("PrimeRecomp %s - Metroid Prime Remastered, recompiled to run natively on this computer.",
                 tag_label(LARECOMP_VERSION).c_str());
     ImGui::TextDisabled("Built from your own copy of the game (Nintendo Switch, v1.0.0); nothing of the game is included.");
     ImGui::PopTextWrapPos();
@@ -1126,11 +1126,11 @@ extern "C" void launcher_run(const char *root) {
                     dl->AddLine(ImVec2(x + u * 0.35f, cy + u * 0.35f), ImVec2(x + u, cy - u * 0.4f), g, fs * 0.11f);
                 };
                 std::string src_d = "The folder with your own game folders (exefs/romfs) of Metroid Prime Remastered for "
-                                    "Nintendo Switch, version 1.0.0. The game isn't included with MPR Recomp.";
+                                    "Nintendo Switch, version 1.0.0. The game isn't included with PrimeRecomp.";
                 if (!src.empty()) src_d += "\n\nChosen: " + src;
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
-                std::string ex_d = "Copies the game files MPR Recomp needs and recompiles the game from them. This only "
+                std::string ex_d = "Copies the game files PrimeRecomp needs and recompiles the game from them. This only "
                                    "needs to be done once and may take a while. Your own files aren't changed.";
                 if (!job.empty()) ex_d += "\n\n" + job + (job_hint.empty() ? "" : ".\n" + job_hint);
 
@@ -1161,14 +1161,14 @@ extern "C" void launcher_run(const char *root) {
                     }
                     files_gb = -1;  // (re-measured after a setup)
                 } else {
-                    // DELETE: frees MPR Recomp's copy (runtime/paths.c removes only what the setup made, only inside
+                    // DELETE: frees PrimeRecomp's copy (runtime/paths.c removes only what the setup made, only inside
                     // the data root). Saves, settings and the user's own files stay.
                     if (files_gb < 0) files_gb = rt_game_files_size(g_root.c_str()) / 1e9;
                     char gb[32];
                     snprintf(gb, sizeof gb, "%.1f GB", files_gb);
                     opt_section("Game files");
                     if (!g_confirm_delete) {
-                        if (opt_action("Delete game files", gb, "Frees the space MPR Recomp's copy of the game files takes. "
+                        if (opt_action("Delete game files", gb, "Frees the space PrimeRecomp's copy of the game files takes. "
                                        "Saves and settings are kept, and your own game files aren't touched: you can "
                                        "set the game files up again from them.", true))
                             g_confirm_delete = true;
@@ -1178,7 +1178,7 @@ extern "C" void launcher_run(const char *root) {
                             bool ok = rt_remove_game_files(g_root.c_str());
                             status = check_game_files(g_root);
                             if (ok) set_job("Game files deleted.");
-                            else set_job("Couldn't delete the game files", true, "They aren't in MPR Recomp's data folder, "
+                            else set_job("Couldn't delete the game files", true, "They aren't in PrimeRecomp's data folder, "
                                          "so they were left alone.");
                             if (!status.empty()) bg_close(), g_bg = 0;
                             g_confirm_delete = false, files_gb = -1;
@@ -1273,7 +1273,7 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::GetWindowDrawList()->AddText(ImVec2(ImGui::GetWindowPos().x + 20 * s, ImGui::GetWindowPos().y + 16 * s),
                                                     IM_COL32(255, 255, 255, 255), b ? b + 1 : f);
             }
-            {  // MPR Recomp and the build (lower right), on the shadow banner from the right
+            {  // PrimeRecomp and the build (lower right), on the shadow banner from the right
                 ImDrawList *dl = ImGui::GetWindowDrawList();
                 ImFont *font = ImGui::GetFont();
                 float fs = ImGui::GetFontSize(), right = ImGui::GetWindowPos().x + ds.x - 60 * s;
@@ -1285,7 +1285,7 @@ extern "C" void launcher_run(const char *root) {
                 float vs = fs * 1.4f, y = ImGui::GetWindowPos().y + ds.y - 134 * s;
                 ImVec2 vsz = font->CalcTextSizeA(vs, FLT_MAX, 0, ver.c_str());
                 text(ImVec2(right - vsz.x, y), vs, IM_COL32(255, 255, 255, 255), ver.c_str());
-                const char *name = "MPR Recomp";
+                const char *name = "PrimeRecomp";
                 ImVec2 nsz = font->CalcTextSizeA(fs, FLT_MAX, 0, name);
                 text(ImVec2(right - nsz.x, y + vsz.y + 2 * s), fs, theme::u32(theme::accent), name);
             }

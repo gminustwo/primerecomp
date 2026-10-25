@@ -1,73 +1,83 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0b1a3a"/>
-      <stop offset="0.55" stop-color="#1d4f7a"/>
-      <stop offset="1" stop-color="#2e8c9c"/>
+    <radialGradient id="bg" cx="0.5" cy="0.4" r="0.8">
+      <stop offset="0" stop-color="#1c4a73"/>
+      <stop offset="0.5" stop-color="#0c2142"/>
+      <stop offset="1" stop-color="#050c1d"/>
+    </radialGradient>
+    <radialGradient id="shell" cx="0.36" cy="0.25" r="0.9">
+      <stop offset="0" stop-color="#ff9a5c"/>
+      <stop offset="0.3" stop-color="#e2502a"/>
+      <stop offset="0.7" stop-color="#a82a12"/>
+      <stop offset="1" stop-color="#4a0d05"/>
+    </radialGradient>
+    <linearGradient id="ridge" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#c9381a"/>
+      <stop offset="0.45" stop-color="#ffa36a"/>
+      <stop offset="0.55" stop-color="#ff8a4c"/>
+      <stop offset="1" stop-color="#8f220e"/>
     </linearGradient>
-    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1f6f8f"/>
-      <stop offset="1" stop-color="#0c2f4f"/>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd36b"/>
+      <stop offset="1" stop-color="#d27a14"/>
     </linearGradient>
-    <linearGradient id="sand" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#f3d79a"/>
-      <stop offset="1" stop-color="#c99a52"/>
+    <radialGradient id="ear" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#f06a36"/>
+      <stop offset="1" stop-color="#6e180a"/>
+    </radialGradient>
+    <linearGradient id="visor" x1="0.25" y1="0" x2="0.75" y2="1">
+      <stop offset="0" stop-color="#b6ffb8"/>
+      <stop offset="0.25" stop-color="#52e47e"/>
+      <stop offset="0.65" stop-color="#139a46"/>
+      <stop offset="1" stop-color="#05401c"/>
     </linearGradient>
-    <linearGradient id="blade" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#e9f3ff"/>
-      <stop offset="0.5" stop-color="#ffffff"/>
-      <stop offset="0.5" stop-color="#b9cbe0"/>
-      <stop offset="1" stop-color="#8fa6c2"/>
+    <linearGradient id="bevel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5b1407"/>
+      <stop offset="1" stop-color="#2a0703"/>
     </linearGradient>
-    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#ffe08a"/>
-      <stop offset="1" stop-color="#c8891e"/>
-    </linearGradient>
-    <radialGradient id="moonglow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#fff6d8" stop-opacity="0.55"/>
-      <stop offset="1" stop-color="#fff6d8" stop-opacity="0"/>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff7a3a" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#ff7a3a" stop-opacity="0"/>
     </radialGradient>
     <clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
   </defs>
   <g clip-path="url(#sq)">
-    <rect x="100" y="100" width="824" height="824" fill="url(#sky)"/>
-    <!-- stars -->
-    <g fill="#fff8e0">
-      <circle cx="210" cy="215" r="5"/><circle cx="300" cy="170" r="3.5"/><circle cx="395" cy="250" r="4"/>
-      <circle cx="250" cy="330" r="3"/><circle cx="470" cy="165" r="3"/><circle cx="820" cy="380" r="3.5"/>
-      <circle cx="560" cy="300" r="2.8"/>
+    <rect x="100" y="100" width="824" height="824" fill="url(#bg)"/>
+    <g fill="#e8f4ff" opacity="0.75">
+      <circle cx="190" cy="230" r="4"/><circle cx="262" cy="158" r="3"/><circle cx="842" cy="214" r="4"/>
+      <circle cx="790" cy="300" r="2.5"/><circle cx="168" cy="380" r="2.5"/><circle cx="872" cy="430" r="3"/>
+      <circle cx="840" cy="760" r="2.5"/><circle cx="182" cy="720" r="3"/>
     </g>
-    <!-- moon -->
-    <circle cx="700" cy="275" r="200" fill="url(#moonglow)"/>
-    <circle cx="700" cy="275" r="92" fill="#fff3cf"/>
-    <circle cx="732" cy="252" r="82" fill="#25507c" opacity="0.18"/>
-    <!-- sea -->
-    <rect x="100" y="600" width="824" height="324" fill="url(#sea)"/>
-    <path d="M100 640 Q180 620 260 640 T420 640 T580 640 T740 640 T924 640" stroke="#7fd3e0" stroke-width="7" fill="none" opacity="0.7"/>
-    <path d="M100 705 Q200 685 300 705 T500 705 T700 705 T924 705" stroke="#5fb8cf" stroke-width="6" fill="none" opacity="0.55"/>
-    <!-- island -->
-    <path d="M150 640 Q330 520 560 600 Q700 610 770 640 Z" fill="#14363f"/>
-    <path d="M300 585 Q360 470 430 560 Q470 520 520 590 Z" fill="#1b4a52"/>
-    <!-- palm -->
-    <path d="M395 600 Q385 520 420 440" stroke="#0e2a31" stroke-width="16" fill="none" stroke-linecap="round"/>
-    <g fill="#0e2a31">
-      <path d="M420 440 Q360 410 320 440 Q365 420 420 446 Z"/>
-      <path d="M420 440 Q470 395 525 418 Q470 410 422 447 Z"/>
-      <path d="M420 440 Q400 380 350 375 Q395 395 416 446 Z"/>
-      <path d="M420 440 Q455 455 480 500 Q445 465 418 447 Z"/>
-    </g>
-    <!-- sword in the sand -->
-    <g transform="translate(600 360) rotate(7)">
-      <path d="M-22 120 L22 120 L22 470 L0 520 L-22 470 Z" fill="url(#blade)" stroke="#5c728e" stroke-width="4"/>
-      <rect x="-80" y="96" width="160" height="30" rx="12" fill="url(#gold)" stroke="#7a4d10" stroke-width="4"/>
-      <rect x="-15" y="0" width="30" height="100" rx="8" fill="#3b5fa8" stroke="#1d335f" stroke-width="4"/>
-      <circle cx="0" cy="-10" r="24" fill="url(#gold)" stroke="#7a4d10" stroke-width="4"/>
-      <path d="M-30 128 L0 150 L30 128" fill="#c8891e"/>
-    </g>
-    <!-- beach foreground -->
-    <path d="M100 924 L100 820 Q330 750 560 790 Q760 820 924 770 L924 924 Z" fill="url(#sand)"/>
-    <path d="M520 812 Q640 770 760 808" fill="#e6c27d"/>
-    <path d="M540 868 Q640 842 750 870" stroke="#b5864a" stroke-width="10" fill="none" opacity="0.6" stroke-linecap="round"/>
+    <circle cx="512" cy="520" r="360" fill="url(#glow)"/>
   </g>
+  <!-- ear domes -->
+  <circle cx="262" cy="530" r="66" fill="url(#ear)" stroke="#250602" stroke-width="10"/>
+  <circle cx="262" cy="530" r="30" fill="url(#gold)" stroke="#3a1a02" stroke-width="7"/>
+  <circle cx="762" cy="530" r="66" fill="url(#ear)" stroke="#250602" stroke-width="10"/>
+  <circle cx="762" cy="530" r="30" fill="url(#gold)" stroke="#3a1a02" stroke-width="7"/>
+  <!-- shell -->
+  <path d="M512 190 C676 190 752 300 760 450 L764 560 C766 640 728 712 668 762 C620 802 566 826 512 830
+           C458 826 404 802 356 762 C296 712 258 640 260 560 L264 450 C272 300 348 190 512 190 Z"
+        fill="url(#shell)" stroke="#250602" stroke-width="12" stroke-linejoin="round"/>
+  <!-- crest ridge -->
+  <path d="M512 194 C534 194 548 206 552 226 L566 368 L458 368 L472 226 C476 206 490 194 512 194 Z" fill="url(#ridge)"/>
+  <path d="M472 226 L458 368 M552 226 L566 368" stroke="#5b1407" stroke-width="6" opacity="0.6"/>
+  <!-- visor recess (bevel) and visor -->
+  <path d="M316 446 C338 388 430 356 512 356 C594 356 686 388 708 446 L698 530 C692 574 656 594 622 604
+           L596 700 C584 742 550 762 512 762 C474 762 440 742 428 700 L402 604 C368 594 332 574 326 530 Z"
+        fill="url(#bevel)"/>
+  <path d="M342 454 C362 408 438 384 512 384 C586 384 662 408 682 454 L674 522 C670 554 640 570 606 580
+           L580 686 C570 720 544 736 512 736 C480 736 454 720 444 686 L418 580 C384 570 354 554 350 522 Z"
+        fill="url(#visor)"/>
+  <!-- visor reflections -->
+  <path d="M372 452 C396 420 452 404 508 402 C474 418 434 436 404 470 C390 476 374 468 372 452 Z" fill="#ffffff" opacity="0.6"/>
+  <path d="M630 452 C646 470 652 494 650 516" stroke="#ffffff" stroke-width="8" stroke-linecap="round" fill="none" opacity="0.3"/>
+  <!-- cheek seams and gold trim -->
+  <path d="M290 600 C306 676 350 736 412 774" stroke="#5b1407" stroke-width="9" fill="none" stroke-linecap="round"/>
+  <path d="M734 600 C718 676 674 736 612 774" stroke="#5b1407" stroke-width="9" fill="none" stroke-linecap="round"/>
+  <path d="M300 590 C318 668 360 724 420 760" stroke="url(#gold)" stroke-width="10" fill="none" stroke-linecap="round" opacity="0.9"/>
+  <path d="M724 590 C706 668 664 724 604 760" stroke="url(#gold)" stroke-width="10" fill="none" stroke-linecap="round" opacity="0.9"/>
+  <!-- chin rib -->
+  <path d="M490 770 L512 762 L534 770 L528 822 L496 822 Z" fill="#7a1b09" stroke="#250602" stroke-width="6" stroke-linejoin="round"/>
   <rect x="100" y="100" width="824" height="824" rx="185" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="4"/>
 </svg>

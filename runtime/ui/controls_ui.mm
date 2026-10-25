@@ -126,8 +126,9 @@ extern "C" void controls_bindings_draw(float scale) {
     ImGui::EndDisabled();
     ImGui::PushTextWrapPos(0);
     ImGui::TextDisabled("Bindings apply to the game only. Menus select with A / Enter and go back with B / Esc (A "
-                        "and B as the face buttons above place them), and the in-game menu always opens with F1 or Esc, or "
-                        "the controller's Back + Start held together, or its Home / Guide button - so this page can't be "
+                        "and B as the face buttons above place them), and the in-game menu always opens with F1, or both of "
+                        "the controller's sticks pressed in, Back + Start held together, or its Home / Guide button - so this "
+                        "page can't be "
                         "locked out. The game's button icons follow the controller bindings.");
     ImGui::PopTextWrapPos();
 }
