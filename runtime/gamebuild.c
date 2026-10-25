@@ -213,6 +213,7 @@ static void log_tail(const char *path, char *out, size_t n) {  // the last line 
 typedef struct {
     char src[1100], obj[1100], log[1100];
     unsigned long long bytes;
+    int tries;  // compiles started again after a failure
 } Unit;
 
 typedef struct {
@@ -229,6 +230,7 @@ static void add_unit(Units *us, const char *src, const char *work, const char *s
     snprintf(u->src, sizeof u->src, "%s", src);
     snprintf(u->obj, sizeof u->obj, "%s" SEP "%s.o", work, stem);
     snprintf(u->log, sizeof u->log, "%s" SEP "%s.log", work, stem);
+    u->tries = 0;
     struct stat st;
     u->bytes = stat(src, &st) == 0 ? (unsigned long long)st.st_size : 0;
 }
@@ -259,7 +261,9 @@ static PlatProc start_compile(const Tools *t, const Unit *u) {
     add(&a, inc);
     add(&a, "-DGAMELIB_ID=\"" GAMELIB_ID "\"");
     add(&a, "-c");
-    add(&a, u->src);
+    static int flaky = -1;  // (test) LARECOMP_GAMEBUILD_FLAKY=1: each file's first compile fails (the retry)
+    if (flaky < 0) flaky = getenv("LARECOMP_GAMEBUILD_FLAKY") != NULL;
+    add(&a, flaky && u->tries == 0 ? "flaky_test_missing.c" : u->src);
     add(&a, "-o");
     add(&a, u->obj);
     PlatProc p = spawn(a.v, u->log);
@@ -392,7 +396,18 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
             if (r != 0) {
                 char last[300];
                 log_tail(u->log, last, sizeof last);
-                LOG("[gamebuild] compiling %s failed: %s\n", u->src, last);
+                // Two more tries before the setup fails: compilers crash at random on CPUs that are unstable under
+                // full load (a fresh setup on an i9-14900K: clang crashed on one file - its crash report ends in a
+                // row of asterisks - which then compiled cleanly, alone and in a second setup).
+                bool crashed = last[0] == '*';
+                if (u->tries < 2) {
+                    u->tries++;
+                    LOG("[gamebuild] compiling %s failed (%s), trying again (%d of 2)\n", u->src,
+                        crashed ? "the compiler crashed" : last, u->tries);
+                    PlatProc p = start_compile(&t, u);
+                    if (p) { run[k].p = p; continue; }
+                }
+                LOG("[gamebuild] compiling %s failed: %s\n", u->src, crashed ? "the compiler crashed" : last);
                 snprintf(why, why_size, "the game code didn't compile");
                 ok = false;
             }
