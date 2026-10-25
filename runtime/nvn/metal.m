@@ -1176,6 +1176,8 @@ int ui_run(void) {
         extern void input_rumble_pump(void);
         input_rumble_pump();
         menu_apply_window_requests(window);
+        extern void input_mouse_frame(SDL_Window *w);
+        input_mouse_frame(window);  // (runtime/hle/input.c: mouse aim captures the mouse while playing)
         int w, h;
         SDL_GetWindowSizeInPixels(window, &w, &h);
         layer.drawableSize = CGSizeMake(w, h);

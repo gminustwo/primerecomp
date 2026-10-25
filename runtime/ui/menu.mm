@@ -28,7 +28,6 @@ extern "C" {
 #include "../settings.h"
 #include "menu.h"
 void input_reset(void);
-bool input_gamepad_connected(void);
 void controls_bindings_draw(float scale);  // controls_ui.mm
 #include "../input_bind.h"
 #include "../paths.h"
@@ -160,10 +159,9 @@ bool menu_handle_event(const SDL_Event *e) {
     bool typing = g_kbd.load() == 1 || (g_open.load() && g_text_busy.load());
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN:
-        // Esc opens the menu only without a controller: Steam's desktop mode turns controller buttons into keys
-        // (a Steam Controller's B is Esc), which opened the menu in the middle of play
-        if (!e->key.repeat && (e->key.scancode == SDL_SCANCODE_F1 ||
-                               (e->key.scancode == SDL_SCANCODE_ESCAPE && !g_open.load() && !input_gamepad_connected()))) {
+        // F1 only: Esc is the game's pause menu, as in a PC shooter (runtime/hle/bindings.c; it also closes this menu,
+        // below)
+        if (!e->key.repeat && e->key.scancode == SDL_SCANCODE_F1) {
             if (!typing) {
                 LOG("[menu] %s by key %s\n", g_open.load() ? "closed" : "opened", SDL_GetScancodeName(e->key.scancode));
                 set_open(!g_open.load());  // (Esc with the menu open goes to ImGui below: it cancels a field)
@@ -619,12 +617,34 @@ static void tab_about(void) {
     hint("The game's text language, as its own system setting. Applies when the game restarts: Quit -> Quit to "
          "Start Screen, then Play.");
     ImGui::Spacing();
+    header("Mouse");
+    {
+        bool aim = g_settings.mouse_aim;
+        if (ImGui::Checkbox("Mouse aim", &aim)) { g_settings.mouse_aim = aim; settings_save(); }
+        ImGui::SameLine(0, 30 * ImGui::GetFontSize() / 34);
+        bool inv = g_settings.mouse_invert;
+        if (ImGui::Checkbox("Invert vertical", &inv)) { g_settings.mouse_invert = inv; settings_save(); }
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Sensitivity");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1);
+        float sens = g_settings.mouse_sens;
+        if (ImGui::SliderFloat("##sens", &sens, MOUSE_SENS_MIN, MOUSE_SENS_MAX, "%.2f", ImGuiSliderFlags_Logarithmic)) {
+            g_settings.mouse_sens = sens;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) settings_save();
+    }
+    hint("The mouse turns Samus and aims up and down directly, as in a PC shooter (the game's Dual Stick control "
+         "scheme). It's captured while you play and let go in menus. In the Morph Ball and while locked on it works "
+         "the camera stick instead. Sensitivity 1: 0.044 degrees per mouse count.");
+    ImGui::Spacing();
     header("Controls");
     controls_bindings_draw(ImGui::GetFontSize() / 34);
     ImGui::Spacing();
     header("Menu");
-    ImGui::TextUnformatted("Open / close this menu:  F1, Esc, the controller's Home / Xbox / PlayStation button, or Back + Start");
+    ImGui::TextUnformatted("Open / close this menu:  F1, both sticks pressed in, Back + Start, or the controller's Home button");
     ImGui::TextUnformatted("Switch tabs:  L / R  (Q / E)        Back:  B  (Esc)");
+    ImGui::TextUnformatted("In the game's menus:  Enter / Space confirm, Esc / Backspace go back, Q / E switch pages");
     ImGui::TextUnformatted("Fullscreen:  F11 / Alt+Enter");
 }
 

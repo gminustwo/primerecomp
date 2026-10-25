@@ -488,7 +488,7 @@ static bool menu_tip(float s) {
         ImGui::TextUnformatted("PrimeRecomp has its own menu: field of view, gyro aiming, resolution, controls and more.");
         ImGui::Spacing();
         int fam = bind_label_family() % 3;
-        ImGui::Text("Open it in game with F1 or Esc, or on a controller with %s (or the %s).", sticks[fam], home[fam]);
+        ImGui::Text("Open it in game with F1, or on a controller with %s (or the %s).", sticks[fam], home[fam]);
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, 14 * s));
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 180 * s) * 0.5f);

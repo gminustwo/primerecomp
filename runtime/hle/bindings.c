@@ -10,22 +10,26 @@
 #include "../settings.h"
 
 _Static_assert(PADB_LTRIGGER == SDL_GAMEPAD_BUTTON_COUNT, "trigger pseudo-buttons follow SDL's buttons");
+_Static_assert(BIND_MOUSE_LEFT == SDL_SCANCODE_COUNT, "mouse buttons follow SDL's scancodes");
 
 // Defaults: Nintendo layout by position (east = A, south = B, north = X, west = Y; the Xbox face layout swaps them:
 // bind_face_host), triggers = ZL / ZR;
-// keyboard WASD left stick, arrows d-pad, K/J/L/I = A/B/X/Y, Q/E = L/R, 1/3 = ZL/ZR, Enter / Backspace = Plus /
-// Minus, F / numpad 0 = stick clicks, numpad 8/5/4/6 right stick.
+// keyboard and mouse as a PC shooter, for the game's Dual Stick scheme: WASD move, the mouse aims (runtime/hle/game.c
+// mouse aim; the arrows turn), left click shoots (ZR), right click locks on / scans (ZL), Space jumps (B), F fires a
+// missile (R), Left Ctrl morphs (Y), Q / E / R / T the Combat / Scan / Thermal / X-Ray visors (d-pad up / right /
+// down / left), 1-4 the beams, Tab the map (Plus), Esc the pause menu (Minus), Enter = A, X = X (beam select),
+// Left Shift = L (jump).
 #define DEF_PAD { \
     SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_NORTH, SDL_GAMEPAD_BUTTON_WEST, \
     SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_GAMEPAD_BUTTON_RIGHT_STICK, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, \
     SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, PADB_LTRIGGER, PADB_RTRIGGER, SDL_GAMEPAD_BUTTON_START, SDL_GAMEPAD_BUTTON_BACK, \
     SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_DOWN}
 #define DEF_KEY { \
-    SDL_SCANCODE_K, SDL_SCANCODE_J, SDL_SCANCODE_L, SDL_SCANCODE_I, SDL_SCANCODE_F, SDL_SCANCODE_KP_0, \
-    SDL_SCANCODE_Q, SDL_SCANCODE_E, SDL_SCANCODE_1, SDL_SCANCODE_3, SDL_SCANCODE_RETURN, SDL_SCANCODE_BACKSPACE, \
-    SDL_SCANCODE_LEFT, SDL_SCANCODE_UP, SDL_SCANCODE_RIGHT, SDL_SCANCODE_DOWN, \
-    SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A, SDL_SCANCODE_D, SDL_SCANCODE_KP_8, SDL_SCANCODE_KP_5, \
-    SDL_SCANCODE_KP_4, SDL_SCANCODE_KP_6}
+    SDL_SCANCODE_RETURN, SDL_SCANCODE_SPACE, SDL_SCANCODE_X, SDL_SCANCODE_LCTRL, 0, 0, \
+    SDL_SCANCODE_LSHIFT, SDL_SCANCODE_F, BIND_MOUSE_RIGHT, BIND_MOUSE_LEFT, SDL_SCANCODE_TAB, SDL_SCANCODE_ESCAPE, \
+    SDL_SCANCODE_T, SDL_SCANCODE_Q, SDL_SCANCODE_E, SDL_SCANCODE_R, \
+    SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A, SDL_SCANCODE_D, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, \
+    SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4}
 static const int16_t k_def_pad[BIND_PAD_COUNT] = DEF_PAD, k_def_key[BIND_KEY_COUNT] = DEF_KEY;
 int16_t g_bind_pad[BIND_PAD_COUNT] = DEF_PAD, g_bind_key[BIND_KEY_COUNT] = DEF_KEY;
 
@@ -60,11 +64,21 @@ void bind_load_face_layout(int layout) {
 static const char *const k_ini[BIND_KEY_COUNT] = {
     "a", "b", "x", "y", "lstick", "rstick", "l", "r", "zl", "zr", "plus", "minus", "left", "up", "right", "down",
     "ls_up", "ls_down", "ls_left", "ls_right", "rs_up", "rs_down", "rs_left", "rs_right",
+    "beam_power", "beam_wave", "beam_ice", "beam_plasma",
 };
 static const char *const k_names[BIND_KEY_COUNT] = {
     "A", "B", "X", "Y", "Left stick press", "Right stick press", "L", "R", "ZL", "ZR", "Plus", "Minus",
     "D-pad Left", "D-pad Up", "D-pad Right", "D-pad Down", "Left stick Up", "Left stick Down", "Left stick Left",
     "Left stick Right", "Right stick Up", "Right stick Down", "Right stick Left", "Right stick Right",
+    "X + D-pad Up", "X + D-pad Right", "X + D-pad Down", "X + D-pad Left",
+};
+// What the game's Dual Stick scheme does with each (its Options -> Controls -> View Controls page; the game's "Swap
+// Beam and Visor" option trades the d-pad's visors for the beams)
+static const char *const k_actions[BIND_KEY_COUNT] = {
+    "Shoot beam", "Jump", "Beam select (hold)", "Morph Ball", "", "", "Jump", "Missile", "Lock on / scan (hold)",
+    "Shoot beam (hold: charge)", "Map", "Pause menu", "X-Ray Visor", "Combat Visor", "Scan Visor", "Thermal Visor",
+    "Move forward", "Move back", "Strafe left", "Strafe right", "Look up", "Look down", "Turn left", "Turn right",
+    "Power Beam", "Wave Beam", "Ice Beam", "Plasma Beam",
 };
 // controller buttons by position (larecomp.ini)
 static const char *const k_pad_ini[PADB_HOST_COUNT] = {
@@ -83,6 +97,7 @@ int bind_pad_from_name(const char *name) {
 }
 
 const char *bind_input_name(int slot) { return slot >= 0 && slot < BIND_KEY_COUNT ? k_names[slot] : "?"; }
+const char *bind_input_action(int slot) { return slot >= 0 && slot < BIND_KEY_COUNT ? k_actions[slot] : ""; }
 
 // fam: 0 Nintendo (and pads SDL doesn't name), 1 Xbox, 2 PlayStation
 const char *bind_pad_label(int host, int fam) {
@@ -105,10 +120,21 @@ const char *bind_pad_label(int host, int fam) {
     return fam == 1 ? xb[host] : fam == 2 ? ps[host] : nin[host];
 }
 
+static const char *const k_mouse_names[BIND_KEY_HOST_COUNT - BIND_MOUSE_LEFT] = {
+    "Mouse Left", "Mouse Middle", "Mouse Right", "Mouse 4", "Mouse 5", "Wheel Up", "Wheel Down",
+};
+
 const char *bind_key_label(int sc) {
+    if (sc >= BIND_MOUSE_LEFT && sc < BIND_KEY_HOST_COUNT) return k_mouse_names[sc - BIND_MOUSE_LEFT];
     if (sc <= 0 || sc >= SDL_SCANCODE_COUNT) return "(none)";
     const char *n = SDL_GetScancodeName((SDL_Scancode)sc);
     return n && *n ? n : "(unnamed key)";
+}
+
+int bind_key_from_name(const char *name) {
+    for (int i = 0; i < BIND_KEY_HOST_COUNT - BIND_MOUSE_LEFT; i++)
+        if (!SDL_strcasecmp(name, k_mouse_names[i])) return BIND_MOUSE_LEFT + i;
+    return SDL_GetScancodeFromName(name);
 }
 
 int bind_label_family(void) {
@@ -224,6 +250,17 @@ bool bind_capture_event(const SDL_Event *e) {
         return true;
     case SDL_EVENT_GAMEPAD_BUTTON_UP:
         return true;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_WHEEL:
+        // the keyboard column takes mouse buttons and the wheel (the click that began the capture came before)
+        if (dev != BIND_DEV_KEY) return true;
+        if (e->type == SDL_EVENT_MOUSE_WHEEL && e->wheel.y == 0) return true;
+        if (e->type == SDL_EVENT_MOUSE_BUTTON_DOWN && (e->button.button < 1 || e->button.button > 5)) return true;
+        cap_dev = -1;
+        assign(dev, cap_slot, e->type == SDL_EVENT_MOUSE_WHEEL ? (e->wheel.y > 0 ? BIND_WHEEL_UP : BIND_WHEEL_DOWN)
+                                                                : BIND_MOUSE_LEFT + e->button.button - 1);
+        return true;
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        return true;
     case SDL_EVENT_GAMEPAD_AXIS_MOTION:
         if (dev == BIND_DEV_PAD && e->gaxis.value > 16000 &&
             (e->gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e->gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)) {
@@ -237,17 +274,27 @@ bool bind_capture_event(const SDL_Event *e) {
 }
 
 // ------------------------------------------------------------------ larecomp.ini
+// "bind_keys = fps" comes before the bind_key_* lines: keyboard bindings saved before the shooter layout (Link's
+// Awakening's K/J/L/I era) aren't loaded - those players start on the new defaults.
+static bool keys_fps;
+
 bool bind_settings_load(const char *key, const char *val) {
+    if (!strcmp(key, "bind_keys")) { keys_fps = !strcmp(val, "fps"); return true; }
     bool pad = !strncmp(key, "bind_pad_", 9), kb = !strncmp(key, "bind_key_", 9);
     if (!pad && !kb) return false;
+    if (kb && !keys_fps) {
+        static int logged;
+        if (!logged++) LOG("[input] keyboard bindings from before the shooter layout: the new defaults instead\n");
+        return true;
+    }
     for (int i = 0; i < (pad ? BIND_PAD_COUNT : BIND_KEY_COUNT); i++) {
         if (strcmp(key + 9, k_ini[i])) continue;
         if (pad) {
             for (int h = 0; h < PADB_HOST_COUNT; h++)
                 if (!strcmp(val, k_pad_ini[h])) g_bind_pad[i] = (int16_t)h;
         } else {
-            SDL_Scancode sc = strcmp(val, "none") ? SDL_GetScancodeFromName(val) : SDL_SCANCODE_UNKNOWN;
-            if (sc != SDL_SCANCODE_UNKNOWN || !strcmp(val, "none")) g_bind_key[i] = (int16_t)sc;
+            int sc = strcmp(val, "none") ? bind_key_from_name(val) : 0;
+            if (sc || !strcmp(val, "none")) g_bind_key[i] = (int16_t)sc;
         }
     }
     return true;
@@ -257,7 +304,8 @@ void bind_settings_save(FILE *f) {
     for (int i = 0; i < BIND_PAD_COUNT; i++)
         if (g_bind_pad[i] != def_pad(i) && g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT)
             fprintf(f, "bind_pad_%s = %s\n", k_ini[i], k_pad_ini[g_bind_pad[i]]);
+    fprintf(f, "bind_keys = fps\n");
     for (int i = 0; i < BIND_KEY_COUNT; i++)
         if (g_bind_key[i] != k_def_key[i])
-            fprintf(f, "bind_key_%s = %s\n", k_ini[i], g_bind_key[i] ? SDL_GetScancodeName((SDL_Scancode)g_bind_key[i]) : "none");
+            fprintf(f, "bind_key_%s = %s\n", k_ini[i], g_bind_key[i] ? bind_key_label(g_bind_key[i]) : "none");
 }

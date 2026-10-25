@@ -33,6 +33,8 @@ Settings g_settings = {
     .fov = FOV_GAME,
     .gyro = true,
     .aniso = 16,
+    .mouse_aim = true,
+    .mouse_sens = 1.0f,
 };
 
 const int g_res_lines[N_RES_LINES] = {900, 1080, 1440, 2160, 4320};
@@ -118,6 +120,9 @@ void settings_load(void) {
         else if (!strcmp(key, "fov")) g_settings.fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
         else if (!strcmp(key, "skippable_cutscenes")) g_settings.skippable_cutscenes = atoi(val) != 0;
         else if (!strcmp(key, "gyro")) g_settings.gyro = atoi(val) != 0;
+        else if (!strcmp(key, "mouse_aim")) g_settings.mouse_aim = atoi(val) != 0;
+        else if (!strcmp(key, "mouse_sens")) g_settings.mouse_sens = (float)atof(val);
+        else if (!strcmp(key, "mouse_invert")) g_settings.mouse_invert = atoi(val) != 0;
         else if (!strcmp(key, "steam_controller_direct")) g_settings.steam_controller_direct = atoi(val) != 0;
         else if (!strcmp(key, "resolution")) {  // match / dynamic / 75% / 50% / 25% / <lines>p / 4k / 8k (LAS: 1x-8x)
             int n = atoi(val);
@@ -169,6 +174,8 @@ void settings_load(void) {
     if (!aspect_key) g_settings.aspect_asked = true;  // (likewise: the aspect ratio was chosen already)
     if (g_settings.volume < 0) g_settings.volume = 0;
     if (g_settings.volume > 2) g_settings.volume = 2;
+    if (!(g_settings.mouse_sens >= MOUSE_SENS_MIN)) g_settings.mouse_sens = MOUSE_SENS_MIN;  // (NaN too)
+    if (g_settings.mouse_sens > MOUSE_SENS_MAX) g_settings.mouse_sens = MOUSE_SENS_MAX;
     LOG("[settings] loaded %s\n", SETTINGS_FILE);
 }
 
@@ -186,6 +193,8 @@ void settings_save(void) {
     fprintf(f, "frame_rate = %d\n", g_settings.frame_rate);
     fprintf(f, "fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.skippable_cutscenes,
             g_settings.gyro);
+    fprintf(f, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
+            g_settings.mouse_invert);
     if (g_settings.steam_controller_direct) fprintf(f, "steam_controller_direct = 1\n");  // (written only when set)
     fprintf(f, "upscaler = %s\n", g_settings.upscaler == UPSCALE_METALFX ? "metalfx" : g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
     fprintf(f, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");

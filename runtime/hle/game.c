@@ -128,6 +128,43 @@ int rt_fov(void) {  // (LARECOMP_FOV: test override)
     return f < FOV_MIN ? FOV_MIN : f > FOV_MAX ? FOV_MAX : f;
 }
 
+// The game is in play: the player updated just now (rt_player_frame). Not in its pause menu, map, title screen or
+// loading (runtime/hle/input.c: keys mean menu keys then, and the mouse is let go).
+bool game_in_play(void) {
+    extern uint64_t vk_frame_counter(void);
+    return g_player_seen && vk_frame_counter() <= g_player_seen + 2;
+}
+
+#define GUEST_PTR_OK(p) ((p) >= 0x7000000000ull && (p) < 0x7f00000000ull && !((p) & 7))
+
+// The first-person camera when it's the current camera (not a cutscene's, the morph ball's...), else 0. Only in play
+// (at boot the state manager has no cameras yet, and looking one up crashed), found as the game does: the camera
+// manager, its current camera's id (the top of its two override stacks, else its own),
+// CCameraManagerMP1::GetCurrentCamera. The camera manager hangs off the state manager's game logic (+0x4e0150) - when
+// that is MP1's: between worlds it can be CStateManagerGameLogicDefault, whose +0x30 isn't a pointer (a crash as
+// gameplay began after a skipped cutscene). Every register is put back.
+static uint64_t first_person_camera(Cpu *c, uint64_t sm) {
+    if (!game_in_play()) return 0;
+    uint64_t logic = GUEST_PTR_OK(sm) ? LD64(sm + 0x4e0150) : 0;
+    if (!GUEST_PTR_OK(logic) || LD64(logic) != guest_sym("_ZTV25CStateManagerGameLogicMP1") + 0x10) return 0;
+    uint64_t mgr = LD64(logic + 0x30);
+    if (!GUEST_PTR_OK(mgr)) return 0;
+    uint32_t n2 = LD32(mgr + 0x18), n1 = LD32(mgr + 0x8);
+    uint64_t stack = n2 ? LD64(mgr + 0x20) : n1 ? LD64(mgr + 0x10) : 0;
+    if (n2 > 64 || n1 > 64 || ((n2 || n1) && !GUEST_PTR_OK(stack & ~7ull))) return 0;
+    uint32_t id = n2 ? LD32(stack + 4ull * (n2 - 1)) : n1 ? LD32(stack + 4ull * (n1 - 1)) : LD32(mgr);
+    if (id == 0xffffffffu) return 0;
+    Cpu *saved = malloc(sizeof *saved);
+    *saved = *c;
+    c->x[0] = mgr;
+    c->x[1] = sm;
+    guest_call(c, guest_sym("_ZNK17CCameraManagerMP116GetCurrentCameraERK13CStateManager"));
+    uint64_t cam = c->x[0];
+    *c = *saved;
+    free(saved);
+    return GUEST_PTR_OK(cam) && LD64(cam) == guest_sym("_ZTV21CFirstPersonCameraMP1") + 0x10 ? cam : 0;
+}
+
 static void fov_frame(Cpu *c) {
     static int ok = -1;
     float *def = (float *)(uintptr_t)FP_FOV_DEFAULT;
@@ -136,32 +173,8 @@ static void fov_frame(Cpu *c) {
     float want = (float)rt_fov();
     static float applied = 55.0f;
     *def = want;
-    // the live camera only in play (the player updated just now: at boot the state manager has no cameras yet, and
-    // looking one up crashed), found as the game does: the camera manager, its current camera's id (the top of its two
-    // override stacks, else its own), CCameraManagerMP1::GetCurrentCamera
-    // The camera manager hangs off the state manager's game logic (+0x4e0150) - when that is MP1's: between worlds
-    // it can be CStateManagerGameLogicDefault, whose +0x30 isn't a pointer (a crash as gameplay began after a
-    // skipped cutscene)
-    extern uint64_t vk_frame_counter(void);
-    if (!g_player_seen || vk_frame_counter() > g_player_seen + 2) return;
-#define GUEST_PTR_OK(p) ((p) >= 0x7000000000ull && (p) < 0x7f00000000ull && !((p) & 7))
-    uint64_t sm = c->x[0], logic = GUEST_PTR_OK(sm) ? LD64(sm + 0x4e0150) : 0;
-    if (!GUEST_PTR_OK(logic) || LD64(logic) != guest_sym("_ZTV25CStateManagerGameLogicMP1") + 0x10) return;
-    uint64_t mgr = LD64(logic + 0x30);
-    if (!GUEST_PTR_OK(mgr)) return;
-    uint32_t n2 = LD32(mgr + 0x18), n1 = LD32(mgr + 0x8);
-    uint64_t stack = n2 ? LD64(mgr + 0x20) : n1 ? LD64(mgr + 0x10) : 0;
-    if (n2 > 64 || n1 > 64 || ((n2 || n1) && !GUEST_PTR_OK(stack & ~7ull))) return;
-    uint32_t id = n2 ? LD32(stack + 4ull * (n2 - 1)) : n1 ? LD32(stack + 4ull * (n1 - 1)) : LD32(mgr);
-    if (id == 0xffffffffu) return;
-    static Cpu saved;
-    saved = *c;
-    c->x[0] = mgr;
-    c->x[1] = sm;
-    guest_call(c, guest_sym("_ZNK17CCameraManagerMP116GetCurrentCameraERK13CStateManager"));
-    uint64_t cam = c->x[0];
-    *c = saved;
-    if (!GUEST_PTR_OK(cam) || LD64(cam) != guest_sym("_ZTV21CFirstPersonCameraMP1") + 0x10) return;
+    uint64_t cam = first_person_camera(c, c->x[0]);
+    if (!cam) return;
     float *now = (float *)(uintptr_t)(cam + 0x25c), *from = (float *)(uintptr_t)(cam + 0x280);
     float *target = (float *)(uintptr_t)(cam + 0x284), *left = (float *)(uintptr_t)(cam + 0x278);
     if (*left <= 0 && *target != want && (*target == 55.0f || *target == applied)) {
@@ -252,6 +265,8 @@ static float *player_transform(uint64_t player) {
     return m ? (float *)(uintptr_t)m : NULL;
 }
 
+static void mouse_look(Cpu *c);
+
 void rt_player_frame(Cpu *c) {
     g_player = c->x[0];
     g_player_mgr = c->x[1];
@@ -276,6 +291,92 @@ void rt_player_frame(Cpu *c) {
         if (f) { fprintf(f, "%s   (frame %llu)\n", line, (unsigned long long)frame); fclose(f); }
         LOG("[pos] F8: %s (positions.txt%s)\n", line, f ? "" : ": not writable");
     }
+    mouse_look(c);
+}
+
+// ---- Mouse aim (Controls tab "Mouse aim"; runtime/hle/input.c sums the mouse's motion while it's captured)
+// As in a PC shooter the mouse turns Samus and tilts the view itself, instead of steering the right stick (whose
+// turning eases in and tops out: a flick would lag behind the hand). Yaw turns the player's transform about the
+// world's up axis (y) through CActorMP1::SetTransform, which also tells whoever follows it; pitch is the first-person
+// look angle, the player's current (+0x5cc) and desired (+0x5d0) pitch in radians (up positive), both set
+// (CPlayerMP1::UpdateFreeLook eases the first toward the second) along with the filter the game smooths the desired
+// pitch through ([+0x1628], a CFIRFilter or CIIRFilter: NSharedPlayerControls::UpdateFreeLookDesiredUp; without its
+// ResetTo the filter averaged a mouse move down to a fourteenth). Only on foot (+0x4d4, the morph ball state, 0 = unmorphed:
+// CPlayerMP1::GetMorphBallTransitionState), not locked on (+0x4e0, the orbit state: CPlayerMP1::SetOrbitState), while
+// the game takes turn input at all (+0x1610 bit 0 clear: CPlayerMP1::TurnInput) and with the first-person camera
+// current (not in cutscenes). Otherwise - the morph ball's camera, lock-on - the motion steers the right stick.
+// Called from CPlayerMP1::UpdateCameraBob (rt_player_frame): the player in x0, the state manager in x1.
+// LARECOMP_LOOK_LOG=<n>: the look state every n frames.
+#define MOUSE_DEG_PER_COUNT 0.044f  // (at sensitivity 1)
+#define PITCH_LIMIT 1.2217f         // 70 degrees up or down: the game's own free-look range (the stick stops there)
+
+static void mouse_look(Cpu *c) {
+    extern bool input_mouse_take(float *dx, float *dy);
+    extern void input_mouse_stick(int32_t rx, int32_t ry);
+    uint64_t player = c->x[0], sm = c->x[1];
+    float *pitch = (float *)(uintptr_t)(player + 0x5cc), *pitch_to = (float *)(uintptr_t)(player + 0x5d0);
+    uint32_t morph = LD32(player + 0x4d4), orbit = LD32(player + 0x4e0);
+    uint8_t no_turn = *(uint8_t *)(uintptr_t)(player + 0x1610) & 1;
+    static long log_every = -2;
+    if (log_every == -2) log_every = getenv("LARECOMP_LOOK_LOG") ? atol(getenv("LARECOMP_LOOK_LOG")) : 0;
+    extern uint64_t vk_frame_counter(void);
+    if (log_every > 0 && vk_frame_counter() % log_every == 0) {
+        float *m = player_transform(player);
+        LOG("[look] frame %llu pitch %.4f -> %.4f morph %u orbit %u no_turn %u row0 %.3f %.3f %.3f row2 %.3f %.3f %.3f\n",
+            (unsigned long long)vk_frame_counter(), *pitch, *pitch_to, morph, orbit, no_turn, m ? m[0] : 0, m ? m[1] : 0,
+            m ? m[2] : 0, m ? m[8] : 0, m ? m[9] : 0, m ? m[10] : 0);
+    }
+    float dx, dy;
+    if (!input_mouse_take(&dx, &dy) || !g_settings.mouse_aim) { input_mouse_stick(0, 0); return; }
+    float deg = MOUSE_DEG_PER_COUNT * g_settings.mouse_sens;
+    if (g_settings.mouse_invert) dy = -dy;
+    if (morph != 0 || orbit != 0 || no_turn || !first_person_camera(c, sm)) {
+        // the right stick instead, in proportion to the motion this frame (~25 counts a frame: full tilt)
+        float k = 32767.0f / 25 * g_settings.mouse_sens;
+        float rx = dx * k, ry = -dy * k;
+        input_mouse_stick((int32_t)fmaxf(-32767, fminf(32767, rx)), (int32_t)fmaxf(-32767, fminf(32767, ry)));
+        return;
+    }
+    input_mouse_stick(0, 0);
+    if (dy) {
+        float p = *pitch - dy * deg * (float)M_PI / 180;
+        p = p > PITCH_LIMIT ? PITCH_LIMIT : p < -PITCH_LIMIT ? -PITCH_LIMIT : p;
+        *pitch = *pitch_to = p;
+        uint64_t filt = LD64(player + 0x1628), vt = GUEST_PTR_OK(filt) ? LD64(filt) : 0;
+        const char *reset = vt == guest_sym("_ZTV10CFIRFilter") + 0x10 ? "_ZN10CFIRFilter7ResetToEf" :
+                            vt == guest_sym("_ZTV10CIIRFilter") + 0x10 ? "_ZN10CIIRFilter7ResetToEf" : NULL;
+        static int logged;
+        if (!logged++) LOG("[look] the desired pitch's filter: %s\n", reset ? reset : "unknown (pitch may lag)");
+        if (reset) {
+            Cpu *saved = malloc(sizeof *saved);
+            *saved = *c;
+            uint32_t bits;
+            memcpy(&bits, &p, 4);
+            c->x[0] = filt;
+            c->v[0] = bits;
+            guest_call(c, guest_sym(reset));
+            *c = *saved;
+            free(saved);
+        }
+    }
+    float *m = player_transform(player);
+    if (!dx || !m) return;
+    float a = -dx * deg * (float)M_PI / 180, co = cosf(a), s = sinf(a);
+    static float *xf;
+    if (!xf) xf = hle_alloc(64);
+    memcpy(xf, m, 48);
+    for (int k = 0; k < 3; k++) {  // turned about the world's y: rows 0 and 2 of the rotation
+        float r0 = m[k], r2 = m[8 + k];
+        xf[k] = co * r0 + s * r2;
+        xf[8 + k] = -s * r0 + co * r2;
+    }
+    Cpu *saved = malloc(sizeof *saved);
+    *saved = *c;
+    c->x[0] = player;
+    c->x[1] = (uint64_t)(uintptr_t)xf;
+    guest_call(c, guest_sym("_ZN9CActorMP112SetTransformERK12CTransform4f"));
+    *c = *saved;
+    free(saved);
 }
 
 // LARECOMP_LOAD_AREAS=<id>,<id>,... (32 hex digits each, as "[area] load" logs them): at the first gameplay frame,

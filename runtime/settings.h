@@ -23,6 +23,8 @@ enum { PROMPTS_AUTO = 0, PROMPTS_NINTENDO = 1, PROMPTS_XBOX = 2, PROMPTS_PLAYSTA
 // back buttons.
 enum { FACE_NINTENDO = 0, FACE_XBOX = 1 };
 enum { FOV_GAME = 55, FOV_MIN = 45, FOV_MAX = 90 };
+#define MOUSE_SENS_MIN 0.1f  // (mouse aim sensitivity range: Controls tab)
+#define MOUSE_SENS_MAX 10.0f
 enum { CHAOS_LETTERS_OFF = 0, CHAOS_LETTERS_EXPLORED = 1, CHAOS_LETTERS_MAP = 2 /* explored, all with the Map */ };
 // System language served to the game (runtime/services/am.c GetDesiredLanguage, services/hid_set.c GetLanguageCode):
 // the game picks its text language from it, as it would from the Switch's own system setting. LANG_AUTO follows the
@@ -50,6 +52,9 @@ typedef struct {
     int fov;             // first-person vertical field of view in degrees, FOV_MIN..FOV_MAX (55: the game's): game.c
     bool skippable_cutscenes;  // every cutscene can be skipped, seen before or not (runtime/hle/game.c)
     bool gyro;           // the controller's gyro / accelerometer reach the game's motion controls (runtime/hle/motion.c)
+    bool mouse_aim;      // the mouse turns and tilts the view itself (runtime/hle/game.c), captured while playing
+    float mouse_sens;    // mouse aim: 1 = 0.044 degrees per mouse count (MOUSE_SENS_MIN..MAX)
+    bool mouse_invert;   // mouse aim: moving the mouse forward looks down
     bool steam_controller_direct;  // (larecomp.ini only) SDL's own Steam Controller driver, for its gyro without
                                    // Steam Input (the window code sets SDL_HINT_JOYSTICK_HIDAPI_STEAM)
     bool dpad_move;      // the d-pad (and arrow keys) move Link like the stick

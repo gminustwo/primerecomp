@@ -13,25 +13,33 @@ extern "C" {
 
 typedef union SDL_Event SDL_Event;
 
-// Switch inputs, in nn::hid button-bit order (runtime/hle/input.c BTN_*), then the keyboard's stick directions.
+// Switch inputs, in nn::hid button-bit order (runtime/hle/input.c BTN_*), then the keyboard's stick directions and
+// beam shortcuts.
 enum {
     BIND_A, BIND_B, BIND_X, BIND_Y, BIND_LSTICK, BIND_RSTICK, BIND_L, BIND_R, BIND_ZL, BIND_ZR, BIND_PLUS, BIND_MINUS,
     BIND_LEFT, BIND_UP, BIND_RIGHT, BIND_DOWN,
     BIND_PAD_COUNT,                                      // controller: the 16 buttons (its sticks stay the sticks)
     BIND_LS_UP = BIND_PAD_COUNT, BIND_LS_DOWN, BIND_LS_LEFT, BIND_LS_RIGHT,
     BIND_RS_UP, BIND_RS_DOWN, BIND_RS_LEFT, BIND_RS_RIGHT,
-    BIND_KEY_COUNT                                       // keyboard: buttons + both sticks
+    // one key for a beam: X held (the game's beam select) and that beam's d-pad direction
+    BIND_BEAM_POWER, BIND_BEAM_WAVE, BIND_BEAM_ICE, BIND_BEAM_PLASMA,
+    BIND_KEY_COUNT                                       // keyboard: buttons + both sticks + beams
 };
 enum { BIND_DEV_PAD, BIND_DEV_KEY };
 // Controller binding values: an SDL_GamepadButton, or the analog triggers as buttons
 enum { PADB_LTRIGGER = 26 /* SDL_GAMEPAD_BUTTON_COUNT */, PADB_RTRIGGER, PADB_HOST_COUNT };
+// Keyboard binding values: an SDL_Scancode, or a mouse button / the wheel past them
+enum { BIND_MOUSE_LEFT = 512 /* SDL_SCANCODE_COUNT */, BIND_MOUSE_MIDDLE, BIND_MOUSE_RIGHT, BIND_MOUSE_X1, BIND_MOUSE_X2,
+       BIND_WHEEL_UP, BIND_WHEEL_DOWN, BIND_KEY_HOST_COUNT };
 
 extern int16_t g_bind_pad[BIND_PAD_COUNT];  // PADB value per Switch button
-extern int16_t g_bind_key[BIND_KEY_COUNT];  // SDL_Scancode per input (0 = none)
+extern int16_t g_bind_key[BIND_KEY_COUNT];  // SDL_Scancode / BIND_MOUSE_* per input (0 = none)
 
 const char *bind_input_name(int slot);         // "A", "D-pad Up", "Left stick Up"
+const char *bind_input_action(int slot);       // what Metroid Prime does with it on foot ("Shoot beam"), or ""
 const char *bind_pad_label(int host, int fam); // controller button in the pad family's own words (fam: input_pad_family)
-const char *bind_key_label(int scancode);
+const char *bind_key_label(int host);          // key or mouse button name, as larecomp.ini stores it
+int bind_key_from_name(const char *name);      // bind_key_label's name -> keyboard binding value (0: unknown)
 int bind_label_family(void);                   // the connected controller's family (also on the start screen)
 void bind_reset(int dev);
 bool bind_is_default(int dev);

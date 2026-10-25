@@ -1,7 +1,8 @@
 # PrimeRecomp
 
 A static recompilation of *Metroid Prime Remastered* (Nintendo Switch, 2023, v1.0.0, title ID `010012101468C000`)
-into a native Windows application. **Early bring-up: it does not boot yet.** See [PROGRESS.md](PROGRESS.md).
+into a native Windows application. **Beta:** the game is playable from the start through Tallon IV; expect rough
+edges (see [PROGRESS.md](PROGRESS.md)).
 
 The game's AArch64 code is translated to C ahead of time and compiled for the host. Its system calls, services and
 NVN graphics calls are implemented natively (Vulkan on Windows and Linux, Metal on macOS). No emulator runs.
@@ -10,6 +11,28 @@ NVN graphics calls are implemented natively (Vulkan on Windows and Linux, Metal 
 > **No game files are included.** This repository holds no game code, assets, keys or firmware, and nothing built
 > from them. Everything derived from the game stays in `private/` (gitignored). You need your own legally obtained
 > copy of Metroid Prime Remastered v1.0.0, with no updates applied.
+
+## Controls
+
+Controller (the game's own Dual Stick layout) or keyboard and mouse, as in a PC shooter:
+
+| | |
+|---|---|
+| Move | WASD |
+| Aim / turn | Mouse (Controls tab: sensitivity, invert) |
+| Shoot (hold: charge) | Left click |
+| Lock on / scan (hold) | Right click |
+| Jump | Space |
+| Missile | F |
+| Morph Ball | Left Ctrl |
+| Visors: Combat / Scan / Thermal / X-Ray | Q / E / R / T |
+| Beams: Power / Wave / Ice / Plasma | 1 / 2 / 3 / 4 |
+| Map | Tab |
+| Pause menu | Esc |
+
+In the game's menus Enter / Space confirm, Esc goes back and Q / E switch pages. Everything can be rebound in
+PrimeRecomp's own menu (Controls tab): **F1**, or on a controller both sticks pressed in (or Back + Start). Its Quit
+tab closes the game.
 
 ## Based on LAS Recomp
 
