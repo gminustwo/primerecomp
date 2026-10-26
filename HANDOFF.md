@@ -5,9 +5,21 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 ## State (2026-10-25)
 
 - **START HERE (2026-10-26).**
-  - **Don't publish or push anything** until the user says so ("don't publish anything"). v0.0.3 is still a
-    draft release (pinned to adb1c28, pre-merge binaries); local main is ahead of origin/main by the handoff
-    commits and the merge below.
+  - **v0.0.3 rebuilt from main, still a DRAFT** (the user: "rebuild the v0.0.3 release from main. I will want to test
+    on my mac and steamdeck so don't publish the release yet. push to a branch I can pull from on those systems"):
+    branch **release-v0.0.3** on GitHub (local main = that branch; origin/main is still 138318a - main itself isn't
+    pushed). The draft now targets the branch head, with new assets and notes (scratchpad release_v003_notes.md):
+    PrimeRecomp-v0.0.3-windows.zip (sha256 d73a6abc...6c91) and PrimeRecomp-v0.0.3-linux-x86_64.AppImage (sha256
+    72174b2f...396e). The zip's zig/rt runtime libraries are the ones from the earlier, end-to-end-tested draft zip
+    (zig_slim.sh rebuilds them differently each time; same zig and flags): its game-code toolchain is byte for byte
+    the tested one; exe, import library and README are new. Checked: the zip without MSYS2 sets up from an earlier
+    copy and plays the landing site at 60 fps; the AppImage in WSL (llvmpipe) on ~/prt/data2's v0.0.2-era setup -
+    start screen, title, same Linux game code id (976eb3a7795b1f1d, no rebuild), dma-buf import falls back (no
+    /dev/udmabuf in WSL). Not run: a fresh setup's full game-code build (the freeze below), the Deck's dma-buf path
+    (the user's own test), macOS (the user builds PrimeRecomp.app from the branch: docs/macos.md). The previous
+    draft's files are in build/dist-adb1c28/. Publishing, when the user says so: `gh release edit v0.0.3
+    --draft=false --latest` (creates the v0.0.3 tag at the target), and push main.
+  - **Don't publish anything else** until the user says so. Nothing pushed besides release-v0.0.3.
   - **The user's Steam Deck work is merged** (2026-10-26, the user: "merge the changes from the steam-deck branch
     onto here"): origin/steam-deck-dmabuf, one commit (6d073e9, authored fhclimited), merged as bf306fb. It
     builds on 8675408 (my Deck work) instead of replacing it: the guest heap as udmabuf dma-bufs on Linux
