@@ -46,8 +46,8 @@ typedef struct {
     bool rumble;         // controller rumble (runtime/hle/input.c)
     bool movie_audio;
     bool show_fps;
-    int frame_rate;      // frames (and game simulation steps) per second: 60 (the Switch's), 120, or 0 = uncapped at 60 Hz
-                         // simulation (runtime/hle/game.c); LARECOMP_FPS overrides it
+    int frame_rate;      // frames per second: 60 (the Switch's), 120 (the simulation too), 30 (two 60 Hz steps a frame), or
+                         // 0 = uncapped at 60 Hz simulation (runtime/hle/game.c); LARECOMP_FPS overrides it
     int fov;             // first-person vertical field of view in degrees, FOV_MIN..FOV_MAX (55: the game's): game.c
     bool skippable_cutscenes;  // every cutscene can be skipped, seen before or not (runtime/hle/game.c)
     bool gyro;           // the controller's gyro / accelerometer reach the game's motion controls (runtime/hle/motion.c)
@@ -76,6 +76,11 @@ extern Settings g_settings;
 
 void settings_load(void);
 void settings_save(void);
+// Running on a Steam Deck (Linux: Steam's SteamDeck=1, or Valve's Jupiter / Galileo board)
+bool settings_on_steam_deck(void);
+// The Video tab's Steam Deck presets (also a Deck's first start, with no settings file yet): 30 = a steady 30 fps at
+// the screen's resolution, 60 = 60 fps from 75% of it with FSR 1
+void settings_steam_deck_preset(int fps);
 // The language code to serve the game ("es", "en-US", ...): the setting, or the host locale for LANG_AUTO
 const char *settings_language(void);
 // That code's name for the menu ("Spanish")

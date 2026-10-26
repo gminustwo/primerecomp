@@ -1,9 +1,10 @@
 # PrimeRecomp on Linux (x86-64, aarch64)
 
-Status: **x86-64 builds and runs; not yet tried on real Linux hardware.** The x86-64 AppImage (`make appimage`) was
-tested in WSL2 (Ubuntu 24.04) on Mesa's software renderer (llvmpipe): the start screen, a full setup from the game
-files (game code generated and compiled in 106 s on 32 threads), the title screen and a loaded save in Chozo Ruins.
-Real GPUs (the Steam Deck's RADV, Intel ANV, NVIDIA) haven't been tried yet. aarch64 isn't built for PrimeRecomp yet.
+Status: **x86-64 builds and runs.** The x86-64 AppImage (`make appimage`) was tested in WSL2 (Ubuntu 24.04) on Mesa's
+software renderer (llvmpipe): the start screen, a full setup from the game files (game code generated and compiled
+in 106 s on 32 threads), the title screen and a loaded save in Chozo Ruins. v0.0.2 ran on a Steam Deck at about 25
+fps; v0.0.3 removes the Linux-only costs found behind that (below) and adds Steam Deck presets. Other real GPUs
+(Intel ANV, NVIDIA) haven't been tried yet. aarch64 isn't built for PrimeRecomp yet.
 
 ## Steam Deck
 The Steam Deck runs the x86-64 AppImage (current SteamOS has a newer glibc than the 2.35 it needs, RADV, and an AVX2
@@ -25,6 +26,27 @@ To keep those 15 GB on the SD card instead, move `~/.local/share/primerecomp` th
 link in its place (`ln -s /run/media/deck/<card name>/primerecomp ~/.local/share/primerecomp`). The folder picker is a
 desktop file dialog, which is why the setup is done in Desktop Mode. The log is
 `~/.local/share/primerecomp/primerecomp.log`: attach it to bug reports.
+
+### Performance on the Deck
+On its first start on a Deck (no `primerecomp.ini` yet) PrimeRecomp picks its **steady 30 fps** preset: 30 fps at
+full game speed, rendered at 1280 x 720, 4x texture filtering, no anti-aliasing. The Video tab has both presets
+under "Steam Deck": **Preset: steady 30 fps** and **Preset: 60 fps** (960 x 540 scaled up with AMD FSR 1, 2x
+filtering). Either can be changed afterwards like any option.
+
+Video -> **Show FPS** shows the frame rate and, below it, what a frame takes in milliseconds: GAME (the game's world
+update), RENDER (the game's drawing and PrimeRecomp's translation of it to Vulkan, on the CPU) and GPU. The largest is
+the limit: a lower internal resolution helps only when GPU is the largest. The log has the same figures every two
+seconds (`per frame: game ... render ... gpu ... ms` on the `[vk] t=` lines).
+
+Below 60 fps the game keeps its full speed (down to 20 fps): each frame runs as many of the game's 1/60 s steps as
+the time it took. (Before v0.0.3 a frame ran at most one, so 25 fps was 42% speed - slow motion.)
+
+What made v0.0.2 slow on Linux, measured on Windows with its page write tracking turned off
+(`LARECOMP_NO_WRITE_WATCH=1`, which is how Linux runs): sparse (streamed) textures were copied out and hashed whole
+every eighth frame to see whether they changed (~5 ms a frame on an i9 - a sample of their bytes decides now); and
+the game's fence polls (each frame, for its exposure readback and its frame fences) waited for the GPU to finish, so
+the CPU and the GPU took turns instead of working at the same time (now a poll answers at once; the readback lands
+in guest memory when its submission is done).
 
 ## Running the AppImage
     chmod +x PrimeRecomp-<version>-linux-x86_64.AppImage
@@ -97,7 +119,8 @@ files or fonts.
 - The HLE / service / reset tables are ELF sections found through the linker's `__start_` / `__stop_` symbols.
 - Renderer: the Windows Vulkan backend unchanged. No page write tracking yet (Windows: `MEM_WRITE_WATCH`): the vertex
   / index cache reads guest memory in place (runtime/nvn/vulkan/exec.c), which costs little on an APU such as the
-  Steam Deck's.
+  Steam Deck's but crosses PCIe on a discrete GPU (a desktop Linux machine's GPU time is higher than on Windows), and
+  texture changes are found by sampling (runtime/nvn/vulkan/textures.c).
 - Without the user's Switch fonts the game text uses DejaVu Sans (TrueType; the game's font engine can't use CFF
   fonts such as Noto Sans CJK).
 - Pages: 4K and 16K kernels (Asahi) work; 64K-page kernels (some ARM servers) are not supported.

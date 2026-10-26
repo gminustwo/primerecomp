@@ -401,6 +401,7 @@ static bool choice(const char *label, int *value, const char *const *names, int 
 }
 
 extern "C" double output_scale_dynamic_factor(void);
+extern "C" void renderer_frame_times(float out[3]);  // runtime/nvn/vulkan/exec.c (Vulkan only)
 extern "C" void output_scale_render_size(double *w, double *h);
 
 static void tab_display(void) {
@@ -419,15 +420,21 @@ static void tab_display(void) {
         g_settings.fullscreen = fs;
         g_want_fullscreen_apply.store(true);
     }
-    opt_toggle("Show FPS", &g_settings.show_fps, false, "Shows the frame rate in the top right corner.");
+    opt_toggle("Show FPS", &g_settings.show_fps, false,
+               "Shows the frame rate in the top right corner, and below it what each frame takes, in milliseconds: "
+               "GAME the game's world update, RENDER the game's drawing and PrimeRecomp's translation of it (the "
+               "CPU), GPU the graphics card's work. The largest is what holds the frame rate back - a frame at 60 "
+               "fps has 16.7 ms.");
     {
-        static const char *const rates[] = {"60 (original)", "120", "Uncapped"};
-        static const int values[] = {60, 120, 0};
-        int i = g_settings.frame_rate == 120 ? 1 : g_settings.frame_rate == 0 ? 2 : 0;
-        if (opt_choice("Frame rate", &i, rates, 3, 0,
+        static const char *const rates[] = {"30", "60 (original)", "120", "Uncapped"};
+        static const int values[] = {30, 60, 120, 0};
+        int i = g_settings.frame_rate == 30 ? 0 : g_settings.frame_rate == 120 ? 2 : g_settings.frame_rate == 0 ? 3 : 1;
+        if (opt_choice("Frame rate", &i, rates, 4, 1,
                        "Frames per second. 60 is the game's own rate. 120 also runs the game's simulation twice as "
                        "often, so motion is smoother; game speed stays the same. Uncapped draws as fast as it can "
-                       "with the simulation at 60.", false))
+                       "with the simulation at 60. 30: for slower machines and the Steam Deck - a steady 30 at full "
+                       "game speed.\n\nWhen your machine can't keep up, the game still runs at full speed (down to "
+                       "20 fps), only less smoothly.", false))
             g_settings.frame_rate = values[i];
     }
 
@@ -495,6 +502,19 @@ static void tab_display(void) {
             g_settings.aniso = levels[ai];
     }
     // (LAS Recomp's "Remove blur" and "Hide Hero Mode icon" are gone: Link's Awakening only)
+    // Steam Deck presets (settings.c settings_steam_deck_preset; a Deck's first start takes the 30 fps one)
+    opt_section(settings_on_steam_deck() ? "Steam Deck" : "Steam Deck / handhelds");
+    if (opt_button("Preset: steady 30 fps",
+                   "Sets the options above for a Steam Deck (or a similar handheld): 30 fps at full game speed, "
+                   "rendered at the screen's own resolution (1280 x 720 on the Deck), 4x texture filtering, no "
+                   "anti-aliasing. The smoothest choice when 60 isn't steady."))
+        settings_steam_deck_preset(30);
+    if (opt_button("Preset: 60 fps",
+                   "Sets the options above for 60 fps on a Steam Deck: rendered at 75% of the screen's resolution "
+                   "(960 x 540 on the Deck) and scaled up with AMD FSR 1, 2x texture filtering, no anti-aliasing. "
+                   "Turn on Show FPS to see whether it holds 60 where you play; if not, the 30 fps preset is "
+                   "smoother."))
+        settings_steam_deck_preset(60);
     opt_end();
 }
 
@@ -883,6 +903,16 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
         ImGui::Text("%.0f fps", io.Framerate);
+#ifndef __APPLE__
+        float ms[3];  // (game update / render thread / GPU per frame: runtime/nvn/vulkan/exec.c vk_pace_frame)
+        renderer_frame_times(ms);
+        if (ms[1] >= 0) {
+            ImGui::SetWindowFontScale(0.6f);
+            ImGui::TextDisabled("game %.1f  render %.1f", ms[0], ms[1]);
+            if (ms[2] >= 0) ImGui::TextDisabled("GPU %.1f ms", ms[2]);
+            ImGui::SetWindowFontScale(1.0f);
+        }
+#endif
         ImGui::End();
     }
 

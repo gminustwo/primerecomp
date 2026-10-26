@@ -27,7 +27,8 @@ static uint64_t stat_upload_bytes;
 // sets = descriptor sets incl. cbuf copies, vtx = index scan + vertex copies, submit = vkQueueSubmit2)
 static int prof = -1;
 static uint64_t prof_exec, prof_draw, prof_sets, prof_vtx, prof_submit, prof_pre, prof_key, prof_dyn, prof_tex, prof_up, prof_gpu;
-static VkQueryPool prof_qp;
+static VkQueryPool prof_qp;  // a timestamp at the start and end of each submission (always: the FPS overlay's GPU time)
+static uint64_t gpu_busy_ns;  // those submissions' GPU time, summed
 static uint64_t cum_exec, cum_wait, cum_draws, cum_submits;  // (profiling) never reset: hitch log
 static uint32_t prof_end_line[4096];  // passes ended, by the exec.c line that ended them (0: submit / present)
 uint64_t prof_views_created;  // textures.c vk_image_view cache misses
@@ -78,6 +79,8 @@ static void wait_account(uint64_t ns) {
 
 static void cq_resolve_done(uint64_t done);
 
+static __thread uint64_t t_gpu_wait_ns;  // this thread's time waiting for the GPU (vk_pace_frame: not work)
+
 void vk_wait_seq(uint64_t seq) {
     if (!seq) { wait_why = NULL; return; }
     VkSemaphoreWaitInfo wi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1, .pSemaphores = &g_vk.timeline,
@@ -85,6 +88,7 @@ void vk_wait_seq(uint64_t seq) {
     uint64_t t0 = SDL_GetTicksNS();
     VkResult r = vkWaitSemaphores(g_vk.dev, &wi, 10ull * 1000000000ull);
     stat_wait_ns += SDL_GetTicksNS() - t0;
+    t_gpu_wait_ns += SDL_GetTicksNS() - t0;
     cum_wait += SDL_GetTicksNS() - t0;
     wait_account(SDL_GetTicksNS() - t0);
     if (r == VK_TIMEOUT) LOG("[vk] GPU did not finish submission %llu within 10 s (device lost?)\n", (unsigned long long)seq);
@@ -141,6 +145,8 @@ static int vk_counter_mode(void) {
 // at most 2 of the last 60 frames over). The game itself also tries 60 again now and then.
 // LARECOMP_PACE=0: off.
 #define PACE_SLOW_NS 20000000ull
+static float g_frame_ms[3] = {-1, -1, -1};  // game update / render thread / GPU, ms per frame (vk_pace_frame)
+void renderer_frame_times(float out[3]) { for (int i = 0; i < 3; i++) out[i] = g_frame_ms[i]; }
 extern __thread uint64_t g_blocked_ns;  // kernel.c: this thread's time blocked in waits / sleeps
 static bool pace_slow;
 static uint64_t stat_pace_over;
@@ -159,6 +165,24 @@ void vk_pace_frame(void) {
     if (first || p > 100000000ull) return;  // (loading, a hitch: not a pace)
     double busy = (p > wt ? p - wt : 0) / 1e6;
     avg = avg ? avg + (busy - avg) * 0.05 : busy;
+    {   // the FPS overlay / stats line: per frame over half a second - the game's update (game.c), this thread's
+        // work (the game's rendering and our command translation, without its waits for the GPU) and the GPU's
+        extern uint64_t game_update_busy_ns(void);
+        static uint64_t gpu_wait_last, gpu_last, game_last, sum_render, t0;
+        static int n;
+        uint64_t gw = t_gpu_wait_ns - gpu_wait_last;
+        gpu_wait_last = t_gpu_wait_ns;
+        sum_render += p > wt + gw ? p - wt - gw : 0;
+        n++;
+        if (!t0) t0 = now, gpu_last = gpu_busy_ns, game_last = game_update_busy_ns();
+        if (now - t0 >= 500000000ull) {
+            uint64_t g = game_update_busy_ns();
+            g_frame_ms[0] = (float)((double)(g - game_last) / n / 1e6);
+            g_frame_ms[1] = (float)((double)sum_render / n / 1e6);
+            g_frame_ms[2] = prof_qp ? (float)((double)(gpu_busy_ns - gpu_last) / n / 1e6) : -1;
+            t0 = now, gpu_last = gpu_busy_ns, game_last = g, sum_render = 0, n = 0;
+        }
+    }
     static int log = -1;  // LARECOMP_LOG_PACE=1: each frame's period, vsync wait and busy time
     if (log < 0) log = getenv("LARECOMP_LOG_PACE") != NULL;
     if (log) LOG("[pace] period %.2f blocked %.2f busy %.2f ms\n", p / 1e6, wt / 1e6, busy);
@@ -257,11 +281,47 @@ static void oq_end_segment(void) {
     oq_open = false;
 }
 
+// ---- texture -> buffer copies the CPU reads (nvnCommandBufferCopyTextureToBuffer; MPR: the frame's average radiance
+// for its exposure, every frame, into a pool of staging buffers it polls with fences - CGameRenderJob::
+// FeedLastFrameAverageRadianceBackToGame, CStagingBufferPool::RetrieveLastCompleted). Each copy goes to a readback
+// buffer of its own, and its bytes to guest memory once its submission is done (rb_complete: a fence poll or wait that
+// sees it done, and every presented frame). Before, the copy flushed and waited for the GPU right away, which held the
+// CPU every frame until the GPU had caught up: their times added up (on a Steam Deck CPU + GPU, not the larger).
+// LARECOMP_VK_SYNC_READBACK=1: the old way.
+#define RB_MAX 32
+typedef struct { uint64_t seq, dst, size, cap; VkBuffer buf; VmaAllocation mem; void *ptr; VkImage img; VmaAllocation img_mem; } Readback;
+static Readback rb_q[RB_MAX], rb_spare[8];  // pending (in submission order) / done buffers kept for the next copies
+static int rb_n, rb_nspare;
+static pthread_mutex_t rb_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void rb_complete(uint64_t done) {
+    pthread_mutex_lock(&rb_lock);
+    int k = 0;
+    for (int i = 0; i < rb_n; i++) {
+        Readback *r = &rb_q[i];
+        if (r->seq > done) { rb_q[k++] = *r; continue; }
+        vmaInvalidateAllocation(g_vk.vma, r->mem, 0, r->size);
+        memcpy((void *)(uintptr_t)r->dst, r->ptr, r->size);
+        if (r->img) vmaDestroyImage(g_vk.vma, r->img, r->img_mem);
+        r->img = VK_NULL_HANDLE;
+        if (rb_nspare < 8) rb_spare[rb_nspare++] = *r;
+        else vmaDestroyBuffer(g_vk.vma, r->buf, r->mem);
+    }
+    rb_n = k;
+    pthread_mutex_unlock(&rb_lock);
+}
+
 static void cq_resolve_done(uint64_t done) {  // every slot whose submission is done
     pthread_mutex_lock(&cq_lock);
     for (int i = 0; i < SUBS; i++) if (cq[i].n && cq[i].seq <= done) cq_resolve(i);
     for (int i = 0; i < SUBS; i++) if (oq[i].nrep && oq[i].seq <= done) oq_resolve(i);
     pthread_mutex_unlock(&cq_lock);
+    rb_complete(done);
+}
+
+// (once per presented frame: device.c) readbacks whose submissions are done, for a game that reads without polling
+void vk_readbacks_poll(void) {
+    if (rb_n) cq_resolve_done(vk_completed_seq());
 }
 
 static Sub *sub(void) {
@@ -270,10 +330,13 @@ static Sub *sub(void) {
         wait_why = "ring slot";
         vk_wait_seq(s->seq);
         cq_resolve_done(s->seq);
-        if (s->ts) {  // (profiling) GPU time of that submission
+        if (s->ts) {  // GPU time of that submission
             uint64_t t[2];
-            if (vkGetQueryPoolResults(g_vk.dev, prof_qp, (uint32_t)cur_sub * 2, 2, sizeof t, t, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && t[1] > t[0])
-                prof_gpu += (uint64_t)((double)(t[1] - t[0]) * g_vk.props.limits.timestampPeriod);
+            if (vkGetQueryPoolResults(g_vk.dev, prof_qp, (uint32_t)cur_sub * 2, 2, sizeof t, t, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && t[1] > t[0]) {
+                uint64_t ns = (uint64_t)((double)(t[1] - t[0]) * g_vk.props.limits.timestampPeriod);
+                gpu_busy_ns += ns;
+                if (prof) prof_gpu += ns;
+            }
             s->ts = false;
         }
         for (int i = 0; i < s->npools; i++) vkResetDescriptorPool(g_vk.dev, s->pools[i], 0);
@@ -331,7 +394,7 @@ VkCommandBuffer vk_cmd(void) {
             if (oq_counting) oq_first = 0;  // (a counting across submissions keeps only this one's draws)
         }
         gp_mark(s->main, "(submission start; includes GPU idle before it)");
-        if (prof && prof_qp) {
+        if (prof_qp) {
             vkCmdResetQueryPool(s->main, prof_qp, (uint32_t)cur_sub * 2, 2);
             vkCmdWriteTimestamp2(s->main, VK_PIPELINE_STAGE_2_NONE, prof_qp, (uint32_t)cur_sub * 2);
             s->ts = true;
@@ -495,6 +558,25 @@ void renderer_wait_seq(uint64_t seq) {
     pthread_mutex_unlock(&seq_lock);
     wait_why = seq > s ? "SyncWait (fence not submitted yet)" : "SyncWait";
     vk_wait_seq(seq > s ? s : seq);  // not submitted yet (other thread): everything submitted so far
+}
+
+// A fence poll (nvnSyncWait without a timeout: the game's NVNUtil::is_sync_complete) answered without waiting: 1 the
+// submission is done (its counters, occlusion counts and readbacks written first, as after a wait), 0 submitted and
+// still running, -1 not submitted yet.
+int renderer_poll_seq(uint64_t seq) {
+    uint64_t done = vk_completed_seq();
+    if (seq <= done) { cq_resolve_done(done); return 1; }
+    pthread_mutex_lock(&seq_lock);
+    uint64_t s = submit_seq;
+    pthread_mutex_unlock(&seq_lock);
+    return seq <= s ? 0 : -1;
+}
+
+uint64_t renderer_submitted_seq(void) {
+    pthread_mutex_lock(&seq_lock);
+    uint64_t s = submit_seq;
+    pthread_mutex_unlock(&seq_lock);
+    return s;
 }
 
 VkDescriptorSet vk_alloc_set(VkDescriptorSetLayout layout) {
@@ -789,6 +871,16 @@ const char *renderer_stats(void) {
              (unsigned long long)stat_dispatches, (unsigned long long)stat_flushes, (double)stat_wait_ns / 1e6,
              atomic_exchange(&stat_compiles, 0), (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0,
              vk_live_textures(), vk_live_images());
+    {   // (and the game's simulation steps per second: 60 at any frame rate - 120 at 120 - while it keeps up)
+        extern uint64_t game_ticks_total(void);
+        static uint64_t last_ticks, last_ns;
+        uint64_t ticks = game_ticks_total(), ns = SDL_GetTicksNS();
+        double hz = last_ns ? (double)(ticks - last_ticks) * 1e9 / (double)(ns - last_ns) : 0;
+        last_ticks = ticks, last_ns = ns;
+        size_t n = strlen(stats_text);
+        snprintf(stats_text + n, sizeof stats_text - n, " | per frame: game %.1f render %.1f gpu %.1f ms, sim %.0f Hz",
+                 g_frame_ms[0], g_frame_ms[1], g_frame_ms[2], hz);
+    }
     stat_feedback_copies = stat_upload_bytes = 0;
     {
         extern void vk_alias_stats(void);
@@ -861,8 +953,8 @@ static void st_defaults(void) {
 
 void vk_exec_init(void) {
     prof = getenv("LARECOMP_VK_PROF") != NULL;
-    if (prof) {
-        prof_up_ns = 0;
+    if (prof) prof_up_ns = 0;
+    if (g_vk.props.limits.timestampComputeAndGraphics) {
         VkQueryPoolCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryType = VK_QUERY_TYPE_TIMESTAMP, .queryCount = SUBS * 2};
         if (vkCreateQueryPool(g_vk.dev, &qi, NULL, &prof_qp) != VK_SUCCESS) prof_qp = VK_NULL_HANDLE;
     }
@@ -2390,6 +2482,8 @@ static bool pt_init(void) {
     return true;
 }
 
+bool vk_write_tracking(void) { return pt_init(); }  // (textures.c: sparse textures without it)
+
 // Texture upload checks (textures.c): may guest memory [addr, addr + size) have changed since generation `since`?
 // 0: no CPU write since, 1: written, -1: unknown (no tracking, outside the heap, or pages the GPU writes).
 // *now: the generation to pass next time.
@@ -2557,6 +2651,7 @@ static int g_cs_n;  // (compute program table below)
 // address (the old Prog / Pipe objects are leaked, so pipeline keys holding their pointers can't collide), compute
 // programs, shared copies - and the heap import: its pages are replaced (re-imported on first use).
 void vk_exec_reset(void) {
+    rb_complete(~0ull);
     memset(prog_tab, 0, sizeof prog_tab);
     memset(pipe_tab, 0, sizeof pipe_tab);
     g_cs_n = 0;
@@ -3608,7 +3703,33 @@ static void copy_texture_to_buffer(const TexRefRec *src, uint64_t dst) {
     bool array = b->layers > 1 && b->depth == 1;
     uint32_t nz = (uint32_t)rg[5];
     uint64_t total = img * nz;
-    VkSpan out = vk_readback(total);
+    static int sync_rb = -1;
+    if (sync_rb < 0) sync_rb = getenv("LARECOMP_VK_SYNC_READBACK") != NULL;
+    Readback r = {0};
+    VkSpan out;
+    if (!sync_rb && total <= (16ull << 20)) {  // (a readback buffer of its own: rb_complete)
+        if (rb_n == RB_MAX) {  // (the oldest one first)
+            if (rb_q[0].seq > submit_seq) renderer_submit();
+            wait_why = "readbacks full";
+            vk_wait_seq(rb_q[0].seq);
+        }
+        pthread_mutex_lock(&rb_lock);
+        for (int i = 0; i < rb_nspare; i++)
+            if (rb_spare[i].cap >= total) { r = rb_spare[i]; rb_spare[i] = rb_spare[--rb_nspare]; break; }
+        pthread_mutex_unlock(&rb_lock);
+        if (!r.buf) {
+            r.cap = total < 65536 ? 65536 : (total + 65535) & ~65535ull;
+            VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = r.cap, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+            VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+                                          .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
+            VmaAllocationInfo info;
+            VK_CHECK(vmaCreateBuffer(g_vk.vma, &bi, &ai, &r.buf, &r.mem, &info));
+            r.ptr = info.pMappedData;
+        }
+        out = (VkSpan){r.buf, 0, r.ptr};
+    } else {
+        out = vk_readback(total);
+    }
     VkBufferImageCopy c = {.bufferOffset = out.off, .bufferRowLength = (uint32_t)(row / fi->bpb) * fi->bw,
                            .bufferImageHeight = (uint32_t)(img / row) * fi->bh,
                            .imageSubresource = {b->aspect & VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_ASPECT_DEPTH_BIT : b->aspect,
@@ -3616,6 +3737,17 @@ static void copy_texture_to_buffer(const TexRefRec *src, uint64_t dst) {
                            .imageOffset = {rg[0], rg[1], array ? 0 : rg[2]},
                            .imageExtent = {(uint32_t)rg[3], (uint32_t)rg[4], array ? 1 : nz}};
     vkCmdCopyImageToBuffer(cb, srcimg, VK_IMAGE_LAYOUT_GENERAL, out.buf, 1, &c);
+    if (r.buf) {  // written to guest memory once this submission is done
+        r.seq = vk_pending_seq();
+        r.dst = dst;
+        r.size = total;
+        r.img = small_mem ? srcimg : VK_NULL_HANDLE;
+        r.img_mem = small_mem;
+        pthread_mutex_lock(&rb_lock);
+        rb_q[rb_n++] = r;
+        pthread_mutex_unlock(&rb_lock);
+        return;
+    }
     wait_why = "texture -> buffer readback";
     renderer_flush();  // the CPU may read the result right after the fence
     memcpy((void *)(uintptr_t)dst, out.ptr, total);

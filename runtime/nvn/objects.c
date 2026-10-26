@@ -136,13 +136,33 @@ NVN(nvnSyncInitialize) { SET_HOST(A(0), calloc(1, sizeof(NvnSync))); RET(1); }
 NVN(nvnSyncFinalize) { free(HOST(NvnSync, A(0))); SET_HOST(A(0), 0); }
 NVN(nvnSyncSetDebugLabel) { (void)c; }
 void renderer_flush(void);
-NVN(nvnSyncWait) {  // NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED
+int renderer_poll_seq(uint64_t seq);
+uint64_t renderer_submitted_seq(void);
+NVN(nvnSyncWait) {  // NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED (0), or TIMEOUT_EXPIRED (2) for a poll
     static int flush = -1;
     static uint64_t n;
     if (flush < 0) flush = getenv("LARECOMP_SYNC_FLUSH") ? 1 : 0;
     if (getenv("LARECOMP_LOG_SYNC") && n++ % 60 == 0) LOG("[nvn] SyncWait #%llu (lr %llx)\n", (unsigned long long)n, c->x[30]);
     static int whole = -1;  // LARECOMP_SYNC_ALL=1: old behaviour, wait for all submitted work
     if (whole < 0) whole = getenv("LARECOMP_SYNC_ALL") ? 1 : 0;
+    // A poll (no timeout: the game's NVNUtil::is_sync_complete, each frame for its frame fences and staging buffers)
+    // gets the GPU's answer now instead of a wait for it (runtime/nvn/vulkan/exec.c renderer_poll_seq): waiting held
+    // the CPU until the GPU caught up, several times a frame. A fence of work not submitted yet that a thread polls
+    // over and over with nothing submitted in between - it would never finish if that thread is the one to submit it -
+    // is waited for as before. LARECOMP_SYNC_POLL_WAIT=1: every poll waits (the old way).
+    static int poll_wait = -1;
+    if (poll_wait < 0) poll_wait = getenv("LARECOMP_SYNC_POLL_WAIT") ? 1 : 0;
+    if (A(1) == 0 && !flush && !whole && !poll_wait) {
+        uint64_t seq = sync_of(A(0))->seq;
+        int r = renderer_poll_seq(seq);
+        if (r > 0) { RET(0); return; }
+        if (r == 0) { RET(2); return; }
+        static __thread uint64_t spin_seq, spin_sub;
+        static __thread int spins;
+        uint64_t sub = renderer_submitted_seq();
+        if (spin_seq != seq || spin_sub != sub) spin_seq = seq, spin_sub = sub, spins = 0;
+        if (++spins < 64) { RET(2); return; }
+    }
     if (flush) renderer_flush();
     else if (whole) renderer_sync();
     else renderer_wait_seq(sync_of(A(0))->seq);  // only the submission that holds this fence

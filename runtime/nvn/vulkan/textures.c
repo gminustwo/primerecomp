@@ -585,12 +585,13 @@ static void upload_pending(TexBackend *b) {
 
 // Sparse textures (storage in a virtual pool, objects.c nvnMemoryPoolMapVirtual): may the bytes have changed since
 // the last gather? 0 no, 1 yes, -1 unknown (mapped pages the write tracking doesn't cover).
-static int sparse_changed(NvnTexture *t, TexBackend *b, uint64_t total) {
+static int sparse_changed(NvnTexture *t, TexBackend *b, uint64_t total, uint64_t frame) {
     extern int vk_pages_changed(uint64_t addr, uint64_t size, uint32_t since, uint32_t *now);
     NvnPool *p = t->pool;
     if (!p->pages) return 0;  // nothing mapped yet
     int ch = b->sparse_gen != p->map_gen;
     b->sparse_gen = p->map_gen;
+    if (ch) b->sparse_hot = frame + 64;  // (the game fills the pages it just mapped: upload_texture)
     uint32_t now = b->wgen, since = b->wgen;
     for (uint64_t o = t->pool_offset & ~(uint64_t)(NVN_SPARSE_PAGE - 1); o < t->pool_offset + total; o += NVN_SPARSE_PAGE) {
         uint64_t a = p->pages[o / NVN_SPARSE_PAGE];
@@ -601,6 +602,41 @@ static int sparse_changed(NvnTexture *t, TexBackend *b, uint64_t total) {
     }
     b->wgen = now;
     return ch;
+}
+
+// Without write tracking (Linux, macOS; sparse_changed -1) a sample of the mapped bytes, read in place, decides
+// whether to look closer: 8-byte words at least 8 to a page (unmapped: zero). Gathering and hashing every sparse
+// texture whole at each check cost ~5 ms a frame on an i9 in the Landing Site - several times that on a Steam Deck.
+static uint64_t sparse_sample(NvnTexture *t, uint64_t total) {
+    NvnPool *p = t->pool;
+    uint64_t h = 1469598103934665603ull, step = total / 4096;
+    if (step > NVN_SPARSE_PAGE / 8) step = NVN_SPARSE_PAGE / 8;
+    step = step < 8 ? 8 : step & ~7ull;
+    for (uint64_t o = 0; o + 8 <= total; o += step) {
+        uint64_t v = (t->pool_offset + o) & ~7ull, a = p->pages ? p->pages[v / NVN_SPARSE_PAGE] : 0, w = 0;
+        if (a) memcpy(&w, (const void *)(uintptr_t)(a + v % NVN_SPARSE_PAGE), 8);
+        h = (h ^ w) * 1099511628211ull;
+    }
+    return h ^ total;
+}
+
+// ... the closer look: the mapped pages' bytes hashed where they are (no gather, unmapped pages skipped - a mapping
+// change is seen by sparse_changed). *bytes: how many that was.
+static uint64_t sparse_mapped_hash(NvnTexture *t, uint64_t total, uint64_t *bytes) {
+    NvnPool *p = t->pool;
+    uint64_t h = 0x9E3779B97F4A7C15ull ^ total, n = 0;
+    for (uint64_t o = 0; o < total;) {
+        uint64_t v = t->pool_offset + o, in = v % NVN_SPARSE_PAGE, len = NVN_SPARSE_PAGE - in;
+        if (len > total - o) len = total - o;
+        uint64_t a = p->pages ? p->pages[v / NVN_SPARSE_PAGE] : 0;
+        if (a) {
+            h = (h ^ hash_full((const uint8_t *)(uintptr_t)(a + in), len) ^ o) * 0x100000001B3ull;
+            n += len;
+        }
+        o += len;
+    }
+    *bytes = n;
+    return h;
 }
 
 // ... and the bytes themselves: mapped pages copied, unmapped ones zero (what the hardware returns for them).
@@ -679,9 +715,36 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
     b->checked_frame = frame;
     prof_tex_checks++;
     if (sparse) {
-        if (!sparse_changed(t, b, total) && b->uploaded) return;
+        int ch = sparse_changed(t, b, total, frame);
+        if (!ch && b->uploaded) return;
+        // Unknown (no write tracking): the mapped pages are hashed in place (sparse_mapped_hash) at each check for a
+        // while after a mapping change - the game fills the pages it just mapped - and now and then as a safety net
+        // (every 240 frames per 16 MB mapped); otherwise only when the sample changed. Gathered only when that hash
+        // changed.
+        extern bool vk_write_tracking(void);
+        bool tracked = vk_write_tracking();
+        if (ch < 0 && b->uploaded) {
+            uint64_t period = 240 * (1 + b->sparse_mapped / (16 << 20));
+            if (frame >= b->sparse_hot && frame - b->full_frame < period) {
+                prof_tex_samples++;
+                if (sparse_sample(t, total) == b->sample_hash) return;
+            }
+            static int log = -1;  // LARECOMP_LOG_SPARSE: these checks too
+            if (log < 0) log = getenv("LARECOMP_LOG_SPARSE") ? 200 : 0;
+            uint64_t t0 = log ? SDL_GetTicksNS() : 0, mapped, mh = sparse_mapped_hash(t, total, &mapped);
+            if (log) log--, LOG("[sparse] f%llu check %ux%u: %.1f of %.1f MB mapped, %.2f ms%s\n", (unsigned long long)frame,
+                                t->width, t->height, mapped / 1048576.0, total / 1048576.0, (SDL_GetTicksNS() - t0) / 1e6,
+                                mh == b->sparse_mhash ? "" : ", changed");
+            prof_tex_full++; prof_tex_full_bytes += mapped;
+            b->full_frame = frame;
+            b->sample_hash = sparse_sample(t, total);
+            if (mh == b->sparse_mhash) return;
+        }
         base = sparse_gather(t, b, total);
         uint64_t sh = hash_full(base, total);
+        b->full_frame = frame;
+        b->sample_hash = sparse_sample(t, total);
+        if (!tracked) b->sparse_mhash = sparse_mapped_hash(t, total, &b->sparse_mapped);
         if (b->uploaded && sh == b->data_hash) return;
         b->data_hash = sh;
         b->uploaded = true;

@@ -79,6 +79,38 @@ const char *settings_language(void) {
     return i > LANG_AUTO && i < N_LANGUAGES ? g_language_codes[i] : host_language();
 }
 
+// Steam sets SteamDeck=1 for what it starts on a Deck (Game Mode and Desktop Mode); started otherwise, the board says
+// it (/sys/class/dmi/id: Valve's Jupiter - the LCD model - or Galileo - the OLED).
+bool settings_on_steam_deck(void) {
+#ifdef __linux__
+    static int deck = -1;
+    if (deck < 0) {
+        const char *e = getenv("SteamDeck");
+        deck = e && atoi(e) == 1;
+        char vendor[64] = "", product[64] = "";
+        FILE *f = fopen("/sys/class/dmi/id/board_vendor", "r");
+        if (f) { if (!fgets(vendor, sizeof vendor, f)) vendor[0] = 0; fclose(f); }
+        f = fopen("/sys/class/dmi/id/product_name", "r");
+        if (f) { if (!fgets(product, sizeof product, f)) product[0] = 0; fclose(f); }
+        if (!strncmp(vendor, "Valve", 5) && (!strncmp(product, "Jupiter", 7) || !strncmp(product, "Galileo", 7))) deck = 1;
+    }
+    return deck;
+#else
+    return false;
+#endif
+}
+
+// The Deck's screen is 1280 x 800: the game's 16:9 image is 1280 x 720 at Match display. Its GPU shares the memory
+// bandwidth with the CPU, so the texture filtering comes down too, and SMAA stays off.
+void settings_steam_deck_preset(int fps) {
+    g_settings.frame_rate = fps == 30 ? 30 : 60;
+    g_settings.res_mode = fps == 30 ? RES_MATCH : RES_Q75;
+    g_settings.upscaler = UPSCALE_SHARP;
+    g_settings.antialias = AA_OFF;
+    g_settings.aniso = fps == 30 ? 4 : 2;
+    LOG("[settings] Steam Deck preset: %d fps\n", g_settings.frame_rate);
+}
+
 const char *settings_language_name(void) {
     const char *c = settings_language();
     for (int i = 0; i < N_LANGUAGES; i++)
@@ -97,7 +129,10 @@ void settings_load(void) {
         LOG("[settings] larecomp.ini renamed to %s\n", SETTINGS_FILE);
         f = fopen(SETTINGS_FILE, "r");
     }
-    if (!f) return;
+    if (!f) {  // (a first start: on a Steam Deck its steady 30 fps preset)
+        if (settings_on_steam_deck()) settings_steam_deck_preset(30);
+        return;
+    }
     char line[256];
     bool tip_key = false;
     while (fgets(line, sizeof line, f)) {
@@ -114,7 +149,10 @@ void settings_load(void) {
         else if (!strcmp(key, "rumble")) g_settings.rumble = atoi(val) != 0;
         else if (!strcmp(key, "movie_audio")) g_settings.movie_audio = atoi(val) != 0;
         else if (!strcmp(key, "show_fps")) g_settings.show_fps = atoi(val) != 0;
-        else if (!strcmp(key, "frame_rate")) g_settings.frame_rate = atoi(val) == 120 ? 120 : atoi(val) == 0 ? 0 : 60;
+        else if (!strcmp(key, "frame_rate")) {
+            int r = atoi(val);
+            g_settings.frame_rate = r == 120 || r == 30 || r == 0 ? r : 60;
+        }
         else if (!strcmp(key, "fov")) g_settings.fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
         else if (!strcmp(key, "skippable_cutscenes")) g_settings.skippable_cutscenes = atoi(val) != 0;
         else if (!strcmp(key, "gyro")) g_settings.gyro = atoi(val) != 0;

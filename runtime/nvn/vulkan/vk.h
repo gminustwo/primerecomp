@@ -93,6 +93,8 @@ typedef struct TexBackend {
     uint32_t tp_gen;     // texpatch_generation() it was last uploaded with
     uint8_t *sparse;     // sparse textures: their bytes gathered from the virtual pool's mapped pages
     uint32_t sparse_gen; // the pool's mapping generation those bytes reflect
+    uint64_t sparse_hot; // (no write tracking) looked at closely at every check until this frame: the mapping just changed
+    uint64_t sparse_mhash, sparse_mapped;  // (no write tracking) the mapped pages' hash and size at the last gather
     // textures.c: NVN textures over the same storage with the same shape share this image
     int refs;
     bool shared;  // listed in the share table under key

@@ -1,7 +1,9 @@
 // What the runtime asks about the running game: the renderers' frame logs and the window's framing. Link's
 // Awakening's answers (its level name from PlayerStatus, widescreen framing per room) went with the rest of its game
 // code (git history: runtime/hle/widescreen.c); Metroid Prime Remastered's belong here.
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "../hle.h"
@@ -15,9 +17,10 @@ int g_start_screen;  // runtime/ui/launcher.mm: the start screen is up - before 
 const char *game_level_name(void) { return "-"; }
 
 // Frame rate (Video tab "Frame rate", LARECOMP_FPS): the frames presented per second and the game's simulation rate.
-// The game steps a fixed 1/60 s per simulation tick, at most one tick per frame (CGameArchitectureSupport::Update);
-// at 120 every place that builds that 1/60 builds 1/120 instead (tools/patches.py STEP_SITES), so the game runs at
-// the same speed with twice the steps. Uncapped (0): frames as fast as they come, the simulation at 60.
+// The game steps a fixed 1/60 s per simulation tick (CGameArchitectureSupport::Update; rt_frame_step below says how
+// much time a frame adds); at 120 every place that builds that 1/60 builds 1/120 instead (tools/patches.py
+// STEP_SITES), so the game runs at the same speed with twice the steps. 30: a frame every 1/30 s, two ticks each
+// (slower machines: a steady 30 at full speed). Uncapped (0): frames as fast as they come, the simulation at 60.
 int game_frame_rate(void) {
     static int env = -2;
     if (env == -2) env = getenv("LARECOMP_FPS") ? atoi(getenv("LARECOMP_FPS")) : -1;
@@ -36,13 +39,53 @@ uint32_t rt_sim_step_bits(int negative) {
 // frame, that elapsed time and the passes of its tick loop the frame before ("[tick]").
 static int g_tick_passes, g_ticks;
 static volatile uint64_t g_present_ns;  // when the latest present's deadline wait ended
-void rt_tick_body(void) { g_ticks++; }
+static _Atomic uint64_t g_ticks_total;  // (the stats line's simulation rate: exec.c renderer_stats)
+void rt_tick_body(void) { g_ticks++; g_ticks_total++; }
+uint64_t game_ticks_total(void) { return g_ticks_total; }
 unsigned rt_tick_pass(void) {
     g_tick_passes++;
     return rt_sim_step_bits(1);
 }
 
+// CGameArchitectureSupport::Update adds the time its frame took, but at most what this returns, then runs one tick
+// per whole tick of time it has (0x70003c8234). The game's own limit is one tick: a frame slower than 1/60 s put the
+// game in slow motion (25 fps: 42% speed). Now up to 3 ticks (full speed down to 20 fps), and the time is snapped to
+// whole ticks when it's within a quarter tick of them: a steady 60 (or 30) keeps exactly one (two) ticks a frame
+// through the usual jitter instead of now and then none or two. (s8 is the time measured; set to the result too, as
+// the game takes the smaller of the two.) LARECOMP_MAX_TICKS=1: the game's own limit.
+static int g_frame_ticks_max = -1;
+static unsigned frame_time(Cpu *c) {
+    if (g_frame_ticks_max < 0) {
+        const char *e = getenv("LARECOMP_MAX_TICKS");
+        g_frame_ticks_max = e && atoi(e) >= 1 ? atoi(e) : 3;
+    }
+    uint32_t tb = rt_sim_step_bits(0);
+    float tick, el, t;
+    memcpy(&tick, &tb, 4);
+    memcpy(&el, &c->v[8], 4);
+    if (!(el >= 0)) el = tick;  // (NaN, a clock going back)
+    float n = roundf(el / tick);
+    t = n >= 1 && fabsf(el - n * tick) < 0.25f * tick ? n * tick : el;
+    if (t > g_frame_ticks_max * tick) t = g_frame_ticks_max * tick;
+    uint32_t b;
+    memcpy(&b, &t, 4);
+    c->v[8] = (__uint128_t)b;
+    return b;
+}
+
+// The update thread's work per frame (the FPS overlay: runtime/nvn/vulkan/exec.c vk_pace_frame): its time between
+// updates, less its time blocked in waits and sleeps (kernel.c g_blocked_ns)
+static _Atomic uint64_t g_update_busy_ns;
+uint64_t game_update_busy_ns(void) { return g_update_busy_ns; }
+
 unsigned rt_frame_step(Cpu *c) {
+    {
+        extern __thread uint64_t g_blocked_ns;
+        static uint64_t last, last_blocked;
+        uint64_t now = plat_now_ns(), p = now - last, b = g_blocked_ns - last_blocked;
+        if (last && p < 250000000ull) g_update_busy_ns += p > b ? p - b : 0;
+        last = now, last_blocked = g_blocked_ns;
+    }
     static long from = -2, left;
     if (from == -2) {
         const char *e = getenv("LARECOMP_TICK_LOG");
@@ -63,7 +106,7 @@ unsigned rt_frame_step(Cpu *c) {
         KThread *t = kernel_current_thread();
         LOG("[pace] the game's update runs on thread %x\n", t ? t->handle : 0);
     }
-    return rt_sim_step_bits(0);
+    return frame_time(c);
 }
 
 void rt_movie_dt(Cpu *c) {  // (debug, LARECOMP_TICK_LOG) the time step the movies advance by
@@ -97,6 +140,9 @@ void game_pace_present(int interval) {
     if (!next || now > next + 4 * period) next = now;
     else plat_sleep_until_ns(next);
     g_present_ns = plat_now_ns();
+    // (idle, not work: the frame pacing's busy time - runtime/nvn/vulkan/exec.c vk_pace_frame - leaves it out)
+    extern __thread uint64_t g_blocked_ns;
+    g_blocked_ns += g_present_ns - now;
     next += period;
 }
 

@@ -25,19 +25,22 @@ for the graphics. No emulator runs.
 
 ![Samus at the Landing Site on Tallon IV](docs/landing_site.jpg)
 
-## Status: v0.0.2 (early beta)
+## Status: v0.0.3 (early beta)
 
 The game boots, the Frigate Orpheon plays through, and Tallon IV is playable (the Landing Site, Chozo Ruins and
 Magmoor Caverns have been played so far), with saving and loading. Graphics bugs remain: some lighting is wrong, and
 visor effects such as rain drops are missing at times. Areas nobody has reached yet may still crash or freeze.
 
-**New in v0.0.2: Linux and the Steam Deck.** The Linux version is experimental: so far it has run on a software
-renderer only, not yet on real Linux GPUs or a Steam Deck, so reports of how it goes are very welcome.
+**New in v0.0.3: Steam Deck performance.** v0.0.2 brought Linux and the Steam Deck; on the Deck it ran at about 25
+fps. v0.0.3 removes the Linux-only costs behind that, lets the CPU and GPU work at the same time, keeps the game at
+full speed when the frame rate drops (it used to slow down with it), and adds Steam Deck presets (Video tab; a Deck
+starts with the steady 30 fps one) and a 30 fps option. Show FPS now also says whether the CPU or the GPU is the
+limit. The Linux version is still experimental, so reports of how it goes are very welcome.
 
 ### Still to do
 
 - Fixing the remaining graphics bugs
-- Testing the Linux version on real hardware, the Steam Deck first
+- More testing of the Linux version on real hardware (the Steam Deck's performance first)
 - A macOS version (LAS Recomp already runs on macOS, so much of the groundwork is there)
 - An Android version
 
@@ -62,7 +65,7 @@ your position in `positions.txt`.
 
 ### Windows
 
-1. Download `PrimeRecomp-v0.0.2-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
+1. Download `PrimeRecomp-v0.0.3-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
    extract it somewhere you can write to (e.g. Documents or a games folder - not Program Files).
 2. Run `primerecomp.exe`. The start screen asks for your game files: choose the folder that holds `exefs` and
    `romfs`, then **Set up**. It copies what it needs and recompiles the game on your PC. This happens once and
@@ -73,7 +76,7 @@ Everything PrimeRecomp writes - game files, saves, settings (`primerecomp.ini`),
 
 ### Linux
 
-1. Download `PrimeRecomp-v0.0.2-linux-x86_64.AppImage` from
+1. Download `PrimeRecomp-v0.0.3-linux-x86_64.AppImage` from
    [Releases](https://github.com/gminustwo/primerecomp/releases) and make it executable (`chmod +x`, or in your file
    manager: Properties -> Permissions -> executable).
 2. Run it. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs`, **Set up**, then
@@ -93,6 +96,9 @@ your distribution's `fuse3` package. More in [docs/linux.md](docs/linux.md).
    AppImage. It then starts from Game Mode.
 4. In the game, press both sticks in to open PrimeRecomp's menu and set Controls -> Face buttons to **Xbox**, so the
    Deck's A button is A.
+5. The first start on a Deck picks PrimeRecomp's **steady 30 fps** preset (1280 x 720, full game speed). The menu's
+   Video tab has it and a **60 fps** preset (960 x 540 scaled up with AMD FSR 1) under "Steam Deck" (pick one there
+   after updating from v0.0.2); turn on **Show FPS** to see which one holds where you play.
 
 The setup puts about 15 GB in `~/.local/share/primerecomp`; [docs/linux.md](docs/linux.md#steam-deck) shows how to
 keep it on the SD card instead.
@@ -130,7 +136,8 @@ In the game's menus Enter / Space confirm, Esc goes back and Q / E switch pages.
 - Mouse aim that turns and aims directly, as in a PC shooter; full keyboard, mouse and controller rebinding
 - Any resolution up to 8K, AMD FSR 1 upscaling, SMAA anti-aliasing, anisotropic texture filtering
 - Ultrawide and any aspect ratio (the HUD stays in the 16:9 middle), adjustable field of view
-- 60 or 120 frames per second
+- 30, 60 or 120 frames per second, at full game speed even when the frame rate drops
+- Steam Deck presets
 - Gyro aiming with controllers that have one, rumble
 - Any cutscene skippable
 

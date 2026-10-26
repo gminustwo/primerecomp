@@ -303,6 +303,20 @@ void renderer_wait_seq(uint64_t seq) {
     wait_cb(c);
 }
 
+// A fence poll (objects.c nvnSyncWait without a timeout; the Vulkan backend answers without waiting): waits, as all
+// fence waits did. 1: done.
+int renderer_poll_seq(uint64_t seq) {
+    renderer_wait_seq(seq);
+    return 1;
+}
+
+uint64_t renderer_submitted_seq(void) {
+    pthread_mutex_lock(&cb_lock);
+    uint64_t s = submit_seq;
+    pthread_mutex_unlock(&cb_lock);
+    return s;
+}
+
 // ------------------------------------------------------------------ textures with views
 // Texture view cache: views are made per bind otherwise (an allocation per draw). Keyed by the base texture and
 // the view parameters; a cached view retains its base, so a key's base pointer can't be reused while cached.

@@ -558,6 +558,8 @@ void backend_present(NvnTexture *t) {
     g_frame_counter++;
     extern void vk_pace_frame(void);
     vk_pace_frame();  // (exec.c: the game's 30 fps mode when frames don't fit 60)
+    extern void vk_readbacks_poll(void);
+    vk_readbacks_poll();  // (exec.c: texture -> buffer copies whose submissions are done, into guest memory)
     extern void input_frame(uint64_t frame);
     input_frame(total_frames);
     static long slow_ms = -1;

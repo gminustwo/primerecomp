@@ -4,6 +4,44 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 
 ## State (2026-10-25)
 
+- **Steam Deck performance (2026-10-25 night, the user's request):** "testing on the steam deck now. the performance
+  was abysmal. can you create a performance mode on here specific for steam deck? It was chugging at 25 frames". No
+  Deck here, so the causes were measured on Windows with Linux's conditions (`LARECOMP_NO_WRITE_WATCH=1`, the Deck's
+  1280x800 window; scratchpad tools/perf_run.ps1, speed_run.ps1 + speed.py) and fixed for every platform:
+  1. **Sparse textures without write tracking** (textures.c): MPR's sparse arrays are 29 / 58 MB virtual with 1-2 MB
+     mapped; every check (each 8th frame) gathered and hashed the whole thing: ~4.9 ms a frame on the i9. Now a
+     sample of the mapped words decides, the mapped pages are hashed in place (sparse_mapped_hash) for 64 frames
+     after a mapping change and as a safety net every 240 frames per 16 MB mapped; gathered only when that changed.
+     Upload checks: 491 -> ~35 ms per 2 s. `LARECOMP_LOG_SPARSE` logs these checks.
+  2. **CPU and GPU took turns** (exec.c, objects.c): copy_texture_to_buffer (MPR's average radiance for its exposure,
+     every frame: CGameRenderJob::FeedLastFrameAverageRadianceBackToGame -> CStagingBufferPool) flushed and waited
+     for the GPU; and nvnSyncWait with timeout 0 - the game's NVNUtil::is_sync_complete polls - waited too. Now
+     readbacks go to buffers of their own and into guest memory when their submission is done (rb_complete: polls,
+     waits, each present), and a poll answers at once (renderer_poll_seq: 2 = TIMEOUT_EXPIRED while running; an
+     unsubmitted fence polled 64 times with nothing submitted waits as before). Waits: ~190 -> 3 ms per 2 s.
+     Exposure unchanged in shots. `LARECOMP_VK_SYNC_READBACK=1` / `LARECOMP_SYNC_POLL_WAIT=1`: the old ways.
+     With both (Linux-like run on the 5090, whose GPU reads vertices in place across PCIe: GPU 10 ms): 50 -> 60 fps.
+  3. **Slow motion below 60 fps** (game.c frame_time, the rt_frame_step patch site): the game adds at most one
+     tick of elapsed time per frame, so 25 fps was 42% speed. Now up to 3 ticks (LARECOMP_MAX_TICKS), snapped to
+     whole ticks within a quarter tick (a steady 60 / 30 stays exactly 1 / 2 ticks a frame).
+     Checked by the stats line's new `sim N Hz` (simulation ticks per second): a 30 ms stall per frame
+     (LARECOMP_SLOW_FRAME_MS=30, ~30 fps) keeps 58-60 Hz; with LARECOMP_MAX_TICKS=1, 29-30 Hz (the old slow motion).
+     (Walking-distance tests are useless for this: LARECOMP_INPUT counts frames, so turns at 30 fps go twice as far.)
+  4. **The pacing's busy time counted the frame limiter's sleep** (game_pace_present: now in g_blocked_ns), so the
+     LA-era "30 fps mode" counter faking (pace_slow) was on all the time in MPR. Harmless: MPR's dynamic resolution
+     didn't change the image either way (A/B shots identical); the stats line now says "pace 60, 0 frames over".
+  5. **Frame rate 30** (Video tab; ini frame_rate = 30): 33.3 ms frames, two ticks each. Checked: sim 60 Hz, two
+     ticks a frame, and the movies' clock (CMovieList::Update) steps per tick, so videos keep their speed.
+  6. **Steam Deck presets** (Video tab, section "Steam Deck"; settings.c settings_steam_deck_preset): steady 30 fps
+     (Match display = 1280x720 on the Deck, 4x aniso, no SMAA) and 60 fps (75% = 960x540 + FSR 1, 2x aniso). A
+     Deck's first start (no primerecomp.ini) takes the 30 one; detection: SteamDeck=1 or DMI Valve Jupiter / Galileo.
+  7. **Show FPS** shows game / render / GPU ms per frame (exec.c vk_pace_frame: the update thread's busy time from
+     rt_frame_step, the presenting thread's minus GPU waits, the submissions' GPU timestamps - always on now); the
+     log's `[vk] t=` lines have `per frame: game .. render .. gpu .. ms`. On the i9 / 5090 at 1280x720: 2.5 / 4.5 /
+     0.4 ms at the Landing Site.
+  Ask the user for the overlay's numbers on the Deck (and its log): that says what limits it now. The game library's
+  inputs didn't change, so a v0.0.2 setup on the Deck stays valid (checked: the v0.0.3 AppImage in WSL loads
+  ~/prt/data2's v0.0.2 primegame.so, title screen fine; llvmpipe 25 fps at sim 57 Hz).
 - **v0.0.2 is released** (2026-10-25 evening, the user's request: "bump it to v0.0.2", README for Linux, their Buy Me
   a Coffee link https://buymeacoffee.com/rengar - README badge + support section, .github/FUNDING.yml):
   https://github.com/gminustwo/primerecomp/releases/tag/v0.0.2, tag v0.0.2 on 9fa288a, assets
