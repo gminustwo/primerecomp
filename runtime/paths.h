@@ -1,12 +1,12 @@
-// Where LAS Recomp keeps its files (runtime/paths.c).
+// Where PrimeRecomp keeps its files (runtime/paths.c).
 //
-// Data root: everything the app writes or the user brings - extracted/ (game files), rando/ (seeds), save/,
+// Data root: everything the app writes or the user brings - extracted/ (game files), save/,
 // cache/ (shaders / pipelines), fonts/ (imported), primerecomp.ini. rt_paths_init() picks it and makes it the
 // working directory, so the rest of the runtime opens those by their relative names. In order:
 //   1. LARECOMP_DATA_ROOT (tests, scratch installs)
 //   2. dev / portable mode: the starting directory already has extracted/ (a source checkout: `./build/primerecomp
 //      extracted`, the test scripts) - used as is
-//   3. macOS: ~/Library/Application Support/com.peiikai.lasrecomp (the .app bundle itself is never written to)
+//   3. macOS: ~/Library/Application Support/<RT_BUNDLE_ID> (the .app bundle itself is never written to)
 //      Windows: the folder of the .exe (portable, no installer); refuses to start, with a message, if not writable
 //      Linux: $XDG_DATA_HOME/primerecomp (~/.local/share/primerecomp)
 //
@@ -35,7 +35,7 @@ bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n);
 // one the setup creates (exefs, romfs, romfs.bin, leftover folders) and not a link. The folder the user picked
 // never gets here. true = removed or not there.
 bool rt_remove_game_file(const char *game_dir, const char *name);
-// All the game files set up there (rt_remove_game_file on each, then the empty folder). Saves, seeds, settings stay.
+// All the game files set up there (rt_remove_game_file on each, then the empty folder). Saves and settings stay.
 bool rt_remove_game_files(const char *game_dir);
 // Bytes taken by the extracted game files in game_dir (links not followed).
 unsigned long long rt_game_files_size(const char *game_dir);

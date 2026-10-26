@@ -85,6 +85,7 @@ typedef struct {
     const char *gs_vtx;      // the ALD being translated: its vertex handle (register), NULL for vertex 0
     bool gs_writes_layer;
     uint32_t gs_out_topo, gs_max_verts, gs_invocations;  // from the SPH
+    int gs_emits;            // (geometry) ShaderInfo.gs_emits
 } Ctx;
 
 static uint64_t bits(uint64_t w, int lo, int n) { return (w >> lo) & ((n == 64) ? ~0ull : ((1ull << n) - 1)); }
@@ -133,9 +134,10 @@ static const char *cbuf_ref(Ctx *c, int idx, int64_t off, const char *dyn, char 
     if (off + 16 > (int64_t)c->info->cbuf_size[idx]) c->info->cbuf_size[idx] = (uint32_t)((off + 16 + 255) & ~255);
     if (dyn) c->info->cbuf_dynamic |= 1u << idx;
     if (!dyn && idx < 18 && off >= 0 && (uint32_t)(off >> 4) + 1 > c->cbuf_need[idx]) c->cbuf_need[idx] = (uint32_t)(off >> 4) + 1;
-    if (dyn && off < 0) sprintf(buf, "cbr(cb%d, (%s) - %lldu)", idx, dyn, (long long)-off);
-    else if (dyn) sprintf(buf, "cbr(cb%d, (%s) + %lldu)", idx, dyn, (long long)off);
-    else sprintf(buf, "cb%d[%lld][%lld]", idx, (long long)(off >> 4), (long long)((off >> 2) & 3));
+    const char *cb = c->stage == STAGE_GEOMETRY && c->key && c->key->gs_lib ? "gcb" : "cb";  // (gs_lib: beside the host's)
+    if (dyn && off < 0) sprintf(buf, "cbr(%s%d, (%s) - %lldu)", cb, idx, dyn, (long long)-off);
+    else if (dyn) sprintf(buf, "cbr(%s%d, (%s) + %lldu)", cb, idx, dyn, (long long)off);
+    else sprintf(buf, "%s%d[%lld][%lld]", cb, idx, (long long)(off >> 4), (long long)((off >> 2) & 3));
     return buf;
 }
 
@@ -328,15 +330,18 @@ static void attr_load(Ctx *c, int dst, uint32_t addr, const char *idx) {
         char vi[128];
         snprintf(vi, sizeof vi, "min(%s, %du)", c->gs_vtx ? c->gs_vtx : "0u", c->gs_nverts - 1);
         int comp = (addr >> 2) & 3;
+        bool lib = c->key && c->key->gs_lib;  // (the input vertices through the host's functions)
         if (addr >= 0x70 && addr < 0x80) {
-            sprintf(e, "as_type<uint>(gl_in[%s].gl_Position[%d])", vi, comp);
+            if (lib) sprintf(e, "as_type<uint>(gs_in_pos(%s)[%d])", vi, comp);
+            else sprintf(e, "as_type<uint>(gl_in[%s].gl_Position[%d])", vi, comp);
         } else if (addr >= 0x80 && addr < 0x280) {
             int at = (addr - 0x80) >> 4;
             if (c->key && !(c->key->vs_out_mask & (1u << at))) {
                 strcpy(e, comp == 3 ? "0x3f800000u" : "0u");  // not provided by the vertex shader
             } else {
                 c->in_attr_mask |= 1u << at;
-                sprintf(e, "as_type<uint>(vin%d[%s][%d])", at, vi, comp);
+                if (lib) sprintf(e, "as_type<uint>(gs_in_v%d(%s)[%d])", at, vi, comp);
+                else sprintf(e, "as_type<uint>(vin%d[%s][%d])", at, vi, comp);
             }
         } else if (addr == 0x6C) {
             strcpy(e, "0x3f800000u");  // point size (gl_in[].gl_PointSize needs a feature): 1
@@ -1644,7 +1649,8 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         case 0x27: set_reg(c, d, "ctaid.z"); break;
         case 0x00: set_reg(c, d, "0u"); break;
         case 0x1d:  // invocation info: geometry - the vertices per primitive << 16 | the invocation
-            if (c->stage == STAGE_GEOMETRY) sprintf(t, "((%uu << 16) | uint(gl_InvocationID))", (unsigned)c->gs_nverts);
+            if (c->stage == STAGE_GEOMETRY && c->key && c->key->gs_lib) sprintf(t, "(%uu << 16)", (unsigned)c->gs_nverts);
+            else if (c->stage == STAGE_GEOMETRY) sprintf(t, "((%uu << 16) | uint(gl_InvocationID))", (unsigned)c->gs_nverts);
             else strcpy(t, "0u");
             set_reg(c, d, t);
             break;
@@ -1978,7 +1984,7 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         if (c->stage != STAGE_GEOMETRY || !c->glsl) { fail(c, "out outside a geometry shader"); goto out_done; }
         int type = (int)bits(w, 39, 2);  // 1 emit, 2 cut, 3 both
         if (type & 1) sp(&c->body, "    gs_emit();\n");
-        if (type & 2) sp(&c->body, "    EndPrimitive();\n");
+        if (type & 2) sp(&c->body, c->key && c->key->gs_lib ? "    gs_end();\n" : "    EndPrimitive();\n");
         set_reg(c, d, R(a));  // (the next vertex's handle)
     out_done:;
     } else if (OPM(0xf0a8000000000000ull, 0xfff8000000000000ull)) {  // BAR
@@ -2009,6 +2015,9 @@ static void glsl_rewrite(Ctx *c, Str *o, const char *src) {
         {"ulong", "uint64_t"}, {"rsqrt", "inversesqrt"}, {"rint", "roundEven"}, {"front_facing", "gl_FrontFacing"},
         {"point_coord", "gl_PointCoord"}, {"lane", "gl_SubgroupInvocationID"}, {"vid", "uint(gl_VertexIndex)"},
         {"iid", "uint(gl_InstanceIndex)"},
+        // (the prelude's: MoltenVK's SPIR-V -> MSL keeps function names, and calls to its own fmin / fmax / clz
+        // were ambiguous next to Metal's - the pipeline failed to build)
+        {"fmin", "fminnm"}, {"fmax", "fmaxnm"}, {"clz", "clz32"},
     };
     const char *p = src;
     while (*p) {
@@ -2106,12 +2115,12 @@ static const char glsl_prelude[] =
     "int sx8(int v) { return bitfieldExtract(v, 0, 8); }\n"
     "int sx16(uint v) { return bitfieldExtract(int(v), 0, 16); }\n"
     "int sx16(int v) { return bitfieldExtract(v, 0, 16); }\n"
-    // MSL semantics: saturate(NaN) = 0, fmin/fmax return the non-NaN operand
+    // MSL semantics: saturate(NaN) = 0, fmin/fmax (here fminnm / fmaxnm) return the non-NaN operand
     "float saturate(float x) { return isnan(x) ? 0.0f : clamp(x, 0.0f, 1.0f); }\n"
     "vec2 saturate(vec2 x) { return vec2(saturate(x.x), saturate(x.y)); }\n"
-    "float fmin(float a, float b) { return isnan(a) ? b : (isnan(b) ? a : min(a, b)); }\n"
-    "float fmax(float a, float b) { return isnan(a) ? b : (isnan(b) ? a : max(a, b)); }\n"
-    "uint clz(uint v) { return v == 0u ? 32u : uint(31 - findMSB(v)); }\n"
+    "float fminnm(float a, float b) { return isnan(a) ? b : (isnan(b) ? a : min(a, b)); }\n"
+    "float fmaxnm(float a, float b) { return isnan(a) ? b : (isnan(b) ? a : max(a, b)); }\n"
+    "uint clz32(uint v) { return v == 0u ? 32u : uint(31 - findMSB(v)); }\n"
     "uint popcount(uint v) { return uint(bitCount(v)); }\n"
     "uint mulhi(uint a, uint b) { uint hi, lo; umulExtended(a, b, hi, lo); return hi; }\n"
     "int mulhi(int a, int b) { int hi, lo; imulExtended(a, b, hi, lo); return hi; }\n"
@@ -2156,6 +2165,10 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     if (info->cbuf_mask >> 18) fail(c, "cbuf index out of range");
     for (int i = 0; i < info->ntex; i++)
         if (info->tex[i].shadow && info->tex[i].type == TEXTYPE_3D) fail(c, "3d shadow texture");
+    bool lib = key && key->gs_lib;
+    if (lib && stage == STAGE_GEOMETRY && (info->ntex || info->nimg || info->uses_gmem || c->uses_rscale || c->gs_writes_layer ||
+                                           c->gs_invocations > 1 || c->gs_out_topo == 1 || c->gs_out_topo == 6))
+        fail(c, "geometry shader not run by the other stages: textures, global memory, layers, invocations or points / lines");
     if (c->fail) { free(body.buf); free(c->body.buf); free(c); return info; }
     int set = stage == STAGE_FRAGMENT ? 1 : stage == STAGE_GEOMETRY ? 2 : 0;
     Str s = {0};
@@ -2167,7 +2180,7 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     if (layer_out >= 0)  // (#extension before the prelude's functions)
         sp(&s, "#version 460\n#extension GL_ARB_shader_viewport_layer_array : require\n%s",
            glsl_prelude + strlen("#version 460\n"));
-    else
+    else if (!(lib && stage == STAGE_GEOMETRY))  // (gs_lib: inside the host's source, after its prelude)
         sp(&s, "%s", glsl_prelude);
     for (int i = 0; i < 18; i++) {
         if (!(info->cbuf_mask & (1u << i))) continue;
@@ -2175,7 +2188,8 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         if (c->cbuf_need[i] > n) n = c->cbuf_need[i];
         if ((info->cbuf_dynamic & (1u << i)) && n < 4096) n = 4096;
         if (!n) n = 1;
-        sp(&s, "layout(std140, set = %d, binding = %d) uniform CB%d { uvec4 cb%d[%u]; };\n", set, i, i, i, n);
+        const char *cb = lib && stage == STAGE_GEOMETRY ? "gcb" : "cb", *cbt = lib && stage == STAGE_GEOMETRY ? "GCB" : "CB";
+        sp(&s, "layout(std140, set = %d, binding = %d) uniform %s%d { uvec4 %s%d[%u]; };\n", set, i, cbt, i, cb, i, n);
     }
     if (info->uses_gmem)
         sp(&s, "layout(std430, set = %d, binding = %d) %sbuffer GMem { uint w[]; } gmem_;\n", set, GMEM_BUFFER_INDEX,
@@ -2192,11 +2206,6 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         sp(&s, "layout(std140, set = %d, binding = 18) uniform RScale { vec4 rscale[%d]; };\n", set,
            key && (key->x_mode & 1) ? 66 : 65);  // ([65]: mirror mode's render target width)
         info->uses_rscale = true;
-    }
-    bool tint = stage == STAGE_FRAGMENT && !dbg && (c->omap_target & 0x7) == 0x7 && (!key || key->rt_kind[0] == 0);
-    if (tint) {
-        sp(&s, "layout(std140, set = %d, binding = 19) uniform Tint { vec4 ltint[2]; };\n", set);
-        info->uses_tint = true;
     }
     for (int i = 0; i < info->nimg; i++) {
         static const char *const names[] = {[TEXTYPE_1D] = "image1D", [TEXTYPE_1D_ARRAY] = "image1DArray", [TEXTYPE_2D] = "image2D",
@@ -2225,8 +2234,11 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         // compiler fuses or reorders the math feeding it (MSL gets this from preserveInvariance; without it foliage
         // drawn twice flickered black)
         sp(&s, "invariant gl_Position;\nprecise gl_Position;\n");
-        for (int i = 0; i < 32; i++)
-            if (c->out_attr_mask & (1u << i)) sp(&s, "layout(location = %d) out vec4 v%d;\n", i, i);
+        for (int i = 0; i < 32; i++) {
+            if (!(c->out_attr_mask & (1u << i))) continue;
+            if (lib) sp(&s, "vec4 v%d = vec4(0, 0, 0, 1);\n", i);  // (the geometry shader's input: it has the outputs)
+            else sp(&s, "layout(location = %d) out vec4 v%d;\n", i, i);
+        }
     } else if (stage == STAGE_FRAGMENT) {
         for (int i = 0; i < 32; i++) {
             if (!(c->in_attr_mask & (1u << i))) continue;
@@ -2234,6 +2246,10 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
             sp(&s, "layout(location = %d) %sin vec4 v%d;\n", i, interp, i);
         }
         for (int rt = 0; rt < 8; rt++) {
+            if (rt == 1 && key && key->rt_kind[1] == RT_KIND_DUAL) {  // (written even when the shader doesn't: 0)
+                sp(&s, "layout(location = 0, index = 1) out vec4 c1;\n");
+                continue;
+            }
             if (!((c->omap_target >> (rt * 4)) & 0xF)) continue;
             int kind = key ? key->rt_kind[rt] : 0;
             sp(&s, "layout(location = %d) out %s c%d;\n", rt, kind == 1 ? "ivec4" : kind == 2 ? "uvec4" : "vec4", rt);
@@ -2245,6 +2261,7 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         // vertex shader skipped (ShaderKey.gs_follows)
         static const char *const ins[] = {"points", "lines", "triangles", "lines_adjacency", "triangles_adjacency"};
         const char *outp = c->gs_out_topo == 1 ? "points" : c->gs_out_topo == 6 ? "line_strip" : "triangle_strip";
+        if (lib) goto gs_outputs;  // (the host has the input vertices and emits)
         sp(&s, "layout(%s", ins[key && key->gs_in <= 4 ? key->gs_in : 2]);
         if (c->gs_invocations > 1) sp(&s, ", invocations = %u", c->gs_invocations);
         sp(&s, ") in;\nlayout(%s, max_vertices = %u) out;\n", outp, c->gs_max_verts ? c->gs_max_verts : 1);
@@ -2252,10 +2269,12 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
             if (c->in_attr_mask & (1u << i)) sp(&s, "layout(location = %d) in vec4 vin%d[];\n", i, i);
         for (int i = 0; i < 32; i++)
             if (c->out_attr_mask & (1u << i)) sp(&s, "layout(location = %d) out vec4 v%d;\n", i, i);
+    gs_outputs:
         sp(&s, "vec4 gs_pos = vec4(0, 0, 0, 1);\n");
         for (int i = 0; i < 32; i++)
             if (c->out_attr_mask & (1u << i)) sp(&s, "vec4 gs_v%d = vec4(0, 0, 0, 1);\n", i);
         if (c->gs_writes_layer) sp(&s, "int gs_layer = 0;\n");
+        if (lib) goto gs_done;
         sp(&s, "void gs_emit() {\n  gl_Position = gs_pos;\n");
         if (key && key->flip_y) sp(&s, "  gl_Position.y = -gl_Position.y;\n");
         if (key && (key->x_mode & 1)) sp(&s, "  gl_Position.x = -gl_Position.x;\n");
@@ -2264,10 +2283,11 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
             if (c->out_attr_mask & (1u << i)) sp(&s, "  v%d = gs_v%d;\n", i, i);
         if (c->gs_writes_layer) sp(&s, "  gl_Layer = gs_layer;\n");
         sp(&s, "  EmitVertex();\n}\n");
+    gs_done:;
     } else {
         sp(&s, "layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;\n");
     }
-    sp(&s, "void main() {\n");
+    sp(&s, "void %s() {\n", !lib ? "main" : stage == STAGE_GEOMETRY ? "gs_main" : "vs_main");
     if (stage == STAGE_VERTEX) {
         sp(&s, "  gl_Position = vec4(0, 0, 0, 1);\n");
         for (int i = 0; i < 32; i++)
@@ -2301,10 +2321,11 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         if (layer_out >= 0) sp(&s, "  gl_Layer = int(v%d[%d]);\n", layer_out >> 4, (layer_out >> 2) & 3);
     } else if (stage == STAGE_FRAGMENT) {
         int r = 0;
+        if (key && key->rt_kind[1] == RT_KIND_DUAL && !((c->omap_target >> 4) & 0xF)) sp(&s, "  c1 = vec4(0.0f);\n");
         for (int rt = 0; rt < 8; rt++) {
             uint32_t m = (c->omap_target >> (rt * 4)) & 0xF;
             if (!m) continue;
-            int kind = key ? key->rt_kind[rt] : 0;
+            int kind = key && key->rt_kind[rt] != RT_KIND_DUAL ? key->rt_kind[rt] : 0;
             const char *cv = kind == 1 ? "int" : kind == 2 ? "uint" : "";
             for (int comp = 0; comp < 4; comp++) {
                 if (!(m & (1u << comp))) continue;
@@ -2325,9 +2346,6 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         for (int rt = 0; scrub && rt < 8; rt++)
             if (((c->omap_target >> (rt * 4)) & 0xF) && !(key && key->rt_kind[rt]))
                 sp(&s, "  c%d = mix(c%d, vec4(0.0f), isnan(c%d)); c%d = mix(c%d, vec4(0.0f), isinf(c%d));\n", rt, rt, rt, rt, rt, rt);
-        if (tint)
-            sp(&s, "  if (ltint[0].w > 0.0f) { vec3 g = c0.rgb; float l = dot(g, vec3(0.299f, 0.587f, 0.114f));\n"
-                   "    c0.rgb = mix(g, ltint[0].rgb * pow(l, ltint[1].w) + ltint[1].rgb * l, ltint[0].w); }\n");
         if (c->omap_depth) {
             if (c->reg_used[r + 1]) sp(&s, "  gl_FragDepth = as_f(r%d);\n", r + 1);
             else sp(&s, "  gl_FragDepth = gl_FragCoord.z;\n");
@@ -2337,6 +2355,7 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     info->msl = s.buf;
     info->attr_mask = c->in_attr_mask;
     info->out_mask = stage == STAGE_FRAGMENT ? c->omap_target : c->out_attr_mask;
+    info->gs_emits = c->gs_emits;
     free(c->body.buf);
     free(c);
     return info;
@@ -2381,7 +2400,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     // collect branch targets (labels)
     uint8_t *label = calloc(end + 4, 1);
     label[1] = 1;
-    bool any_branch = false;
+    bool any_branch = false, flow_seen = false;  // (and the geometry shader's emits: all unconditional, before any flow?)
     for (size_t i = 0; i < end; i++) {
         if (i % 4 == 0) continue;
         uint64_t w = ((const uint64_t *)code)[i];
@@ -2402,6 +2421,11 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         if ((w & 0xfff8000000000000ull) == 0xf0f8000000000000ull || (w & 0xfff0000000000000ull) == 0xe340000000000000ull ||
             (w & 0xfff0000000000000ull) == 0xe350000000000000ull)
             any_branch = true;
+        bool out = (w & 0xfff8000000000000ull) == 0xfbe0000000000000ull || (w & 0xfef8000000000000ull) == 0xf6e0000000000000ull ||
+                   (w & 0xfff8000000000000ull) == 0xebe0000000000000ull;
+        if (out && ((w >> 39) & 1) && c->gs_emits >= 0)  // (an emit after a branch / exit, or predicated: how many run?)
+            c->gs_emits = flow_seen || ((w >> 16) & 0xF) != 7 ? -1 : c->gs_emits + 1;
+        if (any_branch || (w & 0xfff0000000000000ull) == 0xe300000000000000ull) flow_seen = true;  // (EXIT)
         (void)is_branch_target_op;
     }
     // translate
@@ -2494,13 +2518,6 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         sp(&args, ", constant float4 *rscale [[buffer(18)]]");
         info->uses_rscale = true;
     }
-    // Runtime highlight (e.g. golden unchecked pots): fragment shaders writing a float color target 0 get a
-    // per-draw tint, float4 [0] = colour.rgb + strength, [1] = added glow.rgb (strength 0 = untouched).
-    bool tint = stage == STAGE_FRAGMENT && !dbg && (c->omap_target & 0x7) == 0x7 && (!key || key->rt_kind[0] == 0);
-    if (tint) {
-        sp(&args, ", constant float4 *ltint [[buffer(19)]]");
-        info->uses_tint = true;
-    }
     for (int i = 0; i < info->ntex; i++) {
         ShaderTexture *t = &info->tex[i];
         const char *tn = tex_type_name(t->type);
@@ -2564,9 +2581,6 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
                 r++;
             }
         }
-        if (tint)
-            sp(&s, "  if (ltint[0].w > 0.0f) { float3 g = o.c0.rgb; float l = dot(g, float3(0.299f, 0.587f, 0.114f));\n"
-                   "    o.c0.rgb = mix(g, ltint[0].rgb * pow(l, ltint[1].w) + ltint[1].rgb * l, ltint[0].w); }\n");
         if (c->omap_depth) {
             if (c->reg_used[r + 1]) sp(&s, "  o.depth = as_type<float>(r%d);\n", r + 1);
             else sp(&s, "  o.depth = in.pos.z;\n");
@@ -2587,8 +2601,4 @@ void maxwell_free(ShaderInfo *s) {
     if (!s) return;
     free(s->msl);
     free(s);
-}
-
-void maxwell_disassemble(const uint8_t *code, size_t max_size, int stage, void *file) {
-    (void)code; (void)max_size; (void)stage; (void)file;
 }

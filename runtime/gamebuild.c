@@ -152,11 +152,6 @@ static bool find_tools(Tools *t) {
     return true;
 }
 
-bool gamebuild_available(void) {
-    Tools t;
-    return find_tools(&t);
-}
-
 static void compiler(Args *a, const Tools *t) {
     add(a, t->cc);
     if (t->zig) add(a, "cc");

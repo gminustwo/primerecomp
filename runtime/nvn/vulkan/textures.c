@@ -1,5 +1,5 @@
 // Vulkan textures: NVN formats, images, change-detected uploads from guest memory, views and samplers
-// (counterpart of the texture half of metal.m and the view helpers of renderer.m).
+// (the texture half of LAS Recomp's Metal renderer, ported).
 #include <SDL3/SDL_timer.h>
 #include <float.h>
 #include <math.h>
@@ -11,7 +11,6 @@
 #include "vk.h"
 #include "../astc.h"
 #include "../renderer.h"
-#include "../texpatch.h"
 #include "../../settings.h"
 
 // ================================================================== formats
@@ -100,7 +99,7 @@ static VkFmt fmt_of(uint32_t f) {
     case 0x49: return (VkFmt){VK_FORMAT_BC4_UNORM_BLOCK};
     case 0x4A: return (VkFmt){VK_FORMAT_BC4_SNORM_BLOCK};
     case 0x4B: return (VkFmt){VK_FORMAT_BC5_UNORM_BLOCK};
-    // 0x4C = signed RGTC2; LARECOMP_BC5_UNORM=1 decodes it unsigned (see metal.m / notes/PLAN.md)
+    // 0x4C = signed RGTC2; LARECOMP_BC5_UNORM=1 decodes it unsigned
     case 0x4C: return (VkFmt){getenv("LARECOMP_BC5_UNORM") ? VK_FORMAT_BC5_UNORM_BLOCK : VK_FORMAT_BC5_SNORM_BLOCK};
     case 0x4D: return (VkFmt){VK_FORMAT_BC7_UNORM_BLOCK};
     case 0x4E: return (VkFmt){VK_FORMAT_BC7_SRGB_BLOCK};
@@ -149,7 +148,6 @@ static VkFmt fmt_of(uint32_t f) {
 bool renderer_format_is_depth(uint32_t f) { return f >= 0x31 && f <= 0x36; }
 bool renderer_format_has_stencil(uint32_t f) { return f == 0x31 || f == 0x35 || f == 0x36; }
 VkFormat vk_format(uint32_t f) { return fmt_of(f).vf; }
-bool vk_format_alpha_one(uint32_t f) { return fmt_of(f).alpha_one; }
 bool renderer_format_alpha_one(uint32_t f) { return fmt_of(f).alpha_one; }
 
 static VkImageAspectFlags aspect_of(uint32_t f) {
@@ -166,9 +164,8 @@ static bool format_supports(VkFormat f, VkFormatFeatureFlags want) {
 }
 
 // ================================================================== output resolution / per-frame clears
-// Same rules as metal.m (see the comments there).
+// (The rules of LAS Recomp's Metal renderer.)
 static float g_rs_x = 1, g_rs_y = 1;
-void renderer_get_scale(float *sx, float *sy) { *sx = g_rs_x; *sy = g_rs_y; }
 void renderer_set_scale(float sx, float sy) { g_rs_x = sx; g_rs_y = sy; }
 uint64_t renderer_present_count(void);
 
@@ -379,7 +376,6 @@ static void defer(Dead d) {
 }
 
 void vk_defer_image(VkImage img, VmaAllocation mem) { defer((Dead){.img = img, .mem = mem}); }
-void vk_defer_view(VkImageView v) { defer((Dead){.view = v}); }
 
 void vk_dl_note_upload(void *img, uint32_t w, uint32_t h, uint32_t lv);  // (exec.c: LARECOMP_VK_DEVLOST_TRACE)
 
@@ -535,7 +531,7 @@ void vk_textures_reset(void) {
     LOG("[vk] reboot: %d textures released\n", n);
 }
 
-// ================================================================== uploads (same change detection as metal.m)
+// ================================================================== uploads
 static uint64_t full_hash_budget, full_hash_budget_frame;
 
 // Four independent lanes (one serial multiply chain ran at ~1.5 bytes/cycle; dynamic textures are hashed every
@@ -758,8 +754,6 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
     bool full = b->dynamic || !b->uploaded || always_full;
     bool periodic = frame - b->full_frame >= 120 && full_hash_budget >= total;  // (safety net: a full hash now and then)
     if (!full && periodic) { full = true; full_hash_budget -= total; }
-    if (!b->tp) b->tp = texpatch_identify(t) + 1;  // (button prompts / Hero Mode icon: re-uploaded when their look changes)
-    bool restyle = b->tp > 0 && b->uploaded && b->tp_gen != texpatch_generation();
     // The OS's page write tracking (exec.c vk_pages_changed, shared with the vertex cache): texture memory the CPU
     // hasn't written since the last check is not hashed at all (dynamic textures were fully hashed every frame,
     // ~2.4 MB a frame in the overworld). The periodic full hash stays as a safety net. LARECOMP_VK_TEX_WATCH=0: off.
@@ -771,13 +765,13 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
         int ch = vk_pages_changed(t->addr, total, b->wgen, &now);
         if (ch >= 0) {
             b->wgen = now;
-            if (!ch && b->uploaded && !restyle) {
+            if (!ch && b->uploaded) {
                 if (!periodic) { prof_tex_watch_skips++; return; }
                 if (b->dynamic) full_hash_budget -= total;  // (the others took theirs above)
             }
         }
     }
-    if (!full && !restyle) {
+    if (!full) {
         prof_tex_samples++;
         uint64_t sh = fnv_sample(mem, total);
         if (sh == b->sample_hash) return;
@@ -786,9 +780,8 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
     uint64_t h = hash_full(mem, total);
     b->full_frame = frame;
     b->sample_hash = fnv_sample(mem, total);
-    if (b->uploaded && h == b->data_hash && !restyle) return;
+    if (b->uploaded && h == b->data_hash) return;
     if (b->uploaded && h != b->data_hash) b->dynamic = true;
-    if (b->tp > 0) b->tp_gen = texpatch_generation();
     b->data_hash = h;
     b->uploaded = true;
 upload:
@@ -808,7 +801,6 @@ upload:
                 uint8_t *blocks = malloc((uint64_t)l.wb * l.hb * 16);
                 if (linear) for (uint32_t y = 0; y < l.hb; y++) memcpy(blocks + (uint64_t)y * l.wb * 16, src + (uint64_t)y * t->stride, l.wb * 16);
                 else tegra_deswizzle(src, blocks, l.wb, l.hb, 1, 16, l.block_height_log2, l.block_depth_log2);
-                if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, blocks, l.w, l.h, l.wb * 16);
                 VkSpan s = vk_transient((uint64_t)l.w * l.h * 4, 16);
                 astc_decode_ldr(blocks, l.w, l.h, b->astc_bw, b->astc_bh, b->astc_srgb, s.ptr);
                 free(blocks);
@@ -831,7 +823,6 @@ upload:
             } else {
                 tegra_deswizzle(src, lin, l.wb, l.hb, l.d, fi->bpb, l.block_height_log2, l.block_depth_log2);
             }
-            if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, lin, l.w, l.h, row);
             {   // (debug) LARECOMP_DUMP_TEX=<w>x<h>: level 0 of uploads that size, as stored and as decoded
                 static int dw = -1, dh;
                 if (dw < 0 && !(getenv("LARECOMP_DUMP_TEX") && sscanf(getenv("LARECOMP_DUMP_TEX"), "%dx%d", &dw, &dh) == 2)) dw = 0;
@@ -962,7 +953,7 @@ static const VkComponentMapping IDENTITY = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_CO
                                             VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
 
 // render: attachment view (one level, one layer). Otherwise a sampled view of type want_textype (TEXTYPE_*),
-// with the NVN component swizzle, converting between compatible types the way renderer.m does.
+// with the NVN component swizzle, converting between compatible types.
 // Layers a render target binds: all of an array / cube image unless its view picks some (a draw without a layer
 // output writes layer 0; with one, the passthrough geometry shader emulation picks the face).
 uint32_t vk_render_layers(NvnTexture *t, const NvnTextureView *v, bool has_view) {

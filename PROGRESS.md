@@ -184,3 +184,18 @@ Debug recipe: `LARECOMP_DEBUG_FRAME=<n>` (pass images in build/build/, draw log)
   right stick), WASD, clicks to shoot and lock on, Space to jump, keys for visors, beams, map and pause; Esc and
   Enter work the game's menus. Everything rebinds in the Controls tab, mouse buttons included.
 - The Landing Site's dark spots (the reflection probe blend) fix is in the playtest build.
+
+## 2026-10-25 (night): macOS
+
+- PrimeRecomp builds and runs on Apple Silicon Macs: `make app` makes `build/PrimeRecomp.app`, whose start screen sets
+  the game up from the player's files (89 s on an M3 Max) and plays it at 60 fps. macOS uses the same Vulkan renderer
+  as Windows and Linux, on MoltenVK; LAS Recomp's Metal renderer, which none of the Metroid Prime renderer work went
+  into, is left over (`MAC_RENDERER=metal`). `make deps` builds SDL3, FFmpeg, the Vulkan loader, MoltenVK and shaderc
+  from pinned sources for macOS 15.
+- Shader fix for MoltenVK: the translated GLSL's NaN-aware fmin / fmax and clz helpers had Metal's built-in names,
+  which made calls ambiguous once MoltenVK turned them into Metal shaders (renamed).
+- The pause map's room fill is drawn by a geometry shader, and Apple's GPUs have none (solved below).
+- Later that night: the pause map's room fill (and the HUD minimap's) draws on Macs too - the vertex shader runs the
+  map's geometry shader there - and dual-source blending (the gunship's glass) takes the right second colour on every
+  system. Cleanup: LAS Recomp's Metal renderer, Link's Awakening's texture patches and the per-draw tint, LA settings
+  and test hooks, and dead functions removed; CONTRIBUTING.md rewritten for PrimeRecomp; the log names the version.

@@ -69,9 +69,9 @@ void rt_request_reboot(int kind) {
 }
 int rt_reboot_requested(void) { return g_reboot; }
 
-// LARECOMP_REBOOT_AT=<frame>:<seed | vanilla | title>[,...] (test): at that presented frame, switch to the seed /
-// vanilla in place, or go back to the start screen (with LARECOMP_LAUNCHER_AUTOPLAY it plays the saved choice).
-// Frames count on across reboots. Called by the presenter every frame.
+// LARECOMP_REBOOT_AT=<frame>:<game | title>[,...] (test): at that presented frame, boot the game again in place, or go
+// back to the start screen (with LARECOMP_LAUNCHER_AUTOPLAY it plays again). Frames count on across reboots. Called by
+// the presenter every frame.
 void reboot_test_frame(uint64_t frame) {
     static const char *next;
     static int init;
@@ -81,11 +81,7 @@ void reboot_test_frame(uint64_t frame) {
     if (!next || !*next || sscanf(next, "%ld:%127[^,]", &at, what) != 2 || (long)frame < at) return;
     next = strchr(next, ',');
     if (next) next++;
-    if (!strcmp(what, "title")) { rt_request_reboot(RT_REBOOT_TITLE); return; }
-    // (a test run: the next boot's seed without saving it - primerecomp.ini is the player's choice)
-    strlcpy(g_settings.rando_seed, strcmp(what, "vanilla") ? what : "", sizeof g_settings.rando_seed);
-    unsetenv("LARECOMP_RANDO_SEED");
-    rt_request_reboot(RT_REBOOT_GAME);
+    rt_request_reboot(!strcmp(what, "title") ? RT_REBOOT_TITLE : RT_REBOOT_GAME);
 }
 
 #ifdef __APPLE__
@@ -197,6 +193,20 @@ int main(int argc, char **argv) {
         else if (argv[i][0] != '-' && !realpath(argv[i], arg_root)) root = argv[i];  // (relative to where we started)
         else if (argv[i][0] != '-') root = arg_root;
     }
+    extern const char *rt_version(void);  // runtime/ui/launcher.mm
+#if defined(_WIN32)
+    const char *os = "Windows";
+#elif defined(__APPLE__)
+    const char *os = "macOS";
+#else
+    const char *os = "Linux";
+#endif
+#if defined(__aarch64__)
+    const char *arch = "arm64";
+#else
+    const char *arch = "x86-64";
+#endif
+    LOG("[version] PrimeRecomp %s (%s, %s)\n", rt_version(), os, arch);  // (bug reports: tools/log_triage.py)
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
     for (bool title = !skip_launcher;;) {
         if (title) {  // start screen (runtime/ui/launcher.mm): game files setup, seed choice, settings

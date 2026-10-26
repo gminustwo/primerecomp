@@ -175,7 +175,6 @@ typedef struct {
     uint64_t selected;  // bitmask of streams
     AVPacket *pkt;
     bool have_pkt, eof;
-    bool skippable;  // the launch opening (forced on the first launch, no save yet): A / B / + ends it
     // a source read through the game's movie::ClientStreamReader (Metroid Prime Remastered: movies in .pak files)
     uint64_t reader, handle;  // the guest reader object, its open handle
     int64_t pos, size;
@@ -183,38 +182,7 @@ typedef struct {
     uint8_t *bounce;  // reads land here first: guest-visible memory (see gs_read)
 } Extractor;
 
-static bool g_skip_held;           // ex_fill: A / B held at the last look
-static double g_skip_pressed_at;    // when they were pressed (0 = not yet)
-
 static void ex_fill(Extractor *e) {
-    if (e->skippable && !e->eof) {
-        // the game skips the opening with Plus (once a save exists); A and B do too (we press Plus for it)
-        extern uint64_t input_buttons_now(void);
-        extern volatile int g_inject_plus;
-        bool held = g_skip_held;
-        double pressed_at = g_skip_pressed_at;
-        uint64_t b = input_buttons_now();
-        bool now = (b & ((1u << 0) | (1u << 1) | (1u << 10))) != 0;  // A / B / Plus
-        if (now && !held) {
-            LOG("[movie] opening: A/B/+ -> Plus (skip)\n");
-            if (b & 3) g_inject_plus = 1;
-            if (!pressed_at) pressed_at = av_gettime_relative() / 1e6;
-        }
-        held = now;
-        // With no save file yet the game ignores Plus (first viewing can't be skipped): if the movie still plays
-        // half a second after the press, jump to its last half second so it ends the normal way (ending the
-        // stream outright makes the game restart it).
-        if (pressed_at && av_gettime_relative() / 1e6 - pressed_at > 0.5 && e->fmt->duration > 1000000) {
-            pressed_at = 0;
-            int64_t to = e->fmt->duration - 500000;
-            if (av_seek_frame(e->fmt, -1, to, AVSEEK_FLAG_BACKWARD) >= 0) {
-                if (e->have_pkt) { av_packet_unref(e->pkt); e->have_pkt = false; }
-                LOG("[movie] opening: still playing -> seek to the end\n");
-            }
-            e->skippable = false;  // (done: later presses on the title / file select are the menus' own)
-        }
-        g_skip_held = held, g_skip_pressed_at = pressed_at;
-    }
     while (!e->have_pkt && !e->eof) {
         if (av_read_frame(e->fmt, e->pkt) < 0) { e->eof = true; break; }
         if (e->selected & (1ull << e->pkt->stream_index)) e->have_pkt = true;
@@ -237,9 +205,6 @@ static void ex_set_data_source(Cpu *c) {
     }
     e->pkt = av_packet_alloc();
     e->ntracks = 0;
-    // the opening at launch can always be skipped, vanilla and randomizer (with no save yet the game forces it)
-    e->skippable = rel && strstr(rel, "movie/opening.webm");
-    if (e->skippable) g_skip_pressed_at = 0;  // (a press that ended the title's attract replay isn't for this one)
     for (unsigned i = 0; i < e->fmt->nb_streams && e->ntracks < 16; i++)
         if (e->fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO ||
             (e->fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && g_settings.movie_audio && !getenv("LARECOMP_NO_MOVIE_AUDIO")))
@@ -834,7 +799,6 @@ RT_ON_RESET(movie_reset) {
     }
     g_ex_vt = g_dec_vt = 0;
     g_nbuf_pool = 0;  // (the HLE heap starts over)
-    g_skip_held = false, g_skip_pressed_at = 0;
 }
 
 static void dec_get_counts(Cpu *c) {  // slot 14: (int*, int64*) queried after Configure

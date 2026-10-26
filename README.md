@@ -41,7 +41,8 @@ limit. The Linux version is still experimental, so reports of how it goes are ve
 
 - Fixing the remaining graphics bugs
 - More testing of the Linux version on real hardware (the Steam Deck's performance first)
-- A macOS version (LAS Recomp already runs on macOS, so much of the groundwork is there)
+- A macOS release: the app builds and runs from source on Apple Silicon Macs ([docs/macos.md](docs/macos.md)), but
+  isn't a download yet
 - An Android version
 
 If something goes wrong, please open an [issue](https://github.com/gminustwo/primerecomp/issues) and attach
@@ -152,7 +153,9 @@ If you enjoy PrimeRecomp, you can support its development by
 See [docs/BUILD-windows.md](docs/BUILD-windows.md). In short: `tools\setup_windows.ps1` installs MSYS2 and the
 tools; with your own extracted game files in `extracted/`, `make gen` recompiles the game and `make` builds
 `build/primerecomp.exe`. `make dist` packages a release. Linux: see [docs/linux.md](docs/linux.md) - `make appimage`
-builds the AppImage in an Ubuntu 22.04 container (from Windows, that works inside WSL2).
+builds the AppImage in an Ubuntu 22.04 container (from Windows, that works inside WSL2). macOS (Apple Silicon): see
+[docs/macos.md](docs/macos.md) - `make deps`, `make gen-helper` and `tools/fetch_zig.sh` once, then `make app` builds
+`build/PrimeRecomp.app`, the same Vulkan renderer on MoltenVK.
 
 Developer notes: [PROGRESS.md](PROGRESS.md) (history) and [HANDOFF.md](HANDOFF.md) (current state). Link's
 Awakening's game code (its patches, its memory hooks, the randomizer, cheats and cosmetics) has been removed; LAS

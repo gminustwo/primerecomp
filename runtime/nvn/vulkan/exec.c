@@ -1,4 +1,4 @@
-// Executes recorded NVN command lists with Vulkan (port of renderer.m; same structure, same behaviour).
+// Executes recorded NVN command lists with Vulkan (a port of LAS Recomp's Metal renderer, since extended).
 #include <SDL3/SDL_cpuinfo.h>
 #include <SDL3/SDL_timer.h>
 #include <float.h>
@@ -686,9 +686,9 @@ VkSpan vk_transient_copy(const void *data, uint64_t size, uint64_t align) {
     return s;
 }
 
-// Per-draw constants that usually repeat the previous draw's (scale table, tint, driver constants): reuse that copy
+// Per-draw constants that usually repeat the previous draw's (scale table, driver constants): reuse that copy
 // while it's identical, within one submission. slot: one per kind of data.
-enum { DEDUPE_RSCALE_V, DEDUPE_RSCALE_F, DEDUPE_TINT, DEDUPE_DRV_V, DEDUPE_DRV_F, DEDUPE_DRV_C, DEDUPE_SLOTS };
+enum { DEDUPE_RSCALE_V, DEDUPE_RSCALE_F, DEDUPE_DRV_V, DEDUPE_DRV_F, DEDUPE_DRV_C, DEDUPE_SLOTS };
 static VkSpan copy_dedupe(int slot, const void *data, uint64_t size, uint64_t align) {
     static struct { uint64_t seq, size; uint8_t data[0x800]; VkSpan span; } last[DEDUPE_SLOTS];
     uint64_t seq = vk_pending_seq();
@@ -1368,6 +1368,7 @@ typedef struct {
     ShaderKey vkey, fkey, gkey;
     VkShaderModule vs, fs, gs;
     bool has_gs;  // a translated geometry shader (set 2), between the vertex and fragment shaders
+    bool gs_emul;  // a geometry shader the vertex shader runs instead (gs_emul_sources); its cbufs: set 2
     VkBindingInfo binds[MAX_BIND];
     int nbinds;
     VkDescriptorSetLayout set_layout[3];
@@ -1379,7 +1380,8 @@ typedef struct {
 static VkPipelineLayout make_layout(Prog *p, int nsets, VkShaderStageFlags s0, VkShaderStageFlags s1) {
     p->set_layout[0] = vk_set_layout(p->binds, p->nbinds, 0, s0);
     if (nsets > 1) p->set_layout[1] = vk_set_layout(p->binds, p->nbinds, 1, s1);
-    if (nsets > 2) p->set_layout[2] = vk_set_layout(p->binds, p->nbinds, 2, VK_SHADER_STAGE_GEOMETRY_BIT);
+    if (nsets > 2)
+        p->set_layout[2] = vk_set_layout(p->binds, p->nbinds, 2, p->gs_emul ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_GEOMETRY_BIT);
     VkPipelineLayoutCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = (uint32_t)nsets,
                                      .pSetLayouts = p->set_layout};
     VkPipelineLayout l;
@@ -1448,7 +1450,7 @@ static void compile_program(void *arg) {
     free(sv);
     free(sf);
     free(sg);
-    p->layout = make_layout(p, p->has_gs ? 3 : 2, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
+    p->layout = make_layout(p, p->has_gs || p->gs_emul ? 3 : 2, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
     atomic_fetch_add(&stat_compiles, 1);
     atomic_store(&p->state, p->vs && p->fs && (!p->has_gs || p->gs) ? 1 : 2);
 }
@@ -1465,29 +1467,69 @@ static void dump_failed_shader(uint64_t code, uint64_t max, int stage) {
     fclose(f);
 }
 
+// A geometry shader without geometry shaders (MoltenVK: Metal has none), for a triangle in and the same triangle out, as
+// MPR's map draws its rooms' fill: the vertex shader gives world positions, the geometry shader projects each vertex
+// (and shades the face from its normal, which the fill's fragment shader doesn't read). Translated as a library
+// (ShaderKey.gs_lib), the vertex shader runs it on its own vertex alone - all three inputs that vertex - and the first
+// vertex it emits is this vertex's output: exact for every value that depends on its own input vertex only, which is
+// what such a shader does with positions and passed-through attributes. Only straight-line ones emitting three vertices
+// are run so (translate_program); one that culls (map: none) is drawn without it as before.
+static void gs_emul_sources(Prog *p) {
+    const ShaderInfo *vi = p->vi, *gi = p->gi;
+    size_t cap = strlen(vi->msl) + strlen(gi->msl) + 16384, n = 0;
+    char *vs = malloc(cap);
+#define CAT(...) (n += (size_t)snprintf(vs + n, cap - n, __VA_ARGS__))
+    // (the library calls the host's functions, which use its outputs: prototypes, the library, then their bodies)
+    CAT("%svec4 gs_in_pos(uint i);\nvoid gs_emit();\nvoid gs_end();\n", vi->msl);
+    for (int i = 0; i < 32; i++)
+        if ((gi->attr_mask >> i) & 1) CAT("vec4 gs_in_v%d(uint i);\n", i);
+    CAT("%s", gi->msl);
+    for (int i = 0; i < 32; i++)
+        if ((gi->out_mask >> i) & 1) CAT("layout(location = %d) out vec4 gs_o%d;\n", i, i);
+    CAT("vec4 gs_raw_pos;\nvec4 gs_in_pos(uint i) { return gs_raw_pos; }\n");
+    for (int i = 0; i < 32; i++)
+        if ((gi->attr_mask >> i) & 1) CAT("vec4 gs_in_v%d(uint i) { return v%d; }\n", i, i);
+    CAT("bool gs_any = false;\nvoid gs_emit() {\n  if (gs_any) return;\n  gs_any = true;\n  gl_Position = gs_pos;\n");
+    for (int i = 0; i < 32; i++)
+        if ((gi->out_mask >> i) & 1) CAT("  gs_o%d = gs_v%d;\n", i, i);
+    CAT("}\nvoid gs_end() {}\n"
+        "void main() {\n  vs_main();\n  gs_raw_pos = gl_Position;\n  gl_Position = vec4(0.0f);\n  gs_main();\n");
+    if (p->gkey.flip_y) CAT("  gl_Position.y = -gl_Position.y;\n");
+    if (p->gkey.x_mode & 1) CAT("  gl_Position.x = -gl_Position.x;\n");
+    if (p->gkey.depth_minus_one) CAT("  gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5f;\n");
+    CAT("}\n");
+#undef CAT
+    free(p->vi->msl);
+    p->vi->msl = vs;
+}
+
 static void translate_program(void *arg) {
     Prog *p = arg;
     maxwell_gmem_base = HEAP_BASE;
     maxwell_gmem_size = HEAP_MAX;
     pthread_mutex_lock(&translate_lock);
     p->vi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[0], p->cmax[0], STAGE_VERTEX, &p->vkey);
-    if (p->vi->msl && p->has_gs) {  // the geometry shader reads the vertex shader's outputs, the fragment shader its
-        p->gkey.vs_out_mask = p->vi->out_mask;
+    if (p->vi->msl && (p->has_gs || p->gs_emul)) {  // the geometry shader reads the vertex shader's outputs, the fragment
+        p->gkey.vs_out_mask = p->vi->out_mask;      // shader its
         p->gi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[2], p->cmax[2], STAGE_GEOMETRY, &p->gkey);
+        if (p->gi->msl && p->gs_emul && p->gi->gs_emits != 3)
+            snprintf(p->gi->error, sizeof p->gi->error, "for the vertex shader to run it, one triangle in straight-line code "
+                     "(here %d vertices)", p->gi->gs_emits), free(p->gi->msl), p->gi->msl = NULL;
         if (!p->gi->msl) {  // drawn without it, as before: the vertex shader does its own clip space epilogue again
             LOG("[shader] GS translate failed: %s (code %llx): drawn without it\n", p->gi->error, (unsigned long long)p->code[2]);
             dump_failed_shader(p->code[2], p->cmax[2], 2);
-            p->has_gs = false;
-            p->vkey.gs_follows = 0;
+            p->has_gs = p->gs_emul = false;
+            p->vkey.gs_follows = p->vkey.gs_lib = 0;
             maxwell_free(p->vi);
             p->vi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[0], p->cmax[0], STAGE_VERTEX, &p->vkey);
         }
     }
     if (p->vi->msl) {
-        p->fkey.vs_out_mask = p->has_gs ? p->gi->out_mask : p->vi->out_mask;
+        p->fkey.vs_out_mask = p->has_gs || p->gs_emul ? p->gi->out_mask : p->vi->out_mask;
         p->fi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[1], p->cmax[1], STAGE_FRAGMENT, &p->fkey);
     }
     pthread_mutex_unlock(&translate_lock);
+    if (p->gs_emul && p->vi->msl) gs_emul_sources(p);
     if (!p->vi->msl) {
         LOG("[shader] VS translate failed: %s (code %llx)\n", p->vi->error, (unsigned long long)p->code[0]);
         dump_failed_shader(p->code[0], p->cmax[0], 0);
@@ -1502,7 +1544,7 @@ static void translate_program(void *arg) {
     }
     override_glsl(&p->vi->msl, p->code[0], "vs");
     override_glsl(&p->fi->msl, p->code[1], "fs");
-    if (p->has_gs) override_glsl(&p->gi->msl, p->code[2], "gs");
+    if (p->has_gs) override_glsl(&p->gi->msl, p->code[2], "gs");  // (emulated: inside the vs source)
     p->vs_uses_vid = strstr(p->vi->msl, "gl_VertexIndex") != NULL;
     save_glsl(p->vi->msl, p->code[0], "vs");
     save_glsl(p->fi->msl, p->code[1], "fs");
@@ -1559,14 +1601,15 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey, int g
         vk_layer.layer_attr = (uint16_t)gs_layer_attr(np->stages[2].code_addr);
         vkey = &vk_layer;
     }
-    if ((np->stage_mask & 4) && !(np->stage_mask & 0x18) && !vkey->layer_attr && g_vk.geometry && !getenv("LARECOMP_NO_GS")) {
+    bool emul = false;  // or one the vertex shader runs (no geometry shaders: gs_emul_sources)
+    if ((np->stage_mask & 4) && !(np->stage_mask & 0x18) && !vkey->layer_attr && !getenv("LARECOMP_NO_GS")) {
         if (vkey != &vk_layer) { vk_layer = *vkey; vkey = &vk_layer; }
-        vk_layer.gs_follows = 1;
-        gs = true;
+        if (g_vk.geometry) vk_layer.gs_follows = 1, gs = true;
+        else if (gs_in == 2) vk_layer.gs_follows = vk_layer.gs_lib = 1, emul = true;
     }
     uint64_t h = 0xcbf29ce484222325ull;
-    for (int i = 0; i < (gs ? 3 : 2); i++) { uint64_t a = np->stages[i].code_addr; for (int k = 0; k < 8; k++) { h ^= (a >> (k * 8)) & 0xFF; h *= 0x100000001B3ull; } }
-    if (gs) { h ^= (uint64_t)gs_in + 1; h *= 0x100000001B3ull; }
+    for (int i = 0; i < (gs || emul ? 3 : 2); i++) { uint64_t a = np->stages[i].code_addr; for (int k = 0; k < 8; k++) { h ^= (a >> (k * 8)) & 0xFF; h *= 0x100000001B3ull; } }
+    if (gs || emul) { h ^= (uint64_t)gs_in + 1; h *= 0x100000001B3ull; }
     const uint8_t *vb = (const uint8_t *)vkey;
     for (size_t i = 0; i < sizeof *vkey; i++) { h ^= vb[i]; h *= 0x100000001B3ull; }
     for (int i = 0; i < 8; i++) { h ^= fkey->rt_kind[i]; h *= 0x100000001B3ull; }
@@ -1583,8 +1626,9 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey, int g
     }
     p->vkey = *vkey;
     p->fkey = *fkey;
-    if (gs) {
-        p->has_gs = true;
+    if (gs || emul) {
+        p->has_gs = gs;
+        p->gs_emul = emul;
         p->code[2] = np->stages[2].code_addr;
         p->cmax[2] = np->stages[2].const_offset ? np->stages[2].const_offset : 0x10000;
         p->gkey.glsl = 1;
@@ -1592,14 +1636,19 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey, int g
         p->gkey.x_mode = vkey->x_mode & 1;  // (no edge stretch with a geometry shader: draw_ doesn't ask for it)
         p->gkey.depth_minus_one = vkey->depth_minus_one;
         p->gkey.gs_in = (uint8_t)gs_in;
-        LOG("[vk] program vs %llx fs %llx: geometry shader %llx (input class %d) translated\n", (unsigned long long)p->code[0],
-            (unsigned long long)p->code[1], (unsigned long long)p->code[2], gs_in);
+        p->gkey.gs_lib = emul;
+        LOG("[vk] program vs %llx fs %llx: geometry shader %llx (input class %d) %s\n", (unsigned long long)p->code[0],
+            (unsigned long long)p->code[1], (unsigned long long)p->code[2], gs_in,
+            gs ? "translated" : "run by the vertex shader (no geometry shaders here)");
     }
+    if (fkey->rt_kind[1] == RT_KIND_DUAL)
+        LOG("[vk] program vs %llx fs %llx: dual-source blending (its RT1 output the second colour)\n",
+            (unsigned long long)p->code[0], (unsigned long long)p->code[1]);
     if (vkey->layer_attr)
         LOG("[vk] program vs %llx fs %llx: passthrough geometry shader %llx, the layer from vertex output %#x\n",
             (unsigned long long)p->code[0], (unsigned long long)p->code[1], (unsigned long long)np->stages[2].code_addr,
             vkey->layer_attr);
-    else if ((np->stage_mask & 0x1C) && !gs)
+    else if ((np->stage_mask & 0x1C) && !gs && !emul)
         LOG("[vk] frame %llu: program vs %llx fs %llx has a geometry / tessellation stage (gs %llx tcs %llx tes %llx): not "
             "supported, drawn without it\n", (unsigned long long)renderer_present_count(), (unsigned long long)p->code[0],
             (unsigned long long)p->code[1],
@@ -1741,6 +1790,11 @@ static VkBlendFactor blend_factor(uint8_t f) {
         return VK_BLEND_FACTOR_ONE;
     }
     }
+}
+
+static bool blend_dual(const uint8_t *b) {  // (a target's blend state, as blend_factor reads it: SRC1 factors)
+    for (int i = 1; i <= 4; i++) if (b[i] >= 0x10 && b[i] <= 0x13) return true;
+    return false;
 }
 
 static VkBlendOp blend_op(uint8_t e) {
@@ -1885,13 +1939,14 @@ static void build_pipeline(void *arg) {
     VkResult r = vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, &pi, NULL, &pp->pipe);
     if (r != VK_SUCCESS) {
         static int n;
-        if (n++ < 10) LOG("[vk] pipeline creation failed: %d\n", r);
+        if (n++ < 10) LOG("[vk] pipeline creation failed: %d (vs %llx fs %llx)\n", r, (unsigned long long)k->prog->code[0],
+                          (unsigned long long)k->prog->code[1]);
     }
     atomic_fetch_add(&stat_compiles, 1);
     atomic_store(&pp->state, r == VK_SUCCESS ? 1 : 2);
 }
 
-// ================================================================== feedback snapshots (renderer.m resolve_feedback)
+// ================================================================== feedback snapshots
 static NvnTexture *feedback_tex[4];
 static VkImageView feedback_view[4];
 static int nfeedback;
@@ -2219,7 +2274,7 @@ static VkDescriptorBufferInfo ubo_span(VkSpan s, uint64_t size) {
     return (VkDescriptorBufferInfo){s.buf, s.off, size > max ? max : size};
 }
 
-// Constant buffer k of a stage (renderer.m bind_cbufs), copied into transient memory.
+// Constant buffer k of a stage, copied into transient memory.
 static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32_t gx, uint32_t gy, uint32_t gz) {
     static const uint8_t zeros[0x10000];
     if (k == 0) {
@@ -2265,7 +2320,7 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
 }
 
 // Global memory (shader LDG/STG, maxwell_gmem_base = HEAP_BASE): the guest heap imported as a GPU buffer
-// (VK_EXT_external_memory_host), zero-copy like metal.m's g_guest_buffer, so compute results land in guest
+// (VK_EXT_external_memory_host), zero-copy, so compute results land in guest
 // memory. The import pins its pages, so it covers only the heap the game set up (SetHeapSize), made on first use.
 // It stops at the device's largest allocation (g_vk.max_alloc: 2 GB on Mesa's llvmpipe, whose vertex fetches from a
 // larger import came out empty - the title screen's logo and movie): vertex / index data past that is copied.
@@ -2629,7 +2684,7 @@ void vc_flush(void) {
     vc_npend = 0;
 }
 
-// Vertex / index data from the imported guest heap (renderer.m bind_guest reads g_guest_buffer the same way): the
+// Vertex / index data from the imported guest heap: the
 // device-local cache above, else read in place - no per-draw copy, no index scan for the copy size. The game fences its
 // CPU writes as on the Switch. Falls back to copies outside the heap or without the import; LARECOMP_VK_COPY_VERTICES=1
 // forces copies.
@@ -2761,14 +2816,14 @@ static VkImageView image_view(int stage, const ShaderTexture *im) {
 static float g_mirror_w;  // mirror mode's composite: its render target width (rscale[65].x; 0 otherwise)
 
 static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t set, int stage, ShaderInfo *si, const float *rscale_row0,
-                                 const float tint[8], uint32_t gx, uint32_t gy, uint32_t gz, const VkDescriptorImageInfo *pre_ii) {
+                                 uint32_t gx, uint32_t gy, uint32_t gz, const VkDescriptorImageInfo *pre_ii) {
     VkDescriptorSet ds = vk_alloc_set(layout);
     VkWriteDescriptorSet w[MAX_BIND];
     VkDescriptorBufferInfo bi[MAX_BIND];
     VkDescriptorImageInfo ii[MAX_BIND];
     int n = 0;
     int sg = stage == 1 ? 1 : 0;
-    float rs[66][4] = {{1, 1, 0, 0}};  // ([65]: mirror mode, renderer.m)
+    float rs[66][4] = {{1, 1, 0, 0}};  // ([65]: mirror mode)
     if (rscale_row0) memcpy(rs[0], rscale_row0, 16);
     rs[65][0] = g_mirror_w;
     for (int i = 0; i < p->nbinds; i++) {
@@ -2801,24 +2856,21 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
             bi[n] = b->binding == GFAST_BUFFER_INDEX ? gfast_info() : gmem_info();
             w[n].pBufferInfo = &bi[n];
         } else {
-            continue;  // rscale / tint: written below, once the textures (and their scales) are known
+            continue;  // rscale: written below, once the textures (and their scales) are known
         }
         n++;
     }
     for (int i = 0; i < p->nbinds; i++) {
         VkBindingInfo *b = &p->binds[i];
         if (b->set != set || b->type != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
-            (b->binding != 18 && b->binding != 19 && b->binding != GMAP_BUFFER_INDEX)) continue;
+            (b->binding != 18 && b->binding != GMAP_BUFFER_INDEX)) continue;
         w[n] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = b->binding,
                                       .descriptorCount = 1, .descriptorType = b->type};
         if (b->binding == GMAP_BUFFER_INDEX) {  // (compute) this dispatch's fast-copy table: gfast_prepare
             bi[n] = ubo_span(vk_transient_copy(gmap_tab, sizeof gmap_tab, 256), sizeof gmap_tab);
-        } else if (b->binding == 18) {
+        } else {
             for (int t = 0; t < si->ntex && t < 64; t++) { rs[1 + t][0] = tex_sc[sg][t][0]; rs[1 + t][1] = tex_sc[sg][t][1]; }
             bi[n] = ubo_span(copy_dedupe(sg ? DEDUPE_RSCALE_F : DEDUPE_RSCALE_V, rs, sizeof rs, 256), sizeof rs);
-        } else {
-            float zero[8] = {0};
-            bi[n] = ubo_span(copy_dedupe(DEDUPE_TINT, tint ? tint : zero, 32, 256), 32);
         }
         w[n].pBufferInfo = &bi[n];
         n++;
@@ -2923,7 +2975,7 @@ static void dispatch_compute(uint32_t gx, uint32_t gy, uint32_t gz) {
         LOG("\n");
     }
     if (cp->si->uses_gmem_map) gfast_prepare(cb);
-    VkDescriptorSet ds = stage_set(&cp->p, cp->p.set_layout[0], 0, 5, cp->si, NULL, NULL, gx, gy, gz, NULL);
+    VkDescriptorSet ds = stage_set(&cp->p, cp->p.set_layout[0], 0, 5, cp->si, NULL, gx, gy, gz, NULL);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, cp->pipe);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, cp->p.layout, 0, 1, &ds, 0, NULL);
     vkCmdDispatch(cb, gx, gy, gz);
@@ -2965,7 +3017,7 @@ static bool topology(uint32_t mode, VkPrimitiveTopology *t, uint8_t *cls) {
     }
 }
 
-// Draws into a presented image (see renderer.m) when the window's shape differs from the game's: composites fill the
+// Draws into a presented image when the window's shape differs from the game's: composites fill the
 // window, UI goes in a centred 16:9 box (true: boxed). Composites: draws reading the scene (a scaled texture the
 // target's size), full-screen fades (black / white fills), and plain fills in a frame that composited. Called after
 // begin_pass (pass_sx / pass_sy), once per draw (wide_frame).
@@ -3055,6 +3107,10 @@ static void draw_(CmdRec *r, bool indexed) {
     vkey.depth_minus_one = nvn_depth_mode() == 0;
     for (int i = 0; i < st.nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(st.attrib[i] & 0xFF);
     for (int i = 0; i < st.rt.ncolor; i++) if (st.rt.color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(st.rt.color[i]->format);
+    // dual-source blending into target 0 (SRC1 factors): Maxwell's second colour is the fragment shader's RT1 output (as
+    // Ryujinx reads it), declared at location 0 index 1 then - without it Metal refused the pipeline, and the second
+    // colour was undefined elsewhere
+    if ((st.color_state[0] & 1) && blend_dual(st.blend[0])) fkey.rt_kind[1] = RT_KIND_DUAL;
     VkPrimitiveTopology topo0;
     uint8_t cls0;
     topology((uint32_t)r->x[0], &topo0, &cls0);
@@ -3106,7 +3162,7 @@ static void draw_(CmdRec *r, bool indexed) {
     // smeared out to the window's (badly at 32:9). (Variant still compiling: plain boxing.)
     bool boxed = ui_boxed(pr, r), edge = false;
     float edge_k = 1;
-    if (boxed && !pr->has_gs && pass_sx > pass_sy && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
+    if (boxed && !pr->has_gs && !pr->gs_emul && pass_sx > pass_sy && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
         st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height &&
         edge_overlay(g_cur_fs_hash)) {
         ShaderKey vk2 = vkey;
@@ -3160,7 +3216,9 @@ static void draw_(CmdRec *r, bool indexed) {
         // Targets the fragment shader doesn't output keep their contents on Metal, but are undefined in Vulkan
         // (NVIDIA writes black): mask them. Foliage depth pre-passes left black silhouettes (user 2026-10-08).
         k.write_mask[i] = ((pr->fi->out_mask >> (i * 4)) & 0xF) ? (st.channel_mask >> (i * 4)) & 0xF : 0;
-        if (((st.color_state[0] >> i) & 1) && !rt_kind(st.rt.color[i]->format)) {
+        if (i > 0 && pr->fkey.rt_kind[1] == RT_KIND_DUAL) k.write_mask[i] = 0;  // (RT1's output went to target 0)
+        // (no blending into a target the shader doesn't write: Metal refuses such a pipeline, and it writes nothing)
+        if (((st.color_state[0] >> i) & 1) && !rt_kind(st.rt.color[i]->format) && k.write_mask[i]) {
             k.blend_on |= (uint8_t)(1u << i);
             memcpy(k.blend[i], st.blend[i], 8);
         }
@@ -3263,25 +3321,13 @@ static void draw_(CmdRec *r, bool indexed) {
     float *vp = st.viewport[0];
     float zn = st.depth_range[0][0], zf = st.depth_range[0][1];
     vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
-    float tint[8] = {0};
-    if (pr->fi->uses_tint) {  // the HUD hearts' colour (Cosmetics tab)
-        extern int texpatch_heart_kind(int id);
-        extern void texpatch_heart_tint(int kind, float tint[8]);
-        int heart = 0;
-        for (int i = 0; i < pr->fi->ntex; i++) {
-            NvnTexture *t = shader_texture_object(1, &pr->fi->tex[i]);
-            const TexBackend *b = t ? (const TexBackend *)t->backend : NULL;
-            if (b && b->tp > 0 && !heart) heart = texpatch_heart_kind(b->tp - 1);
-        }
-        if (heart) texpatch_heart_tint(heart, tint);
-    }
     // fragment textures are bound before deciding the viewport (tex_sc / tex_wh), rscale depends on the decision:
     // build the vertex set now and the fragment set after the decision (stage_set fills tex_sc for stage 1).
     if (prof) prof_dyn += SDL_GetTicksNS() - prof_td_;
     PROF_T0();
     // (the edge stretch's vertex shader: rscale[0].x = how much wider the window is than the box)
     float vrs0[4] = {edge_k, 1, 0, 0};
-    VkDescriptorSet vset = stage_set(pr, pr->set_layout[0], 0, 0, pr->vi, edge ? vrs0 : NULL, NULL, 0, 0, 0, NULL);
+    VkDescriptorSet vset = stage_set(pr, pr->set_layout[0], 0, 0, pr->vi, edge ? vrs0 : NULL, 0, 0, 0, NULL);
     PROF_ADD(prof_sets);
     VkDescriptorImageInfo fii[64];
     uint64_t prof_tx_ = prof ? SDL_GetTicksNS() : 0;
@@ -3315,11 +3361,12 @@ static void draw_(CmdRec *r, bool indexed) {
     apply_scissor();
     float rs0[4] = {vp_sx, vp_sy, vp_ox, vp_oy};
     uint64_t prof_t1_ = prof ? SDL_GetTicksNS() : 0;
-    VkDescriptorSet fset = stage_set(pr, pr->set_layout[1], 1, 1, pr->fi, rs0, tint, 0, 0, 0, fii);
+    VkDescriptorSet fset = stage_set(pr, pr->set_layout[1], 1, 1, pr->fi, rs0, 0, 0, 0, fii);
     if (prof) prof_sets += SDL_GetTicksNS() - prof_t1_;
     VkDescriptorSet sets[3] = {vset, fset, VK_NULL_HANDLE};
-    if (pr->has_gs) sets[2] = stage_set(pr, pr->set_layout[2], 2, 2, pr->gi, NULL, NULL, 0, 0, 0, NULL);  // (stage 2: its cbufs)
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pr->layout, 0, pr->has_gs ? 3 : 2, sets, 0, NULL);  // (always new sets)
+    bool gs = pr->has_gs || pr->gs_emul;
+    if (gs) sets[2] = stage_set(pr, pr->set_layout[2], 2, 2, pr->gi, NULL, 0, 0, 0, NULL);  // (stage 2: its cbufs)
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pr->layout, 0, gs ? 3 : 2, sets, 0, NULL);  // (always new sets)
     if (pr->vi->uses_gmem_store) vc_mark_sbufs(0);
     if (pr->fi->uses_gmem_store) vc_mark_sbufs(1);
 
@@ -3482,7 +3529,7 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
         (unsigned long long)(indexed ? r->x[6] : r->x[4]), (unsigned long long)r->x[0], (unsigned long long)r->x[2],
         (unsigned long long)st.program->stages[0].code_addr, (unsigned long long)st.program->stages[1].code_addr,
         pr->vi->cbuf_mask, pr->fi->cbuf_mask, st.rt.ncolor);
-    if ((st.program->stage_mask & 0x1C) && !pr->vkey.layer_attr && !pr->has_gs)  // geometry / tessellation: not translated
+    if ((st.program->stage_mask & 0x1C) && !pr->vkey.layer_attr && !pr->has_gs && !pr->gs_emul)  // geometry / tessellation: not translated
         LOG(" [UNSUPPORTED gs=%llx tcs=%llx tes=%llx]", (unsigned long long)st.program->stages[2].code_addr,
             (unsigned long long)st.program->stages[3].code_addr, (unsigned long long)st.program->stages[4].code_addr);
     for (int i = 0; i < st.rt.ncolor; i++)
@@ -3886,7 +3933,7 @@ static VkPipeline present_pipeline(VkFormat fmt) {
     return p;
 }
 
-// Scanout shows the bytes the game wrote: sRGB images are read through a UNORM view (no decode), like metal.m.
+// Scanout shows the bytes the game wrote: sRGB images are read through a UNORM view (no decode).
 static VkImageView raw_view(TexBackend *b) {
     VkFormat f = b->format == VK_FORMAT_R8G8B8A8_SRGB ? VK_FORMAT_R8G8B8A8_UNORM
                : b->format == VK_FORMAT_B8G8R8A8_SRGB ? VK_FORMAT_B8G8R8A8_UNORM : b->format;
@@ -3895,8 +3942,8 @@ static VkImageView raw_view(TexBackend *b) {
 }
 
 // ---- post passes (Video tab "Anti-aliasing" / "Upscaler"): SMAA 1x at the game image's size, then AMD FSR 1 (EASU
-// upscale to the image's size in the window, RCAS sharpen) when it is smaller than its place in the window, as
-// metal.m does with MetalFX. Each pass: a fullscreen triangle into an RGBA8 image (gamma-encoded, like the input);
+// upscale to the image's size in the window, RCAS sharpen) when it is smaller than its place in the window. Each
+// pass: a fullscreen triangle into an RGBA8 image (gamma-encoded, like the input);
 // up to three inputs (bindings 0-2), sampled linear / clamp.
 static VkPipelineLayout post_layout;
 static VkDescriptorSetLayout post_set_layout;
@@ -4159,7 +4206,7 @@ void renderer_save_texture_tex(TexBackend *b, const char *path) {
     vmaDestroyImage(g_vk.vma, img, mem);
 }
 
-// ================================================================== executor (renderer.m exec_list)
+// ================================================================== executor (exec_list)
 static void exec_list(uint64_t handle, int depth) {
     uint64_t p = handle;
     for (int guard = 0; guard < 10000000; guard++) {
@@ -4267,7 +4314,7 @@ static void exec_list(uint64_t handle, int depth) {
             break;
         }
         case CMD_CLEAR_TEXTURE: {
-            // ClearTexture(cmd, texture, view, region, color, mask): a render-target clear of the texture alone (renderer.m)
+            // ClearTexture(cmd, texture, view, region, color, mask): a render-target clear of the texture alone
             const struct { uint64_t tex; NvnTextureView view; uint8_t has_view; int32_t region[6]; float color[4]; } *ct = x;
             NvnTexture *t = (NvnTexture *)(uintptr_t)ct->tex;
             if (!t) break;

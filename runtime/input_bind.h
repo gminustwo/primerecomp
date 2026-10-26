@@ -65,8 +65,6 @@ void bind_settings_save(FILE *f);
 int bind_slot_from_name(const char *name);
 int bind_pad_from_name(const char *name);
 
-// Button prompts (runtime/nvn/texpatch.c): the controller button now driving Switch input `slot` (BIND_A..)
-int bind_prompt_host(int slot);
 
 // Face layout (g_settings.face_layout, FACE_*): set swaps the face buttons in the current bindings (and the defaults
 // they're compared with); load (primerecomp.ini) sets the layout's defaults, before the bind_pad_* lines. face_host: a

@@ -629,10 +629,6 @@ NVN(nvnSamplerPoolRegisterSamplerBuilder) {
     if (id >= 0 && id < d->count) sampler_desc((const SamplerBuilder *)AP(2), &((NvnSamplerDesc *)d->entries)[id]);
 }
 
-NvnDescPool *nvn_find_pool(NvnDescPool **reg, uint64_t guest_pool) {
-    return guest_pool ? HOST(NvnDescPool, guest_pool) : NULL;
-}
-
 // ================================================================== programs
 NVN(nvnProgramInitialize) { SET_HOST(A(0), calloc(1, sizeof(NvnProgram))); RET(1); }
 NVN(nvnProgramFinalize) { free(HOST(NvnProgram, A(0))); SET_HOST(A(0), 0); }

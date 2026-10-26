@@ -1,7 +1,9 @@
 #!/bin/bash
 # make app: build/PrimeRecomp.app from <exe> (default build/mac15/primerecomp). Contents/MacOS: the executable;
-# Contents/Frameworks: every non-system dylib it loads (SDL3, FFmpeg; from build/deps, else Homebrew), load
-# paths rewritten to @rpath; Contents/Resources: the icon and what the start screen builds the game code with on the player's
+# Contents/Frameworks: every non-system dylib it loads (SDL3, FFmpeg, the Vulkan loader, shaderc; from build/deps, else
+# Homebrew), load paths rewritten to @rpath, and MoltenVK, which the loader opens through its ICD file
+# (Contents/Resources/vulkan/icd.d, where the loader looks inside an app bundle; runtime/nvn/vulkan/device.c also
+# points it there); Contents/Resources: the icon and what the start screen builds the game code with on the player's
 # machine (runtime/gamebuild.c): the generator helper (build/helper/primegen), the compiler (build/zig, tools/fetch_zig.sh)
 # and the headers the code is compiled against (gamelib-src/). Ad-hoc signed. No game files, game code or fonts: the
 # app keeps those in ~/Library/Application Support/<bundle id> (runtime/paths.h).
@@ -42,6 +44,27 @@ cp docs/icon/icon.icns "$C/Resources/icon.icns"
 cp docs/icon/icon_1024.png "$C/Resources/icon.png"  # (window / Dock icon at run time)
 cp third_party/fonts/Baloo2/Baloo2-SemiBold.ttf "$C/Resources/Baloo2-SemiBold.ttf"  # (start screen; OFL, README "License")
 cp third_party/fonts/Baloo2/OFL.txt "$C/Resources/Baloo2-OFL.txt"
+cp README.md LICENSE "$C/Resources/"  # (licenses and source links of the bundled components: README "License")
+if otool -L "$EXE" | grep -q libvulkan; then  # (the Vulkan renderer; MAC_RENDERER=metal builds have none of this)
+    MVK=$DEPS/lib/libMoltenVK.dylib
+    [ -f "$MVK" ] || MVK=/opt/homebrew/opt/molten-vk/lib/libMoltenVK.dylib
+    [ -f "$MVK" ] || { echo "no libMoltenVK.dylib (make deps)"; exit 1; }
+    cp "$MVK" "$C/Frameworks/libMoltenVK.dylib"
+    chmod u+w "$C/Frameworks/libMoltenVK.dylib"
+    install_name_tool -id "@rpath/libMoltenVK.dylib" "$C/Frameworks/libMoltenVK.dylib"
+    [ -f "$DEPS/share/vulkan/MoltenVK-LICENSE" ] && cp "$DEPS/share/vulkan/MoltenVK-LICENSE" "$C/Resources/MoltenVK-LICENSE.txt"
+    mkdir -p "$C/Resources/vulkan/icd.d"
+    cat > "$C/Resources/vulkan/icd.d/MoltenVK_icd.json" <<EOF
+{
+    "file_format_version": "1.0.0",
+    "ICD": {
+        "library_path": "../../../Frameworks/libMoltenVK.dylib",
+        "api_version": "1.4.0",
+        "is_portability_driver": true
+    }
+}
+EOF
+fi
 
 # ---- dylibs: copy every non-system dependency, recursively; point all references at @rpath/<name>
 is_system() { case "$1" in /usr/lib/*|/System/*) return 0;; esac; return 1; }

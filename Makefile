@@ -1,5 +1,5 @@
 # PrimeRecomp build
-# macOS: Homebrew clang/SDL3/FFmpeg, Metal renderer.
+# macOS: clang, SDL3 / FFmpeg / the Vulkan loader + MoltenVK + shaderc from `make deps` (or Homebrew), Vulkan renderer.
 # Windows: MSYS2 UCRT64 shell (see docs/BUILD-windows.md), clang + Vulkan renderer.
 # Linux: clang + Vulkan renderer, x86-64 or aarch64 (see docs/linux.md).
 UNAME := $(shell uname -s)
@@ -27,10 +27,14 @@ endif
 GENSIMD  := --simd $(if $(filter aarch64,$(ARCH)),asm,c)
 endif
 
-# B: build dir. MACOS_MIN: oldest macOS to run on (default: this one). DEPS: prefix with SDL3 / FFmpeg instead of
-# Homebrew's (make deps). `make app` sets all three (build/mac15, 15.0, build/deps); plain `make` uses none.
+# B: build dir. MACOS_MIN: oldest macOS to run on (default: this one). DEPS: prefix with SDL3 / FFmpeg / the Vulkan
+# stack instead of Homebrew's (make deps). `make app` sets all three (build/mac15, 15.0, build/deps); plain `make` on
+# macOS uses build/deps once `make deps` has made it (Homebrew has no Vulkan Memory Allocator), Homebrew before that.
 B         ?= build
 MACOS_MIN ?=
+ifeq ($(PLATFORM),macos)
+DEPS      ?= $(if $(wildcard build/deps/lib/libvulkan.1.dylib),$(CURDIR)/build/deps)
+endif
 DEPS      ?=
 MINFLAG  := $(if $(MACOS_MIN),-mmacosx-version-min=$(MACOS_MIN))
 CC       := clang $(MINFLAG) $(CROSS)
@@ -43,7 +47,8 @@ GENFLAGS := -O1 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibi
 GEN_SRC  := $(wildcard $(GEN)/main/*.c) $(wildcard $(GEN)/sdk/*.c)
 GEN_OBJ  := $(patsubst %.c,$(B)/obj/%.o,$(patsubst $(GEN)/%,%,$(GEN_SRC))) $(B)/obj/tools/gamelib_entry.o
 RT_SRC   := $(wildcard runtime/*.c) $(wildcard runtime/hle/*.c) $(wildcard runtime/services/*.c) \
-            $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(PLATFORM).c
+            $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(PLATFORM).c \
+            $(if $(filter windows,$(PLATFORM)),,runtime/platform/posix.c)  # (what macOS and Linux share)
 RT_HDRS  := $(wildcard runtime/*.h) $(wildcard runtime/platform/*.h) $(wildcard runtime/nvn/*.h) \
             $(wildcard runtime/nvn/maxwell/*.h) $(wildcard runtime/nvn/vulkan/*.h) $(wildcard runtime/ui/*.h)
 UI_SRC   := $(wildcard runtime/ui/*.mm)
@@ -56,12 +61,19 @@ SDL      := $(or $(DEPS),/opt/homebrew/opt/sdl3)
 FFMPEG   := $(or $(DEPS),/opt/homebrew/opt/ffmpeg)
 EXE      := $(B)/primerecomp
 DEPINC   := -I$(SDL)/include -I$(FFMPEG)/include
-LDFLAGS  := -L$(SDL)/lib -lSDL3 -Wl,-rpath,$(SDL)/lib -L$(FFMPEG)/lib -lavformat -lavcodec -lavutil -lswscale -Wl,-rpath,$(FFMPEG)/lib \
-            -framework CoreFoundation -framework Foundation -framework Metal -framework MetalFX -framework QuartzCore -framework AppKit -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers
-BACKEND_SRC := $(wildcard runtime/nvn/*.m)
-BACKEND_OBJ := $(patsubst runtime/%.m,$(B)/rt/%.o,$(BACKEND_SRC))
-IMGUI_OBJ += $(B)/imgui/imgui_impl_metal.o
-UIFLAGS  := -fobjc-arc
+LDFLAGS  := $(addprefix -L,$(sort $(SDL)/lib $(FFMPEG)/lib)) $(addprefix -Wl$(comma)-rpath$(comma),$(sort $(SDL)/lib $(FFMPEG)/lib)) \
+            -lSDL3 -lavformat -lavcodec -lavutil -lswscale
+# the Vulkan renderer, as on Windows and Linux, on MoltenVK (Vulkan on Metal) through the Vulkan loader; shaderc
+# compiles the translated GLSL (runtime/nvn/vulkan)
+VULKAN   := $(or $(DEPS),/opt/homebrew)
+OSFLAGS  := -Wno-nullability-completeness  # (Vulkan Memory Allocator's header with Apple clang)
+DEPINC   += -I$(VULKAN)/include
+LDFLAGS  += $(if $(filter $(VULKAN)/lib,$(SDL)/lib $(FFMPEG)/lib),,-L$(VULKAN)/lib -Wl$(comma)-rpath$(comma)$(VULKAN)/lib) \
+            -lvulkan -lshaderc_shared
+BACKEND_SRC := $(wildcard runtime/nvn/vulkan/*.c) $(wildcard runtime/nvn/vulkan/*.cpp)
+BACKEND_OBJ := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(BACKEND_SRC)))
+IMGUI_OBJ += $(B)/imgui/imgui_impl_vulkan.o
+UIFLAGS  := -x c++ $(OSFLAGS)  # the .mm UI sources are plain C++
 GAMELIB  := $(B)/primegame.dylib
 GAMELIB_LDFLAGS := -dynamiclib -undefined dynamic_lookup  # (the runtime functions it calls: the app's own)
 GAMELIB_SHARED := -shared -Wl,-undefined,dynamic_lookup  # (the same, for the start screen's build: zig cc)
@@ -80,7 +92,7 @@ LDFLAGS  := -fuse-ld=lld -rdynamic $(if $(DEPS),-L$(DEPS)/lib) -lSDL3 -lavformat
 BACKEND_SRC := $(wildcard runtime/nvn/vulkan/*.c) $(wildcard runtime/nvn/vulkan/*.cpp)
 BACKEND_OBJ := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(BACKEND_SRC)))
 IMGUI_OBJ += $(B)/imgui/imgui_impl_vulkan.o
-UIFLAGS  := -x c++  # the .mm UI sources are plain C++ apart from __APPLE__ blocks
+UIFLAGS  := -x c++  # the .mm UI sources are plain C++
 GAMELIB  := $(B)/primegame.so
 GAMELIB_LDFLAGS := -shared -fuse-ld=lld  # (the runtime functions it calls: the app's own, -rdynamic)
 GAMELIB_SHARED := -shared
@@ -98,7 +110,7 @@ BACKEND_OBJ := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/
 BACKEND_OBJ += $(B)/rt/platform/windows_rc.o  # the .exe's icon (Explorer, taskbar)
 WINDRES  ?= windres
 IMGUI_OBJ += $(B)/imgui/imgui_impl_vulkan.o
-UIFLAGS  := -x c++ $(OSFLAGS)  # the .mm UI sources are plain C++ apart from __APPLE__ blocks
+UIFLAGS  := -x c++ $(OSFLAGS)  # the .mm UI sources are plain C++
 GAMELIB  := $(B)/primegame.dll
 # the runtime functions it calls: exported by the .exe, linked through its import library
 LDFLAGS  += -Wl,--export-all-symbols -Wl,--out-implib,$(B)/primerecomp.dll.a
@@ -150,10 +162,6 @@ $(B)/rt/%.o: runtime/%.cpp $(RT_HDRS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(OSFLAGS) -c $< -o $@
 
-$(B)/rt/%.o: runtime/%.m $(RT_HDRS)
-	@mkdir -p $(dir $@)
-	$(CC) $(RTFLAGS) -fobjc-arc -c $< -o $@
-
 # linked to a temp file, then renamed over: a copy of the game still running keeps its (old) file - relinking in
 # place gets running copies killed by macOS (code signature of the changed pages). The temp file keeps the real name
 # (in a folder of its own): on Windows the import library records the name the game code library loads it by.
@@ -180,10 +188,6 @@ $(B)/imgui/imgui_impl_%.o: $(IMGUI)/backends/imgui_impl_%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(B)/imgui/imgui_impl_metal.o: $(IMGUI)/backends/imgui_impl_metal.mm
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -fobjc-arc -c $< -o $@
-
 # Python: tools/venv (macOS, Linux: bin/python, Windows: Scripts/python.exe)
 PY := $(firstword $(wildcard tools/venv/bin/python) $(wildcard tools/venv/Scripts/python.exe))
 
@@ -203,8 +207,8 @@ $(B)/rt/platform/windows_rc.o: runtime/platform/windows.rc docs/icon/icon.ico
 VERSION  := $(shell sed -n 's/^\#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)
 
 # macOS: build/PrimeRecomp.app, runs on macOS $(APP_MIN)+: the game rebuilt for that in build/mac15 against build/deps
-# (`make deps`: SDL3, LGPL FFmpeg, keystone, Python, from pinned sources), the generator helper when built
-# (`make gen-helper` after `make deps`), packaged by tools/bundle_macos.sh. No game files or fonts.
+# (`make deps`: SDL3, LGPL FFmpeg, the Vulkan loader, MoltenVK, shaderc, Python, from pinned sources), the generator
+# helper when built (`make gen-helper` after `make deps`), packaged by tools/bundle_macos.sh. No game files or fonts.
 APP_MIN  := 15.0
 APP_B    := build/mac15
 deps:
@@ -288,6 +292,3 @@ appimages:
 	tools/linux/appimage.sh aarch64
 
 .PHONY: dmg all gen gen-helper gen-objs runtime-objs deps deps-windows app dist appimage appimages
-
-build/test_shaders: tools/test_shaders.m runtime/nvn/maxwell/translate.c runtime/nvn/maxwell/shader.h
-	clang -O1 -fobjc-arc -framework Metal -framework Foundation -o $@ tools/test_shaders.m runtime/nvn/maxwell/translate.c

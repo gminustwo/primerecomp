@@ -1,4 +1,7 @@
-// Vulkan device, window, swapchain and presentation (counterpart of the window/present half of metal.m).
+// Vulkan device, window, swapchain and presentation.
+#ifdef __APPLE__
+#include <dlfcn.h>
+#endif
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <math.h>
@@ -36,12 +39,29 @@ static void create_instance(void) {
     const char *ext[16];
     uint32_t n_ext = 0;
     for (Uint32 i = 0; i < n_sdl && n_ext < 14; i++) ext[n_ext++] = sdl_ext[i];
+    VkInstanceCreateFlags flags = 0;
+#ifdef __APPLE__
+    {   // MoltenVK is a portability driver: the loader lists it only to instances that ask for those
+        uint32_t n = 0;
+        vkEnumerateInstanceExtensionProperties(NULL, &n, NULL);
+        VkExtensionProperties *ie = calloc(n ? n : 1, sizeof *ie);
+        vkEnumerateInstanceExtensionProperties(NULL, &n, ie);
+        bool listed = false;  // (SDL may already ask for it)
+        for (uint32_t i = 0; i < n_ext; i++) listed |= !strcmp(ext[i], VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+        for (uint32_t i = 0; i < n; i++)
+            if (!strcmp(ie[i].extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
+                if (!listed) ext[n_ext++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+                flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            }
+        free(ie);
+    }
+#endif
     bool validate = getenv("LARECOMP_VK_VALIDATION") != NULL;
     if (validate) ext[n_ext++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     const char *layers[] = {"VK_LAYER_KHRONOS_validation"};
     VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "PrimeRecomp",
                              .pEngineName = "PrimeRecomp", .apiVersion = VK_API_VERSION_1_3};
-    VkInstanceCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app,
+    VkInstanceCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .flags = flags, .pApplicationInfo = &app,
                                .enabledExtensionCount = n_ext, .ppEnabledExtensionNames = ext,
                                .enabledLayerCount = validate ? 1 : 0, .ppEnabledLayerNames = layers};
     VkResult r = vkCreateInstance(&ci, NULL, &g_vk.inst);
@@ -159,11 +179,20 @@ static void create_device(void) {
     bool fault = has_ext(ep, ne, VK_EXT_DEVICE_FAULT_EXTENSION_NAME);  // device-lost diagnostics (vk_device_fault_report)
     if (fault) ext[n_ext++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
     g_fault_ext = fault;
+#ifdef VK_KHR_portability_subset
+    // (MoltenVK) a device that offers it must have it enabled; its features are all asked for as offered
+    bool portability = has_ext(ep, ne, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+    if (portability) ext[n_ext++] = VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
+    VkPhysicalDevicePortabilitySubsetFeaturesKHR port = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
+#endif
     free(ep);
 
     // features the backend relies on (all present on current desktop drivers)
     VkPhysicalDeviceVulkan12Features have12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     VkPhysicalDeviceFeatures2 have = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &have12};
+#ifdef VK_KHR_portability_subset
+    if (portability) port.pNext = have12.pNext, have12.pNext = &port;
+#endif
     vkGetPhysicalDeviceFeatures2(g_vk.phys, &have);
     // gl_Layer from vertex shaders (exec.c: passthrough geometry shaders that only pick the layer)
     g_vk.output_layer = have12.shaderOutputLayer && have12.shaderOutputViewportIndex;
@@ -188,6 +217,9 @@ static void create_device(void) {
     VkPhysicalDeviceFaultFeaturesEXT ff = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT, .deviceFault = VK_TRUE,
                                            .pNext = &f11};
     VkPhysicalDeviceFeatures2 f = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = fault ? (void *)&ff : (void *)&f11};
+#ifdef VK_KHR_portability_subset
+    if (portability) port.pNext = f.pNext, f.pNext = &port;
+#endif
     VkPhysicalDeviceFeatures *b = &f.features, *h = &have.features;
     b->independentBlend = h->independentBlend;
     b->dualSrcBlend = h->dualSrcBlend;
@@ -282,8 +314,19 @@ static VkPresentModeKHR present_mode(void) {
     VkPresentModeKHR m[16];
     if (n > 16) n = 16;
     vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.phys, g_vk.surface, &n, m);
-    for (uint32_t i = 0; i < n; i++) if (m[i] == want) return want;
-    return VK_PRESENT_MODE_FIFO_KHR;
+    VkPresentModeKHR got = VK_PRESENT_MODE_FIFO_KHR;
+    for (uint32_t i = 0; i < n; i++) if (m[i] == want) got = want;
+    static int logged = -1;  // (the log says which: FIFO makes the game's fence waits follow the display, see above)
+    if ((int)got != logged) {
+        static const char *const name[] = {"immediate", "mailbox", "fifo", "fifo relaxed"};
+        char offered[128] = "";
+        for (uint32_t i = 0; i < n; i++)
+            snprintf(offered + strlen(offered), sizeof offered - strlen(offered), "%s%s", i ? ", " : "",
+                     m[i] < 4 ? name[m[i]] : "other");
+        LOG("[vk] present mode %s (offered: %s)\n", got < 4 ? name[got] : "other", offered);
+        logged = (int)got;
+    }
+    return got;
 }
 
 static void create_swapchain(void) {
@@ -422,7 +465,6 @@ void vk_frame_resume(void) {
     vkCmdSetScissor(cb, 0, 1, &sc);
 }
 
-VkExtent2D vk_frame_extent(void) { return g_vk.sc_extent; }
 void *vk_frame_cmd(void) { return (void *)vk_cmd(); }
 
 static void save_window_image(VkCommandBuffer cb, VkSpan *out) {
@@ -470,7 +512,7 @@ void vk_save_png(const char *path, const uint8_t *rgba, uint32_t w, uint32_t h) 
     SDL_DestroySurface(s);
 }
 
-// ================================================================== game presentation (metal.m backend_present)
+// ================================================================== game presentation (backend_present)
 // Draws the game's image into the window with the widescreen crop, then the overlay menu.
 extern void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, float vw, float vh, const float pv[8]);
 void renderer_submit(void);
@@ -546,7 +588,8 @@ void backend_present(NvnTexture *t) {
         } else {
             requested[0] = 0;
         }
-        vk_frame_end(shot ? "build/window.png" : requested[0] ? requested : NULL);
+        const char *shot_path = getenv("LARECOMP_SHOT_PATH");  // (parallel test runs: each its own, tools/shot.sh)
+        vk_frame_end(shot ? (shot_path ? shot_path : "build/window.png") : requested[0] ? requested : NULL);
         if (shot && getenv("LARECOMP_EXIT_AFTER_SHOT")) { fflush(stderr); _exit(0); }
     } else {
         renderer_submit();
@@ -672,9 +715,7 @@ static void quick_exit_handler(void) {
     if (trace) LOG("[vk] exit: terminating\n");
     fflush(stdout);
     fflush(stderr);
-#if defined(_WIN32) || defined(__linux__)
     plat_terminate();
-#endif
 }
 
 void ui_window_init(void) {
@@ -685,6 +726,19 @@ void ui_window_init(void) {
     // primerecomp.ini steam_controller_direct = 1: SDL drives a Steam Controller itself (its gyro too: Steam Input's
     // virtual pad has none) - for Steam Input turned off for this game (runtime/hle/motion.c)
     if (g_settings.steam_controller_direct) SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM, "1");
+#ifdef __APPLE__
+    {   // SDL opens a Vulkan library of its own by name for the window's surface: make it the loader this program is
+        // linked to (Homebrew's or a Vulkan SDK's could come first - two loaders, the surface on the wrong one). The
+        // driver: MoltenVK as shipped in the .app (Contents/Resources/vulkan/icd.d, tools/bundle_macos.sh) or in
+        // build/deps (`make deps`), unless VK_DRIVER_FILES / VK_ICD_FILENAMES name another
+        Dl_info di;
+        if (dladdr((void *)vkGetInstanceProcAddr, &di) && di.dli_fname) SDL_SetHint(SDL_HINT_VULKAN_LIBRARY, di.dli_fname);
+        char icd[1100];
+        if (!getenv("VK_DRIVER_FILES") && !getenv("VK_ICD_FILENAMES") &&
+            rt_resource("vulkan/icd.d/MoltenVK_icd.json", "build/deps/share/vulkan/icd.d/MoltenVK_icd.json", icd, sizeof icd))
+            setenv("VK_DRIVER_FILES", icd, 1);
+    }
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) FATAL("SDL_Init: %s\n", SDL_GetError());
     int win_w = 1280, win_h = 720;
     if (getenv("LARECOMP_WINDOW")) sscanf(getenv("LARECOMP_WINDOW"), "%dx%d", &win_w, &win_h);
@@ -693,8 +747,7 @@ void ui_window_init(void) {
     {   // scripted test runs (user input ignored: runtime/hle/input.c input_user_blocked) open without taking the
         // keyboard focus from whatever the player is doing
         const char *v = getenv("LARECOMP_NO_USER_INPUT");
-        bool scripted = v ? atoi(v) != 0 : (getenv("LARECOMP_INPUT") || getenv("LARECOMP_DOORJUMP_TEST") || getenv("LARECOMP_PLACE") ||
-                                            getenv("LARECOMP_HOST_INPUT") || getenv("LARECOMP_BIND_TEST"));
+        bool scripted = v ? atoi(v) != 0 : (getenv("LARECOMP_INPUT") || getenv("LARECOMP_HOST_INPUT") || getenv("LARECOMP_BIND_TEST"));
         if (scripted) SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
     }
     window = SDL_CreateWindow("PrimeRecomp", win_w, win_h, wflags);
@@ -746,7 +799,7 @@ int ui_run(void) {
                 exit(0);
             }
             extern bool input_user_blocked(const SDL_Event *e);
-            if (input_user_blocked(&e)) continue;  // scripted test runs: the real keyboard / mouse / pads do nothing (as metal.m)
+            if (input_user_blocked(&e)) continue;  // scripted test runs: the real keyboard / mouse / pads do nothing
             if (menu_handle_event(&e)) continue;
             input_handle_event(&e);
         }

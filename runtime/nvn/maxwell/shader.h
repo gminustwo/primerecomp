@@ -11,7 +11,6 @@
 //    maxwell_gmem_base. `readonly` unless the shader stores (needs vertexPipeline/fragmentStoresAndAtomics then);
 //    byte / short stores are atomicAnd + atomicOr on the containing word.
 //  - rscale table -> binding 18: `uniform RScale { vec4 rscale[65]; };` (std140, the MSL buffer 18 contents).
-//  - per-draw tint -> binding 19: `uniform Tint { vec4 ltint[2]; };` (fragment, when uses_tint).
 //  - texture slot i (ShaderInfo.tex[i]) -> binding 32 + i, a combined image sampler: sampler1D/2D/3D/Cube/
 //    1DArray/2DArray/CubeArray, or its *Shadow variant when tex[i].shadow.
 //  - vertex inputs `layout(location=i) in vec4|ivec4|uvec4 a<i>;` (key->attr_kind); varyings: location i =
@@ -33,12 +32,15 @@
 enum { STAGE_VERTEX = 0, STAGE_FRAGMENT = 1, STAGE_GEOMETRY = 2, STAGE_TESS_CTRL = 3, STAGE_TESS_EVAL = 4,
        STAGE_COMPUTE = 5 };
 
+enum { RT_KIND_DUAL = 3 };  // (ShaderKey.rt_kind[1])
+
 enum { TEXTYPE_1D, TEXTYPE_2D, TEXTYPE_3D, TEXTYPE_CUBE, TEXTYPE_2D_ARRAY, TEXTYPE_CUBE_ARRAY, TEXTYPE_1D_ARRAY,
        TEXTYPE_BUFFER, TEXTYPE_2D_MS };
 
 typedef struct {
     uint8_t attr_kind[32];  // vertex inputs: 0 float, 1 signed int, 2 unsigned int
-    uint8_t rt_kind[8];     // fragment outputs: 0 float, 1 signed int, 2 unsigned int
+    uint8_t rt_kind[8];     // fragment outputs: 0 float, 1 signed int, 2 unsigned int; rt_kind[1] = RT_KIND_DUAL (GLSL):
+                            // dual-source blending into target 0, RT1's output is its second colour (location 0, index 1)
     bool depth_minus_one;   // NVN depth mode [-1,1]: remap clip z
     bool flip_y;            // lower-left window origin
     uint8_t x_mode;         // bit 0: mirror the image left to right (mirror mode's scene composite); bit 1 (vertex,
@@ -54,6 +56,11 @@ typedef struct {
                             // adjacency, 4 triangles with adjacency (the draw's)
     uint16_t layer_attr;    // vertex, GLSL: gl_Layer = int(the output attribute at this byte offset) - what the
                             // program's passthrough geometry shader would do (0: none)
+    uint8_t gs_lib;         // GLSL, a geometry shader run by the vertex shader (no geometry shaders on the device:
+                            // runtime/nvn/vulkan/exec.c gs_emul_sources). Geometry: only `void gs_main()`, its cbufs
+                            // (gcb<i>, set 2) and outputs (gs_pos, gs_v<i>), no prelude; the caller defines gs_in_pos(i)
+                            // / gs_in_v<i>(i) (an input vertex's) and gs_emit() / gs_end(). Vertex (with gs_follows): the
+                            // entry point is vs_main(), the outputs are plain globals the geometry shader reads.
 } ShaderKey;
 
 typedef struct {
@@ -80,11 +87,11 @@ typedef struct {
                             // dispatch's storage buffers - when found, stores too (copied back after the dispatch).
                             // runtime/nvn/vulkan/exec.c
     bool uses_gmem_store;   // writes global memory (STG)
-    bool uses_tint;        // fragment: reads the per-draw tint (buffer 19, float4[2]) applied to color target 0
     bool uses_rscale;       // reads the resolution-scale table (fragment/compute buffer 18): float4 [0] = render
                             // target scale, [1 + i] = allocation scale of texture i
     uint32_t local_mem;     // bytes of local memory
     uint32_t num_insts;
+    int gs_emits;           // geometry: the vertices it emits (OUT), -1 when it branches (how many then: unknown)
     char error[256];        // set when translation fails
     // (GLSL) images written with SUST: storage image i at binding IMAGE_BINDING + i. Bound: the handle in the image
     // bindings (handle_offset as for textures); bindless: in cbuf bindless_cbuf at bindless_offset.
@@ -114,5 +121,3 @@ extern const uint8_t *maxwell_dbg_vs;
 // code: shader binary (with the 0x50-byte SPH header for graphics stages)
 ShaderInfo *maxwell_translate(const uint8_t *code, size_t max_size, int stage, const ShaderKey *key);
 void maxwell_free(ShaderInfo *s);
-// Disassemble for debugging (writes text to f).
-void maxwell_disassemble(const uint8_t *code, size_t max_size, int stage, void *file);

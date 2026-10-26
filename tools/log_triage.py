@@ -48,8 +48,8 @@ def code(s, n=160):
     return "`" + clean(s, n) + "`"
 
 
-FPS_RE = re.compile(r"^\[(vk|metal)\] t=([\d.]+) frame (\d+) ([\d.]+) fps max (\d+)ms level (\S+)")
-BUILD_RE = re.compile(r"LAS[ ._-]?Recomp[ ._-]((?:beta_\d+(?:[._-]\d+)?)|(?:v\d+\.\d+\.\d+)|(?:test-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*?))"
+FPS_RE = re.compile(r"^\[(vk)\] t=([\d.]+) frame (\d+) ([\d.]+) fps max (\d+)ms level (\S+)")
+BUILD_RE = re.compile(r"Prime[ ._-]?Recomp[ ._-]((?:v\d+\.\d+\.\d+)|(?:test-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*?))"
                       r"(?:-(windows|macos|linux|android)\b|[\\/\s]|$)", re.I)
 MS_RE = re.compile(r"([\d.]+)\s*ms")
 
@@ -61,11 +61,10 @@ NOTABLE = [
     ("no BC texture formats", re.compile(r"no BC texture formats")),
     ("GPU device fault", re.compile(r"\[vk\] device fault")),
     ("shaders not found or failed in preparation", re.compile(r"\[shader\] prepared \d+, not found [1-9]|\[shader\] prepared .*\(([1-9]\d*) failed")),
-    ("shader translation failed", re.compile(r"translate failed|pipeline failed|\[shader\] stale program")),
+    ("shader translation failed", re.compile(r"translate failed|pipeline (creation )?failed|\[shader\] stale program")),
+    ("MoltenVK error (macOS)", re.compile(r"\[mvk-error\]")),
     ("frame pacing switched to the game's 30 fps mode", re.compile(r"\[pace\] frames don't fit")),
     ("slow shader builds (stutter)", re.compile(r"\[shader\] slow build")),
-    ("Metal command buffer error", re.compile(r"\[metal\] command buffer error")),
-    ("drawable waits (Metal)", re.compile(r"\[metal\] nextDrawable blocked")),
     ("settings file could not be written", re.compile(r"\[settings\] cannot write")),
     ("developer overrides (LARECOMP_*) in use", re.compile(r"\(LARECOMP_[A-Z_]+\)")),
 ]
@@ -101,8 +100,6 @@ def parse(text):
                 if mm and mm.group(1) == r["gpu"]: r["api"] = mm.group(2)
         elif m := re.match(r"^\[vk\] device: driver (\S+) \(([^)]*)\)", ln):
             r["driver"] = f"{m.group(2)} {m.group(1)}"
-        elif m := re.match(r"^\[metal\] (.+), heap buffer \d+ MB", ln):
-            r["gpu"], r["backend"] = m.group(1), "Metal"
         elif ln.startswith("[settings] ") and " GPU: upscaler " in ln:
             r["settings"] = ln.split(" GPU: ", 1)[1]
             r["integrated"] = ln.startswith("[settings] integrated")

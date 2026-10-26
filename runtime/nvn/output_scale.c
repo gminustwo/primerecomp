@@ -1,11 +1,11 @@
-// Output resolution, shared by the Metal and Vulkan backends (each calls output_scale() once per presented frame).
+// Output resolution (the renderer calls output_scale() once per presented frame).
 // Render targets the game sizes for its screen image (MPR: 1600x900, the Switch's docked resolution - the TV gets
 // it scaled up to 1080p) are allocated at (sx, sy) times their size; the image is then drawn into (vx, vy, vw, vh)
 // of the window. Video tab "Internal resolution" (g_settings.res_mode):
 //   Match display  render at the window's own pixel size (default): a 4K window renders 3840 x 2160
 //   900p .. 8K     that many lines (RES_FIXED, g_settings.res_lines; wide windows keep their shape); more than the
 //                  window is drawn into it smaller (supersampling); capped to the GPU's 16384-pixel texture limit
-//   .75x / .50x / .25x  of Match display (scaled up to the window - with MetalFX on macOS when chosen)
+//   .75x / .50x / .25x  of Match display (scaled up to the window - with AMD FSR 1 when chosen)
 //   Dynamic        Match display, lowered in steps while the GPU can't hold 60 fps and raised again when it can
 //                  (each change reallocates the render targets: a short hitch, so it changes rarely, with hysteresis)
 // Test overrides: LARECOMP_SCALE=<f> (render height = the game's x f), LARECOMP_WIDE_TEST=<f> (forced shape).

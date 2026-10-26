@@ -243,7 +243,6 @@ void kernel_run_main(KThread *t, uint64_t x0, uint64_t x1, uint64_t x2, uint64_t
     thread_start(t);  // the host main thread goes on to run the window event loop
 }
 
-uint32_t kernel_current_thread_handle(void) { return t_cur ? t_cur->handle : 0; }
 Cpu *kernel_current_cpu(void) { return t_cur ? &t_cur->cpu : NULL; }
 KThread *kernel_current_thread(void) { return t_cur; }
 

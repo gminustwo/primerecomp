@@ -6,10 +6,6 @@
 //
 // Skipped with --play, LARECOMP_NO_LAUNCHER=1, or any scripted test run (LARECOMP_INPUT): tests boot straight in.
 // The in-game menu's "Quit to Start Screen" comes back here without leaving the process (runtime/main.c reboots the game).
-#ifdef __APPLE__
-#import <Metal/Metal.h>
-#import <QuartzCore/CAMetalLayer.h>
-#endif
 #include <SDL3/SDL.h>
 #include <ctype.h>
 #include <dirent.h>
@@ -26,11 +22,7 @@
 #include "option_rows.h"
 #include "osk.h"
 #include "theme.h"
-#ifdef __APPLE__
-#include "imgui_impl_metal.h"
-#else
 #include "imgui_impl_vulkan.h"
-#endif
 #include "imgui_impl_sdl3.h"
 
 extern "C" {
@@ -47,10 +39,6 @@ extern "C" {
 void controls_bindings_draw(float scale);  // ui/controls_ui.mm
 void ui_window_init(void);
 SDL_Window *ui_window(void);
-#ifdef __APPLE__
-void *ui_metal_layer(void);
-void *ui_metal_device(void);
-#else
 // runtime/nvn/vulkan: window frames and ImGui plumbing
 bool vk_frame_begin(const float clear[4]);
 void vk_frame_end(const char *shot_path);
@@ -59,37 +47,14 @@ bool vk_imgui_backend_init(void);
 void vk_imgui_backend_shutdown(void);
 uint64_t vk_imgui_texture_rgba(const void *rgba, int w, int h);
 void vk_imgui_texture_update(uint64_t id, const void *rgba, int w, int h);
-#endif
 }
-#ifdef __APPLE__
-#import <ImageIO/ImageIO.h>
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
-
-// (test) BGRA texture -> PNG (the game renderer's saver isn't up yet before the game boots)
-static void save_png(id<MTLTexture> tex, const char *path) {
-    size_t w = tex.width, h = tex.height;
-    std::vector<uint8_t> px(w * h * 4);
-    [tex getBytes:px.data() bytesPerRow:w * 4 fromRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0];
-    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-    CGContextRef ctx = CGBitmapContextCreate(px.data(), w, h, 8, w * 4, cs,
-                                             kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little);
-    CGImageRef img = CGBitmapContextCreateImage(ctx);
-    CFURLRef url = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8 *)path, strlen(path), false);
-    CGImageDestinationRef dest = CGImageDestinationCreateWithURL(url, (__bridge CFStringRef)UTTypePNG.identifier, 1, NULL);
-    if (dest) {  // (NULL when the file can't be created, e.g. its folder isn't there: CFRelease(NULL) traps)
-        CGImageDestinationAddImage(dest, img, NULL);
-        CGImageDestinationFinalize(dest);
-        CFRelease(dest);
-    } else fprintf(stderr, "[launcher] can't write %s\n", path);
-    CFRelease(url), CGImageRelease(img), CGContextRelease(ctx), CGColorSpaceRelease(cs);
-}
-#endif
 
 static const uint8_t BUILD_ID[8] = {0x67, 0xc9, 0xca, 0x14, 0x28, 0x22, 0x27, 0x52};  // Metroid Prime Remastered v1.0.0 main
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
 // it): v<major>.<minor>.<patch>. (LAS Recomp's start screen asked its GitHub releases for updates; PrimeRecomp has none yet,
 // so nothing is asked.)
 #define LARECOMP_VERSION "v0.0.3"
+extern "C" const char *rt_version(void) { return LARECOMP_VERSION; }  // (the log's first line: runtime/main.c)
 
 // "Alpha 1" / "Beta 2" / "Version 1.0.0"
 static std::string tag_label(const std::string &t) {
@@ -305,15 +270,8 @@ static void SDLCALL picked(void *, const char *const *files, int) {
 // one of Tallon IV turning in space (12.7 s, 1600 x 900) on a loop, muted, at 960 x 540 and 30 frames a second (it
 // sits under the shadow banners). Found by its MP4 boxes and its size (about 16 MB), copied once to
 // cache/start_bg.mp4. (The red title-menu loop isn't stored that way.)
-#ifdef __APPLE__
-static id<MTLTexture> g_bg;
-#define BG_TEXID ((ImTextureID)(__bridge void *)g_bg)
-typedef id<MTLDevice> GpuDevice;
-#else
 static uint64_t g_bg;  // ImGui texture id (Vulkan descriptor set)
 #define BG_TEXID ((ImTextureID)g_bg)
-typedef void *GpuDevice;
-#endif
 enum { BG_W = 960, BG_H = 540 };
 static int g_bg_w, g_bg_h;
 static struct {
@@ -378,8 +336,7 @@ static void bg_close(void) {
     g_mv.sws = NULL;
 }
 
-static void load_background(GpuDevice dev) {
-    (void)dev;
+static void load_background(void) {
     bg_close();
     std::string path = bg_movie_file();
     if (path.empty() || avformat_open_input(&g_mv.fmt, path.c_str(), NULL, NULL) < 0) return;
@@ -412,8 +369,7 @@ static bool bg_decode(double *t) {
 }
 
 // Each start-screen frame: the movie frame for now, at most 30 a second (from the start at the end)
-static void bg_update(GpuDevice dev) {
-    (void)dev;
+static void bg_update(void) {
     if (!g_mv.cc) return;
     double now = SDL_GetTicks() / 1000.0 - g_mv.t0, t = 0;
     if (g_mv.shown >= 0 && now < g_mv.shown + 1.0 / 30) return;
@@ -435,17 +391,8 @@ static void bg_update(GpuDevice dev) {
     uint8_t *dst[1] = {g_mv.rgba.data()};
     int dst_ls[1] = {BG_W * 4};
     sws_scale(g_mv.sws, g_mv.fr->data, g_mv.fr->linesize, 0, g_mv.fr->height, dst, dst_ls);
-#ifdef __APPLE__
-    if (!g_bg) {
-        MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-                                                                                      width:BG_W height:BG_H mipmapped:NO];
-        g_bg = [dev newTextureWithDescriptor:td];
-    }
-    [g_bg replaceRegion:MTLRegionMake2D(0, 0, BG_W, BG_H) mipmapLevel:0 withBytes:g_mv.rgba.data() bytesPerRow:BG_W * 4];
-#else
     if (!g_bg) g_bg = vk_imgui_texture_rgba(g_mv.rgba.data(), BG_W, BG_H);
     else vk_imgui_texture_update(g_bg, g_mv.rgba.data(), BG_W, BG_H);
-#endif
     g_bg_w = BG_W, g_bg_h = BG_H;
 }
 
@@ -662,7 +609,7 @@ static bool launcher_pad_event(const SDL_Event &e) {
     }
 }
 
-// Returns when PLAY is chosen (seed stored in g_settings.rando_seed); QUIT exits.
+// Returns when PLAY is chosen; QUIT exits.
 // Settings' first tab, on the start screen only: the extracted game files (size, delete) and the user's own Switch
 // fonts (import / back to the substitute)
 // Open a folder in Finder / Explorer (relative paths are in the data root, the working directory)
@@ -746,13 +693,6 @@ extern "C" void launcher_run(const char *root) {
     ui_window_init();
     SDL_Window *win = ui_window();
     g_launcher_win = win;
-#ifdef __APPLE__
-    CAMetalLayer *layer = (__bridge CAMetalLayer *)ui_metal_layer();
-    id<MTLDevice> dev = (__bridge id<MTLDevice>)ui_metal_device();
-    id<MTLCommandQueue> queue = [dev newCommandQueue];
-#else
-    GpuDevice dev = NULL;
-#endif
 
     IMGUI_CHECKVERSION();
     ImGuiContext *prev_ctx = ImGui::GetCurrentContext();  // the in-game menu's, when back here after a reboot
@@ -786,28 +726,19 @@ extern "C" void launcher_run(const char *root) {
     st.Colors[ImGuiCol_HeaderActive] = ImVec4(1, 1, 1, 0.14f);
     st.Colors[ImGuiCol_NavCursor] = theme::accent;
     st.FrameRounding = st.WindowRounding = 10;
-#ifdef __APPLE__
-    ImGui_ImplSDL3_InitForMetal(win);
-    ImGui_ImplMetal_Init(dev);
-#else
     ImGui_ImplSDL3_InitForVulkan(win);
     vk_imgui_backend_init();
-#endif
     ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual, NULL, 0);  // (controllers: launcher_pad_event)
     launcher_pad_open_all();
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
 
     std::string status = check_game_files(g_root);
-    if (status.empty()) load_background(dev);
-    g_settings.rando_seed[0] = 0;  // (LAS Recomp's randomizer seed: none in Metroid Prime)
+    if (status.empty()) load_background();
     Page page = status.empty() ? MAIN : SETUP;
     bool play = false;
     // LARECOMP_LAUNCHER_SHOT=<frame>[:<page>] (test): save build/launcher.png at that frame and exit; page: settings[:<tab>] / askdelete / setup
     long shot_at = getenv("LARECOMP_LAUNCHER_SHOT") ? atol(getenv("LARECOMP_LAUNCHER_SHOT")) : 0, frame = 0;
     if (shot_at) {
-#ifdef __APPLE__
-        layer.framebufferOnly = NO;
-#endif
         const char *pg = strchr(getenv("LARECOMP_LAUNCHER_SHOT"), ':');
         if (pg && (!strncmp(pg + 1, "settings", 8) || !strcmp(pg + 1, "askdelete"))) page = SETTINGS, menu_tabs_focus(true);
         if (pg && !strcmp(pg + 1, "setup")) page = SETUP;
@@ -863,26 +794,10 @@ extern "C" void launcher_run(const char *root) {
         static bool was_busy;
         if (was_busy && !busy) {
             status = check_game_files(g_root);
-            if (status.empty()) { load_background(dev); page = MAIN; }
+            if (status.empty()) { load_background(); page = MAIN; }
         }
         was_busy = busy;
 
-#ifdef __APPLE__
-        int w, h;
-        SDL_GetWindowSizeInPixels(win, &w, &h);
-        layer.drawableSize = CGSizeMake(w, h);
-        @autoreleasepool {
-            id<CAMetalDrawable> drawable = [layer nextDrawable];
-            if (!drawable) { SDL_Delay(16); continue; }
-            MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-            rp.colorAttachments[0].texture = drawable.texture;
-            rp.colorAttachments[0].loadAction = MTLLoadActionClear;
-            rp.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.02, 0.04, 1);
-            rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-            id<MTLCommandBuffer> cb = [queue commandBuffer];
-            id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rp];
-            ImGui_ImplMetal_NewFrame(rp);
-#else
         {
             // one frame per refresh of the window's display: the swapchain presents without waiting (mailbox, for the
             // game's own pacing: device.c), so the start screen alone would draw as fast as the GPU goes
@@ -895,7 +810,6 @@ extern "C" void launcher_run(const char *root) {
             static const float clear_col[4] = {0.0f, 0.02f, 0.04f, 1};
             if (!vk_frame_begin(clear_col)) { SDL_Delay(16); continue; }
             ImGui_ImplVulkan_NewFrame();
-#endif
             ImGui_ImplSDL3_NewFrame();
             // the backend (manual mode, no gamepads of its own) clears HasGamepad every frame, and ImGui then drops the
             // controller presses launcher_pad_event fed in and turns gamepad navigation off: set it again while a
@@ -907,7 +821,7 @@ extern "C" void launcher_run(const char *root) {
             float s = ds.y / 720.0f;  // layout scale (fonts are built for ~2x)
             ImGui::GetIO().FontGlobalScale = s * 0.5f;
             ImDrawList *bg = ImGui::GetBackgroundDrawList();
-            bg_update(dev);
+            bg_update();
             if (g_bg) {  // cover the window, keep the aspect
                 float ia = (float)g_bg_w / g_bg_h, wa = ds.x / ds.y;
                 ImVec2 uv0(0, 0), uv1(1, 1);
@@ -1297,42 +1211,16 @@ extern "C" void launcher_run(const char *root) {
             typed_before = ui_text_busy();
 
             ImGui::Render();
-#ifdef __APPLE__
-            ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), cb, enc);
-            [enc endEncoding];
-            id<MTLTexture> shot = nil;
-            if (shot_at && ++frame == shot_at) {
-                MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:drawable.texture.pixelFormat
-                                             width:drawable.texture.width height:drawable.texture.height mipmapped:NO];
-                td.storageMode = MTLStorageModeShared;
-                shot = [dev newTextureWithDescriptor:td];
-                id<MTLBlitCommandEncoder> bl = [cb blitCommandEncoder];
-                [bl copyFromTexture:drawable.texture toTexture:shot];
-                [bl endEncoding];
-            }
-            [cb presentDrawable:drawable];
-            [cb commit];
-            if (shot) {
-                [cb waitUntilCompleted];
-                save_png(shot, getenv("LARECOMP_SHOT_PATH") ? getenv("LARECOMP_SHOT_PATH") : "build/launcher.png");
-                exit(0);
-            }
-#else
             ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), (VkCommandBuffer)vk_frame_cmd());
             bool shot = shot_at && ++frame == shot_at;
             vk_frame_end(shot ? getenv("LARECOMP_SHOT_PATH") ? getenv("LARECOMP_SHOT_PATH") : "build/launcher.png" : NULL);
             if (shot) exit(0);
-#endif
         }
     }
     // play: hand the window to the game
     settings_save();
     bg_close();
-#ifdef __APPLE__
-    ImGui_ImplMetal_Shutdown();
-#else
     vk_imgui_backend_shutdown();
-#endif
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext(ctx);
     ImGui::SetCurrentContext(prev_ctx);

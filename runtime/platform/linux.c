@@ -1,6 +1,5 @@
 // Linux host layer (runtime/platform.h). x86-64 and aarch64.
 #define _GNU_SOURCE
-#include <SDL3/SDL.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <execinfo.h>
@@ -13,12 +12,12 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
-#include <sys/stat.h>
 #include <sys/ucontext.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "../platform.h"
+#include "posix.h"
 
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
@@ -75,35 +74,6 @@ void plat_thread_realtime(uint64_t period_ns) {
 }
 
 // ---- process
-// Started from a desktop (the AppImage) there is no terminal: stdout / stderr go to primerecomp.log in the data folder
-// (runtime/paths.h; rt_paths_init runs later, so the same rule is applied here). Processes started by this one (the
-// start screen re-executing itself for the game) append to the same log.
-static char g_log_path[1024];
-
-static void log_to_file_without_terminal(void) {
-    if (isatty(STDERR_FILENO)) return;
-    char dir[900];
-    const char *env = getenv("LARECOMP_DATA_ROOT"), *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
-    struct stat st;
-    if (env && *env) snprintf(dir, sizeof dir, "%s", env);
-    else if (stat("extracted", &st) == 0 && S_ISDIR(st.st_mode)) return;  // dev mode: wherever stderr goes already
-    else if (xdg && *xdg == '/') snprintf(dir, sizeof dir, "%s/primerecomp", xdg);
-    else snprintf(dir, sizeof dir, "%s/.local/share/primerecomp", home && *home ? home : "/tmp");
-    for (char *c = dir + 1; *c; c++)
-        if (*c == '/') { *c = 0; mkdir(dir, 0755); *c = '/'; }
-    mkdir(dir, 0755);
-    snprintf(g_log_path, sizeof g_log_path, "%s/primerecomp.log", dir);
-    bool append = getenv("LASRECOMP_LOG_APPEND") != NULL;
-    if (!append) {  // the run before this one stays readable (started from Steam: nothing else keeps it)
-        char prev[1024];
-        snprintf(prev, sizeof prev, "%s/primerecomp.previous.log", dir);
-        rename(g_log_path, prev);
-    }
-    if (!freopen(g_log_path, append ? "a" : "w", stderr)) { g_log_path[0] = 0; return; }
-    dup2(STDERR_FILENO, STDOUT_FILENO);
-    setenv("LASRECOMP_LOG_APPEND", "1", 1);
-}
-
 #if defined(__x86_64__)
 // The recompiled game code is built for x86-64-v3 (Makefile GENARCH: AVX2, FMA, BMI2): say so instead of crashing
 // with an illegal instruction on an older CPU.
@@ -119,7 +89,12 @@ static void require_cpu(void) {}
 #endif
 
 void plat_init(void) {
-    log_to_file_without_terminal();
+    // (the AppImage is read-only): $XDG_DATA_HOME/primerecomp, ~/.local/share/primerecomp by default (runtime/paths.c)
+    const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
+    char dir[900];
+    if (xdg && *xdg == '/') snprintf(dir, sizeof dir, "%s/primerecomp", xdg);
+    else snprintf(dir, sizeof dir, "%s/.local/share/primerecomp", home && *home ? home : "/tmp");
+    posix_log_to_file(dir);
     require_cpu();
 }
 
@@ -155,52 +130,11 @@ void plat_exec(char *const argv[]) {
 }
 
 // ---- diagnostics
-// Exported symbols only (the Makefile links with -rdynamic); frames in the generated code are left to the caller,
-// which maps them to guest functions (runtime/dispatch.c). Static runtime functions come out as the nearest guest
-// function, so backtrace lines also give the offset in the executable (addr2line -fe primerecomp <offset>).
-const char *plat_symbol(uint64_t pc, uint64_t *offset) {
-    Dl_info di = {0};
-    if (!dladdr((void *)(uintptr_t)pc, &di) || !di.dli_sname) return NULL;
-    if (offset) *offset = pc - (uint64_t)(uintptr_t)di.dli_saddr;
-    return di.dli_sname;
-}
-
-// Fatal error without a terminal: the last FATAL / signal line of the log in a message box rather than vanishing
-// (as on Windows).
-void plat_fatal_notice(void) {
-    if (!g_log_path[0]) return;
-    fflush(stderr);
-    char text[1200] = "PrimeRecomp stopped because of an error.";
-    FILE *f = fopen(g_log_path, "rb");
-    if (f) {
-        static char tail[16384];
-        fseek(f, 0, SEEK_END);
-        long sz = ftell(f), from = sz > (long)sizeof tail - 1 ? sz - (long)sizeof tail + 1 : 0;
-        fseek(f, from, SEEK_SET);
-        size_t got = fread(tail, 1, sizeof tail - 1, f);
-        tail[got] = 0;
-        fclose(f);
-        char *line = NULL;
-        for (char *p = tail; (p = strstr(p, "FATAL: ")) != NULL; p++) line = p;
-        if (!line) for (char *p = tail; (p = strstr(p, "*** ")) != NULL; p++) line = p;
-        if (line) {
-            char *end = strchr(line, '\n');
-            if (end) *end = 0;
-            snprintf(text, sizeof text, "PrimeRecomp stopped because of an error:\n\n%.600s", line);
-            if (strstr(line, "Vulkan") || strstr(line, "VK_") || strstr(line, "vk")) {
-                size_t l = strlen(text);
-                snprintf(text + l, sizeof text - l, "\n\nPrimeRecomp needs a graphics driver with Vulkan 1.3 (Mesa "
-                         "RADV / ANV, or NVIDIA's): update your distribution's graphics drivers.");
-            }
-        }
-    }
-    size_t l = strlen(text);
-    snprintf(text + l, sizeof text - l, "\n\nDetails: %s", g_log_path);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "PrimeRecomp", text, NULL);
-}
 
 const char *rt_host_fn_name(uint64_t pc, uint64_t *offset);  // runtime/dispatch.c
 
+// Static runtime functions come out as the nearest guest function (plat_symbol knows exported ones only: the Makefile
+// links with -rdynamic), so backtrace lines also give the offset in the executable (addr2line -fe primerecomp <offset>).
 void plat_print_backtrace(void) {
     void *bt[64];
     int n = backtrace(bt, 64);
@@ -252,49 +186,3 @@ void plat_crash_handler_install(void) {
     sigaction(SIGFPE, &sa, NULL);
     sigaction(SIGABRT, &sa, NULL);
 }
-
-// ---- child processes
-#include <ftw.h>
-#include <spawn.h>
-#include <sys/wait.h>
-extern char **environ;
-
-PlatProc plat_spawn(const char *const argv[], const char *log_path, bool append_log) {
-    posix_spawn_file_actions_t fa;
-    posix_spawn_file_actions_init(&fa);
-    posix_spawn_file_actions_addopen(&fa, 1, log_path ? log_path : "/dev/null",
-                                     O_WRONLY | O_CREAT | (append_log ? O_APPEND : O_TRUNC), 0644);
-    posix_spawn_file_actions_adddup2(&fa, 1, 2);
-    posix_spawnattr_t at;  // (its own process group: plat_proc_kill ends what it starts, e.g. a compiler's own child)
-    posix_spawnattr_init(&at);
-    posix_spawnattr_setflags(&at, POSIX_SPAWN_SETPGROUP);
-    posix_spawnattr_setpgroup(&at, 0);
-    pid_t pid;
-    int rc = posix_spawn(&pid, argv[0], &fa, &at, (char *const *)argv, environ);
-    posix_spawnattr_destroy(&at);
-    posix_spawn_file_actions_destroy(&fa);
-    return rc ? 0 : (PlatProc)pid;
-}
-
-void plat_proc_kill(PlatProc p) {
-    kill(-(pid_t)p, SIGKILL);
-    waitpid((pid_t)p, NULL, 0);
-}
-
-int plat_proc_wait(PlatProc p, bool block) {
-    int st = 0;
-    pid_t r = waitpid((pid_t)p, &st, block ? 0 : WNOHANG);
-    if (r == 0) return -1;
-    if (r < 0) return 255;
-    return WIFEXITED(st) ? WEXITSTATUS(st) : 255;
-}
-
-static int rm_entry(const char *path, const struct stat *sb, int flag, struct FTW *ftw) {
-    (void)sb, (void)flag, (void)ftw;
-    return remove(path);
-}
-bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPTH | FTW_PHYS) == 0; }
-
-// End the process at once, skipping the library teardown: as on Windows, the GPU driver's threads crashed in exit()
-// while the game's threads still submitted work.
-void plat_terminate(void) { _exit(0); }

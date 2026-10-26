@@ -40,13 +40,14 @@ with `extracted/` in the starting folder keeps using that folder instead.
   (kernel regions, modules, HLE heap); stray first touches are committed by a vectored exception handler.
 - AArch64 FP/SIMD instructions are lowered to C (`gen.py --simd=c`, the default on non-arm64 hosts) instead of
   inline-asm passthrough.
-- Renderer: Vulkan (runtime/nvn/vulkan) instead of Metal; shaders are translated to GLSL and compiled with
-  shaderc. macOS keeps Metal.
-- Seed switches and "Title screen" reboot the game in place on both (runtime/main.c); the only re-exec left is
-  the startup retry when the guest window is taken, which on Windows starts a new process and exits.
+- Renderer: the same on both, Vulkan (runtime/nvn/vulkan; macOS through MoltenVK, docs/macos.md); shaders are
+  translated to GLSL and compiled with shaderc.
+- "Quit to Start Screen" reboots the game in place on both (runtime/main.c); the only re-exec left is the startup
+  retry when the guest window is taken, which on Windows starts a new process and exits.
 
 ## Tests
-- `tools/test_translate.sh`: shader translator fuzz (MSL output unchanged, GLSL compiles and validates).
+- `tools/test_translate.sh`: shader translator fuzz (GLSL compiles and validates; its MSL comparison takes a
+  reference translator from LAS Recomp's history, REF=<commit>, which this repository doesn't have).
 - `tools/test_vk_pipelines.sh`: fuzzed shaders through the backend's compile/reflection into real pipelines.
 - `LARECOMP_VK_VALIDATION=1` with `VK_ADD_LAYER_PATH` pointing at `C:\msys64\ucrt64\bin`: Khronos validation layer.
 - Run test windows directly, not under MSYS `timeout` (it stalls the window).

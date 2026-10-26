@@ -180,15 +180,14 @@ static bool test_event(const SDL_Event *e) {
     }
 }
 
-// Scripted test runs ignore the user's own input (a key or stick touched while a test drives Link spoils it):
-// LARECOMP_NO_USER_INPUT=1, on by default whenever LARECOMP_INPUT / LARECOMP_DOORJUMP_TEST / LARECOMP_PLACE is set
-// (or LARECOMP_HOST_INPUT / LARECOMP_BIND_TEST; LARECOMP_NO_USER_INPUT=0 lets it through again).
+// Scripted test runs ignore the user's own input (a key or stick touched while a test drives Samus spoils it):
+// LARECOMP_NO_USER_INPUT=1, on by default whenever LARECOMP_INPUT, LARECOMP_HOST_INPUT or LARECOMP_BIND_TEST is set
+// (LARECOMP_NO_USER_INPUT=0 lets it through again).
 static bool scripted_run(void) {
     static int on = -1;
     if (on < 0) {
         const char *v = getenv("LARECOMP_NO_USER_INPUT");
-        on = v ? atoi(v) != 0 : (getenv("LARECOMP_INPUT") || getenv("LARECOMP_DOORJUMP_TEST") || getenv("LARECOMP_PLACE") ||
-                                 getenv("LARECOMP_HOST_INPUT") || getenv("LARECOMP_BIND_TEST"));
+        on = v ? atoi(v) != 0 : (getenv("LARECOMP_INPUT") || getenv("LARECOMP_HOST_INPUT") || getenv("LARECOMP_BIND_TEST"));
         if (on) LOG("[input] scripted run: keyboard, mouse and controllers ignored\n");
     }
     return on;
@@ -212,7 +211,7 @@ bool input_user_blocked(const SDL_Event *e) {
     }
 }
 
-// Controller family for the button prompts (runtime/nvn/texpatch.c): 0 Nintendo / other / none, 1 Xbox, 2 PlayStation.
+// Controller family for the Controls tab's button names (bindings.c): 0 Nintendo / other / none, 1 Xbox, 2 PlayStation.
 // LARECOMP_PAD_TYPE=xbox|playstation|nintendo pretends one is attached (tests).
 static _Atomic int pad_family;
 static void note_family(void) {
@@ -222,7 +221,7 @@ static void note_family(void) {
         case SDL_GAMEPAD_TYPE_PS3: case SDL_GAMEPAD_TYPE_PS4: case SDL_GAMEPAD_TYPE_PS5: f = 2; break;
         default: break;
     }
-    if (f != pad_family) LOG("[input] button prompts: %s controller\n", f == 1 ? "Xbox" : f == 2 ? "PlayStation" : "Nintendo / other");
+    if (f != pad_family) LOG("[input] controller family: %s\n", f == 1 ? "Xbox" : f == 2 ? "PlayStation" : "Nintendo / other");
     pad_family = f;
 }
 static void log_pad(void) {
@@ -444,8 +443,7 @@ static void host_test_frame(uint64_t frame) {
 }
 
 static uint64_t g_pad_obj;
-volatile int g_inject_plus;  // frames to hold Plus for the game (movie.c: A/B skip the opening on rando seeds)
-RT_ON_RESET(input_reboot_reset) { g_pad_obj = 0; g_inject_plus = 0; }  // (reboot: the controller object was guest memory)
+RT_ON_RESET(input_reboot_reset) { g_pad_obj = 0; }  // (reboot: the controller object was guest memory)
 void input_frame(uint64_t frame) {
     if (g_pad_obj && getenv("LARECOMP_DUMP_PAD") && frame % 600 == 0) {
         const uint8_t *m = (const uint8_t *)(uintptr_t)(g_pad_obj - 0x98);
@@ -502,8 +500,6 @@ void input_frame(uint64_t frame) {
 
 extern bool menu_input_captured(void);  // runtime/ui/menu.mm: overlay menu or name entry up (it has the keys / pad)
 
-// Buttons held right now (keyboard, gamepad, test script), independent of whether the game polls (movies).
-uint64_t input_buttons_now(void) { return (menu_input_captured() ? 0 : key_buttons | pad_buttons) | script_buttons; }
 
 static int32_t clamp_axis(int32_t v) { return v > 32767 ? 32767 : v < -32767 ? -32767 : v; }
 
@@ -528,12 +524,6 @@ static void fill_state(Cpu *c) {
     }
     bool menu = menu_input_captured();  // the overlay menu / name entry has the controls (typing there isn't for the game)
     uint64_t b = menu ? script_buttons : key_buttons | pad_buttons | script_buttons;
-    {   // injected Plus: held for ~10 presented frames (the game polls several times per frame)
-        extern uint64_t renderer_present_count(void);
-        static uint64_t until;
-        if (g_inject_plus > 0) { until = renderer_present_count() + 10; g_inject_plus = 0; }
-        if (renderer_present_count() < until) b |= 1ull << BTN_PLUS;
-    }
     int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx) + script_lx), ly = clamp_axis((menu ? 0 : key_ly + pad_ly) + script_ly);
     int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx + mouse_rx) + script_rx);
     int32_t ry = clamp_axis((menu ? 0 : key_ry + pad_ry + mouse_ry) + script_ry);

@@ -10,14 +10,8 @@ enum { RES_MATCH = 0, /* 1..8: LAS's 1x..8x, now RES_FIXED */ RES_DYNAMIC = 9, R
 enum { N_RES_LINES = 5 };
 extern const int g_res_lines[N_RES_LINES];
 extern const char *const g_res_names[N_RES_LINES];
-enum { UPSCALE_BILINEAR = 0, UPSCALE_METALFX = 1 /* macOS */, UPSCALE_FSR1 = 2 /* Windows: AMD FSR 1 */ };
-#ifdef __APPLE__
-#define UPSCALE_SHARP UPSCALE_METALFX  // each OS's non-bilinear upscaler (the default)
-#else
-#define UPSCALE_SHARP UPSCALE_FSR1
-#endif
+enum { UPSCALE_BILINEAR = 0, UPSCALE_FSR1 = 2 /* AMD FSR 1 */ };  // (1: LAS Recomp's MetalFX)
 enum { AA_OFF = 0, AA_SMAA = 1 };
-enum { PROMPTS_AUTO = 0, PROMPTS_NINTENDO = 1, PROMPTS_XBOX = 2, PROMPTS_PLAYSTATION = 3 };
 // Face buttons: Nintendo = by position (right = A, bottom = B, top = X, left = Y), Xbox = by the Xbox labels (bottom
 // = A, right = B, left = X, top = Y). Swaps the controller bindings (runtime/hle/bindings.c) and the menus' confirm /
 // back buttons.
@@ -37,10 +31,10 @@ typedef struct {
     bool fullscreen;
     int res_mode;        // RES_MATCH, RES_FIXED (res_lines), RES_DYNAMIC, RES_Q75/50/25 (share of the display)
     int res_lines;       // RES_FIXED: render height in lines, one of g_res_lines (2160 = 4K)
-    int upscaler;        // UPSCALE_*: how a lower internal resolution reaches the window (MetalFX: macOS, FSR 1: Windows)
+    int upscaler;        // UPSCALE_*: how a lower internal resolution reaches the window (FSR 1: AMD's)
     int antialias;       // AA_*: anti-aliasing of the game image before it is scaled to the window
     int aniso;           // texture filtering: anisotropic level forced on the game's mipmapped samplers (2..16), 0 =
-                         // the game's own (runtime/nvn/vulkan/textures.c vk_sampler, renderer.m)
+                         // the game's own (runtime/nvn/vulkan/textures.c vk_sampler)
     float volume;        // master volume, 1 = 100%
     bool reverb;         // room reverb effect
     bool rumble;         // controller rumble (runtime/hle/input.c)
@@ -59,18 +53,7 @@ typedef struct {
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language
     int face_layout;     // FACE_*: which face button is A (set through bind_set_face_layout: it swaps the bindings)
     bool menu_tip_seen;  // the start screen's one-time "how to open the menu" note was shown (first PLAY ever)
-    // Link's Awakening's texture patches (runtime/nvn/texpatch.c) still read these; nothing sets them any more (they
-    // match none of Metroid Prime's textures), and the settings file no longer has them
-    bool hide_hero_icon; // no Hero Mode icon on the HUD
-    int prompts;         // PROMPTS_*: button glyphs (auto = follow the controller SDL reports)
-    int tunic;           // index into g_tunic_colours (0 = Default)
-    int hearts;          // index into g_heart_colours (0 = Default)
-    char rando_seed[128];  // (runtime/main.c: LAS's randomizer seed argument) always empty
 } Settings;
-
-enum { N_TUNIC_COLOURS = 13, N_HEART_COLOURS = 9 };
-extern const char *const g_tunic_colours[N_TUNIC_COLOURS];
-extern const char *const g_heart_colours[N_HEART_COLOURS];
 
 extern Settings g_settings;
 

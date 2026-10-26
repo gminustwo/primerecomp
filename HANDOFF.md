@@ -4,6 +4,41 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 
 ## State (2026-10-25)
 
+- **macOS build (the user's request, 2026-10-25 night, on their M3 Max / macOS 27; branch `macos`, merged with
+  main's v0.0.3 work, not on main yet - the user merges it with their Windows / Linux work):**
+  `make app` -> build/PrimeRecomp.app (macOS 15+). macOS builds the **Vulkan renderer on MoltenVK**; LAS Recomp's
+  Metal renderer is deleted. `make deps` builds everything into build/deps from pinned sources (SDL3, LGPL FFmpeg,
+  Vulkan headers / loader 1.4.350.1, VMA 3.3.0, MoltenVK 1.4.2's release dylib, shaderc 2026.4, Python 3.12); plain
+  `make` uses build/deps once it exists. The user's real data folder (~/Library/Application Support/
+  io.github.primerecomp) is set up and they have played the frigate on it (their save there; game code id
+  95d45970a8df7ad6). Details: docs/macos.md.
+  - MoltenVK fixes, all shared code: the GLSL prelude's fmin / fmax / clz are fminnm / fmaxnm / clz32 (Metal's own
+    names made calls ambiguous: pipelines failed); **dual-source blending**: RT1's output is the second colour
+    (location 0 index 1, ShaderKey.rt_kind[1] = RT_KIND_DUAL; as Ryujinx reads Maxwell) - it was undefined on every
+    renderer (the gunship's glass, fs @729ae0b000-ish in the intro); no blending into targets a shader doesn't write;
+    **geometry shaders without geometryShader** (ShaderKey.gs_lib, exec.c gs_emul_sources): the vertex shader runs a
+    straight-line 3-emit GS on its own vertex - the pause map's and the HUD minimap's room fill (gs @729bfe7400) now
+    draw on the Mac; the culling depth-only GS (@729c002100) is still left out. (A fragment-shader route through
+    pervertexEXT was tried first: MoltenVK has barycentrics but no per-vertex inputs.) Checked on MoltenVK and, for
+    the PC / Deck path, on Mesa's lavapipe (`brew install mesa`, VK_DRIVER_FILES=/opt/homebrew/share/vulkan/icd.d/
+    lvp_icd.aarch64.json): map fill and dual-source both fine there. Linux / Windows compile-checked with zig
+    (scratchpad crosscheck.sh: `zig cc -target x86_64-linux-gnu.2.35 / x86_64-windows-gnu` over runtime/), not run.
+  - SPIR-V caches rebuild once after this update everywhere (the tint removal changed every fragment shader).
+  - Test runs: run the .app's binary with `perl -e 'alarm N; exec @ARGV'` (no `timeout` on macOS; a killed run skips
+    the pipeline cache save), LARECOMP_DATA_ROOT=<scratch> with `extracted` a symlink to the real one, and
+    LARECOMP_SAVE_DIR; in zsh write `${f}:A`, not `$f:A`. Screenshots stall ~350 ms each at 2560x1440.
+- **Cleanup (the user's request, same night):** removed the Metal renderer (metal.m, renderer.m, RT_METAL UI
+  branches, MetalFX setting, test_shaders.*), texpatch.c/.h (LA texture patches: "0 known textures" in MPR) and the
+  per-draw tint uniform in every fragment shader, the LA settings (prompts, tunic, hearts, hide_hero_icon,
+  rando_seed), LARECOMP_REBOOT_AT's seed modes (now game | title), the LA opening-movie skip and Plus injection,
+  DOORJUMP_TEST / PLACE, dead functions (maxwell_disassemble was an empty stub, vk_frame_extent, vk_defer_view,
+  vk_format_alpha_one, renderer_get_scale, menu_is_open, nvn_find_pool, gamebuild_available,
+  kernel_current_thread_handle, g_vsync_count), tools/run.sh + dbgfs.sh; macOS / Linux share runtime/platform/posix.c
+  (log file, fatal box, child processes); CONTRIBUTING.md rewritten for PrimeRecomp; the log's first line is
+  `[version] PrimeRecomp <v> (<os>, <arch>)` (tools/log_triage.py reads it). Kept on purpose: hle_override,
+  kernel_data_regions, the RomFS overlay, option_rows / osk widgets without callers, the translator's MSL output path.
+  Open: tools/test_translate.sh needs a REF commit from LAS Recomp's history. device.c logs the present mode
+  (`[vk] present mode ...`; MoltenVK offers only fifo / immediate and holds 60 on fifo).
 - **Steam Deck performance (2026-10-25 night, the user's request):** "testing on the steam deck now. the performance
   was abysmal. can you create a performance mode on here specific for steam deck? It was chugging at 25 frames". No
   Deck here, so the causes were measured on Windows with Linux's conditions (`LARECOMP_NO_WRITE_WATCH=1`, the Deck's

@@ -3,7 +3,7 @@
 # at a time and the next waits ~20 s, so the copy just started has grown before memory is measured again.
 # LARECOMP_MIN_FREE_GB (default 10), LARECOMP_SLOT_DIR.
 GAME_MIN_FREE_GB=${LARECOMP_MIN_FREE_GB:-10}
-GAME_SLOT_DIR=${LARECOMP_SLOT_DIR:-$HOME/.cache/larecomp_test_slots}
+GAME_SLOT_DIR=${LARECOMP_SLOT_DIR:-$HOME/.cache/primerecomp_test_slots}
 mkdir -p "$GAME_SLOT_DIR"
 game_free_gb() {  # free + inactive + speculative + purgeable pages (what macOS can hand out without swapping)
     vm_stat | awk '/page size of/ {ps = $8} /Pages (free|inactive|speculative|purgeable):/ {gsub("\\.", "", $NF); n += $NF}

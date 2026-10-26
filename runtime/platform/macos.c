@@ -1,6 +1,5 @@
-// macOS host layer (runtime/platform.h).
+// macOS host layer (runtime/platform.h); the parts shared with Linux are in runtime/platform/posix.c.
 #include <crt_externs.h>
-#include <dlfcn.h>
 #include <execinfo.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
@@ -15,11 +14,18 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 
+#include "../paths.h"
 #include "../platform.h"
+#include "posix.h"
 
 static mach_timebase_info_data_t tb;
 
-void plat_init(void) {}
+void plat_init(void) {
+    const char *home = getenv("HOME");  // (the data folder of runtime/paths.c)
+    char dir[900];
+    snprintf(dir, sizeof dir, "%s/Library/Application Support/" RT_BUNDLE_ID, home && *home ? home : "/tmp");
+    posix_log_to_file(dir);
+}
 
 bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
     // Everything readable/writable: macOS pages are 16K but the guest maps at 4K granularity.
@@ -82,15 +88,6 @@ void plat_exec(char *const argv[]) {
     if (plat_exe_path(path, sizeof path)) execv(path, *_NSGetArgv());
 }
 
-const char *plat_symbol(uint64_t pc, uint64_t *offset) {
-    Dl_info di = {0};
-    if (!dladdr((void *)(uintptr_t)pc, &di) || !di.dli_sname) return NULL;
-    if (offset) *offset = pc - (uint64_t)(uintptr_t)di.dli_saddr;
-    return di.dli_sname;
-}
-
-void plat_fatal_notice(void) {}  // (the log / terminal shows it)
-
 void plat_print_backtrace(void) {
     void *bt[64];
     int n = backtrace(bt, 64);
@@ -122,46 +119,3 @@ void plat_crash_handler_install(void) {
     sigaction(SIGILL, &sa, NULL);
     sigaction(SIGABRT, &sa, NULL);
 }
-
-// ---- child processes
-#include <fcntl.h>
-#include <ftw.h>
-#include <spawn.h>
-#include <sys/wait.h>
-extern char **environ;
-
-PlatProc plat_spawn(const char *const argv[], const char *log_path, bool append_log) {
-    posix_spawn_file_actions_t fa;
-    posix_spawn_file_actions_init(&fa);
-    posix_spawn_file_actions_addopen(&fa, 1, log_path ? log_path : "/dev/null",
-                                     O_WRONLY | O_CREAT | (append_log ? O_APPEND : O_TRUNC), 0644);
-    posix_spawn_file_actions_adddup2(&fa, 1, 2);
-    posix_spawnattr_t at;  // (its own process group: plat_proc_kill ends what it starts, e.g. a compiler's own child)
-    posix_spawnattr_init(&at);
-    posix_spawnattr_setflags(&at, POSIX_SPAWN_SETPGROUP);
-    posix_spawnattr_setpgroup(&at, 0);
-    pid_t pid;
-    int rc = posix_spawn(&pid, argv[0], &fa, &at, (char *const *)argv, environ);
-    posix_spawnattr_destroy(&at);
-    posix_spawn_file_actions_destroy(&fa);
-    return rc ? 0 : (PlatProc)pid;
-}
-
-void plat_proc_kill(PlatProc p) {
-    kill(-(pid_t)p, SIGKILL);
-    waitpid((pid_t)p, NULL, 0);
-}
-
-int plat_proc_wait(PlatProc p, bool block) {
-    int st = 0;
-    pid_t r = waitpid((pid_t)p, &st, block ? 0 : WNOHANG);
-    if (r == 0) return -1;
-    if (r < 0) return 255;
-    return WIFEXITED(st) ? WEXITSTATUS(st) : 255;
-}
-
-static int rm_entry(const char *path, const struct stat *sb, int flag, struct FTW *ftw) {
-    (void)sb, (void)flag, (void)ftw;
-    return remove(path);
-}
-bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPTH | FTW_PHYS) == 0; }

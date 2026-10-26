@@ -68,7 +68,6 @@ void kernel_stop_threads(void (*idle)(void));  // reboot: unwind every guest thr
 void kernel_reset(void);                       // reboot: empty handle table, memory map, thread list
 KThread *kernel_create_main_thread(uint64_t entry, uint64_t stack_size, int prio);
 void kernel_run_main(KThread *t, uint64_t x0, uint64_t x1, uint64_t x2, uint64_t x3, uint64_t x4);
-uint32_t kernel_current_thread_handle(void);
 Cpu *kernel_current_cpu(void);
 
 // ---- ipc.c
@@ -77,13 +76,13 @@ int ipc_handle_request(Cpu *c, uint32_t handle);
 uint32_t ipc_connect_named_port(const char *name);
 
 // ---- in-place reboot (main.c): switch seeds or go back to the start screen without leaving the process
-enum { RT_REBOOT_NONE, RT_REBOOT_GAME, RT_REBOOT_TITLE };  // GAME: boot again at once (new seed); TITLE: start screen
+enum { RT_REBOOT_NONE, RT_REBOOT_GAME, RT_REBOOT_TITLE };  // GAME: boot the game again at once; TITLE: start screen
 void rt_request_reboot(int kind);  // any thread; the window loop (ui_run) returns it and main() carries it out
 int rt_reboot_requested(void);
 extern volatile int g_rt_unwind;   // set while guest threads are being stopped (kernel.c)
 void rt_unwind_point(void);        // guest threads: unwind to thread_main if a reboot is stopping them
 
-// ---- ui (runtime/nvn/metal.m)
+// ---- ui (runtime/nvn/vulkan/device.c)
 int ui_run(void);  // window loop; returns the reboot kind requested (the window stays open)
 
 // ---- helpers

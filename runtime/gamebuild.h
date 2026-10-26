@@ -17,8 +17,6 @@ typedef struct {
 
 // Builds it (a few minutes). false: why says what went wrong (details in the log).
 bool gamebuild_run(const char *game_dir, const GameBuildOpts *opts, char *why, size_t why_size);
-// The generator and the compiler are there (shipped builds; a source checkout with tools/venv and clang).
-bool gamebuild_available(void);
 
 #ifdef __cplusplus
 }

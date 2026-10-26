@@ -24,7 +24,7 @@ Settings g_settings = {
     .movie_audio = true,
     .show_fps = false,
     .frame_rate = 60,
-    .upscaler = UPSCALE_SHARP,  // (MetalFX on macOS, AMD FSR 1 on Windows)
+    .upscaler = UPSCALE_FSR1,
     .res_lines = 2160,
     .fov = FOV_GAME,
     .gyro = true,
@@ -105,7 +105,7 @@ bool settings_on_steam_deck(void) {
 void settings_steam_deck_preset(int fps) {
     g_settings.frame_rate = fps == 30 ? 30 : 60;
     g_settings.res_mode = fps == 30 ? RES_MATCH : RES_Q75;
-    g_settings.upscaler = UPSCALE_SHARP;
+    g_settings.upscaler = UPSCALE_FSR1;
     g_settings.antialias = AA_OFF;
     g_settings.aniso = fps == 30 ? 4 : 2;
     LOG("[settings] Steam Deck preset: %d fps\n", g_settings.frame_rate);
@@ -170,7 +170,7 @@ void settings_load(void) {
             if (g_settings.res_mode == RES_FIXED)
                 g_settings.res_lines = res_snap(unit == 'p' ? n : unit == 'k' ? n * 540 : n * 1080);
         }
-        else if (!strcmp(key, "upscaler")) g_settings.upscaler = !strcmp(val, "bilinear") ? UPSCALE_BILINEAR : UPSCALE_SHARP;  // (metalfx / fsr1: this OS's)
+        else if (!strcmp(key, "upscaler")) g_settings.upscaler = !strcmp(val, "bilinear") ? UPSCALE_BILINEAR : UPSCALE_FSR1;  // (fsr1, LAS's metalfx)
         else if (!strcmp(key, "aniso")) { int a = atoi(val); g_settings.aniso = a >= 16 ? 16 : a >= 8 ? 8 : a >= 4 ? 4 : a >= 2 ? 2 : 0; }
         else if (!strcmp(key, "antialias")) g_settings.antialias = !strcmp(val, "off") ? AA_OFF : AA_SMAA;  // ("fxaa": SMAA now)
         // (before the bind_pad_* lines, which settings_save writes last: they're the differences from its defaults)
@@ -210,7 +210,7 @@ void settings_save(void) {
     fprintf(f, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
             g_settings.mouse_invert);
     if (g_settings.steam_controller_direct) fprintf(f, "steam_controller_direct = 1\n");  // (written only when set)
-    fprintf(f, "upscaler = %s\n", g_settings.upscaler == UPSCALE_METALFX ? "metalfx" : g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
+    fprintf(f, "upscaler = %s\n", g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
     fprintf(f, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");
     fprintf(f, "aniso = %d\n", g_settings.aniso);
     if (g_settings.res_mode == RES_DYNAMIC) fprintf(f, "resolution = dynamic\n");

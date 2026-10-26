@@ -1,4 +1,5 @@
-// Vulkan backend for the NVN layer (Windows; macOS uses runtime/nvn/metal.m + renderer.m).
+// Vulkan backend for the NVN layer (Windows, Linux, and macOS through MoltenVK). It began as a port of LAS Recomp's Metal
+// renderer: comments that compare with Metal refer to that.
 // Files: device.c (instance, window, swapchain, present, screenshots, ImGui hooks), textures.c (images, uploads,
 // views), exec.c (command execution: passes, draws, clears, copies, compute), shaders.c (GLSL -> SPIR-V, programs,
 // pipelines). Mirrors the Metal backend's behaviour; differences are noted where they happen.
@@ -9,6 +10,9 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#ifdef __APPLE__
+#define VK_ENABLE_BETA_EXTENSIONS  // (VK_KHR_portability_subset: MoltenVK, device.c)
+#endif
 #include <vulkan/vulkan.h>
 #if __has_include(<vma/vk_mem_alloc.h>)
 #include <vma/vk_mem_alloc.h>
@@ -37,8 +41,8 @@ typedef struct {
     bool custom_border, divisor, host_import;
     uint64_t max_alloc;  // largest single allocation / buffer (maxMemoryAllocationSize, maxBufferSize)
     bool output_layer;  // vertex shaders may write gl_Layer (shaderOutputLayer)
-    bool occlusion_precise;
-    bool geometry;  // geometry shaders (geometryShader): programs with one are translated with it  // occlusion queries count samples (occlusionQueryPrecise), not just any-passed
+    bool occlusion_precise;  // occlusion queries count samples (occlusionQueryPrecise), not just any-passed
+    bool geometry;  // geometry shaders (geometryShader): programs with one are translated with it (else exec.c gs_emul)
     // window
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
@@ -89,8 +93,6 @@ typedef struct TexBackend {
     uint32_t pending_w, pending_h, pending_stride;
     uint8_t astc_bw, astc_bh;  // ASTC without GPU support: decoded to RGBA8 on upload (runtime/nvn/astc.c)
     bool astc_srgb;
-    int tp;              // runtime/nvn/texpatch.c: 0 not checked yet, -1 none, else known UI texture + 1
-    uint32_t tp_gen;     // texpatch_generation() it was last uploaded with
     uint8_t *sparse;     // sparse textures: their bytes gathered from the virtual pool's mapped pages
     uint32_t sparse_gen; // the pool's mapping generation those bytes reflect
     uint64_t sparse_hot; // (no write tracking) looked at closely at every check until this frame: the mapping just changed
@@ -104,7 +106,6 @@ typedef struct TexBackend {
 
 TexBackend *vk_tex(NvnTexture *t, bool for_render);  // backend image (uploads CPU contents unless for_render)
 VkFormat vk_format(uint32_t nvn_format);
-bool vk_format_alpha_one(uint32_t nvn_format);
 // View of t (optionally through an NVN texture view) for rendering or sampling.
 VkImageView vk_view(NvnTexture *t, const NvnTextureView *v, bool has_view, bool render, int want_textype);
 uint32_t vk_render_layers(NvnTexture *t, const NvnTextureView *v, bool has_view);  // layers a render view binds
@@ -118,7 +119,6 @@ VkSampler vk_default_sampler(bool linear);
 void vk_image_init_layout(VkCommandBuffer cb, VkImage img, VkImageAspectFlags aspect);
 // Destruction once every submission that may use the object has completed.
 void vk_defer_image(VkImage img, VmaAllocation mem);
-void vk_defer_view(VkImageView v);
 void vk_views_forget(TexBackend *b);  // drop (deferred) the cached views of an image being replaced
 uint64_t vk_frame_counter(void);
 

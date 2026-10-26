@@ -133,7 +133,7 @@ enum {
 
 
 
-// renderer backend (runtime/nvn/metal.m)
+// renderer backend (runtime/nvn/vulkan)
 void backend_init(void);
 void backend_execute(uint64_t handle);            // run a recorded command list
 void backend_present(NvnTexture *tex);            // show a texture in the window

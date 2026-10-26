@@ -3,8 +3,8 @@
 // the right, instead of tooltips. A / click changes a row (toggle / next value), left / right step it.
 //
 //   opt_begin("##gameplay", scale);
-//   opt_section("Difficulty");
-//   if (opt_toggle("One-hit KO", &g_settings.diff_ohko, false, "Any hit defeats Link.")) settings_save();
+//   opt_section("Cutscenes");
+//   if (opt_toggle("Skip any cutscene", &g_settings.skippable_cutscenes, false, "...")) settings_save();
 //   opt_end();
 #pragma once
 
@@ -15,7 +15,7 @@ bool opt_toggle(const char *label, bool *v, bool def, const char *desc);
 bool opt_choice(const char *label, int *v, const char *const *names, int n, int def, const char *desc, bool wrap = true);
 // steps of `step` between lo and hi; fmt formats the value (e.g. "%gx")
 bool opt_slider(const char *label, float *v, float lo, float hi, float step, float def, const char *fmt, const char *desc);
-// whole numbers lo..hi in steps of `step` (holding left / right speeds up); fmt formats it (e.g. "%d rupees"), lo_name
+// whole numbers lo..hi in steps of `step` (holding left / right speeds up); fmt formats it (e.g. "%d missiles"), lo_name
 // (if given) is shown for lo instead (e.g. "Any")
 bool opt_int(const char *label, int *v, int lo, int hi, int step, int def, const char *fmt, const char *desc,
              const char *lo_name = NULL);
@@ -24,7 +24,7 @@ bool opt_button(const char *label, const char *desc);
 // one of a set of choices (a ring on the right, filled when selected); true when chosen
 bool opt_radio(const char *label, bool selected, const char *desc);
 // an action / item row with a value on the right (upper: the label in capitals, as option rows; false: as written,
-// e.g. a seed name); true when activated
+// e.g. a file name); true when activated
 bool opt_action(const char *label, const char *value, const char *desc, bool upper = true);
 // text: the value shown on the right (hint when empty); A / click turns the row into a text field (the on-screen
 // keyboard with a controller). True when Enter / the keyboard confirmed a change.
@@ -32,7 +32,7 @@ bool opt_action(const char *label, const char *value, const char *desc, bool upp
 bool opt_text(const char *label, char *buf, size_t cap, const char *hint, const char *desc);
 // that text row is being edited (its buffer is the user's: don't overwrite it)
 bool opt_text_editing(const char *label);
-// the next row is shown greyed out and can't be changed (e.g. forced by the seed)
+// the next row is shown greyed out and can't be changed (e.g. not used with the current choice above)
 void opt_disable_next(void);
 // rows after this sit one step in (+1) or back out (-1): options that belong to the row above
 void opt_indent(int step);
