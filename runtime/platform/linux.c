@@ -94,6 +94,11 @@ static void log_to_file_without_terminal(void) {
     mkdir(dir, 0755);
     snprintf(g_log_path, sizeof g_log_path, "%s/primerecomp.log", dir);
     bool append = getenv("LASRECOMP_LOG_APPEND") != NULL;
+    if (!append) {  // the run before this one stays readable (started from Steam: nothing else keeps it)
+        char prev[1024];
+        snprintf(prev, sizeof prev, "%s/primerecomp.previous.log", dir);
+        rename(g_log_path, prev);
+    }
     if (!freopen(g_log_path, append ? "a" : "w", stderr)) { g_log_path[0] = 0; return; }
     dup2(STDERR_FILENO, STDOUT_FILENO);
     setenv("LASRECOMP_LOG_APPEND", "1", 1);
@@ -152,7 +157,7 @@ void plat_exec(char *const argv[]) {
 // ---- diagnostics
 // Exported symbols only (the Makefile links with -rdynamic); frames in the generated code are left to the caller,
 // which maps them to guest functions (runtime/dispatch.c). Static runtime functions come out as the nearest guest
-// function, so backtrace lines also give the offset in the executable (addr2line -fe lasrecomp <offset>).
+// function, so backtrace lines also give the offset in the executable (addr2line -fe primerecomp <offset>).
 const char *plat_symbol(uint64_t pc, uint64_t *offset) {
     Dl_info di = {0};
     if (!dladdr((void *)(uintptr_t)pc, &di) || !di.dli_sname) return NULL;
@@ -160,12 +165,37 @@ const char *plat_symbol(uint64_t pc, uint64_t *offset) {
     return di.dli_sname;
 }
 
-// Fatal error without a terminal: say so in a message box rather than vanishing (the details are in the log).
+// Fatal error without a terminal: the last FATAL / signal line of the log in a message box rather than vanishing
+// (as on Windows).
 void plat_fatal_notice(void) {
     if (!g_log_path[0]) return;
     fflush(stderr);
-    char text[1200];
-    snprintf(text, sizeof text, "PrimeRecomp stopped because of an error.\n\nDetails: %s", g_log_path);
+    char text[1200] = "PrimeRecomp stopped because of an error.";
+    FILE *f = fopen(g_log_path, "rb");
+    if (f) {
+        static char tail[16384];
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f), from = sz > (long)sizeof tail - 1 ? sz - (long)sizeof tail + 1 : 0;
+        fseek(f, from, SEEK_SET);
+        size_t got = fread(tail, 1, sizeof tail - 1, f);
+        tail[got] = 0;
+        fclose(f);
+        char *line = NULL;
+        for (char *p = tail; (p = strstr(p, "FATAL: ")) != NULL; p++) line = p;
+        if (!line) for (char *p = tail; (p = strstr(p, "*** ")) != NULL; p++) line = p;
+        if (line) {
+            char *end = strchr(line, '\n');
+            if (end) *end = 0;
+            snprintf(text, sizeof text, "PrimeRecomp stopped because of an error:\n\n%.600s", line);
+            if (strstr(line, "Vulkan") || strstr(line, "VK_") || strstr(line, "vk")) {
+                size_t l = strlen(text);
+                snprintf(text + l, sizeof text - l, "\n\nPrimeRecomp needs a graphics driver with Vulkan 1.3 (Mesa "
+                         "RADV / ANV, or NVIDIA's): update your distribution's graphics drivers.");
+            }
+        }
+    }
+    size_t l = strlen(text);
+    snprintf(text + l, sizeof text - l, "\n\nDetails: %s", g_log_path);
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "PrimeRecomp", text, NULL);
 }
 
@@ -185,7 +215,7 @@ void plat_print_backtrace(void) {
         if (!s && ours) s = rt_host_fn_name(pc, &off);
         const char *mod = di.dli_fname ? (strrchr(di.dli_fname, '/') ? strrchr(di.dli_fname, '/') + 1 : di.dli_fname) : "?";
         uint64_t moff = pc - (uint64_t)(uintptr_t)di.dli_fbase;
-        if (s && ours) fprintf(stderr, "  #%-2d %016llx %s+%llx (lasrecomp+%llx)\n", i, (unsigned long long)pc, s,
+        if (s && ours) fprintf(stderr, "  #%-2d %016llx %s+%llx (primerecomp+%llx)\n", i, (unsigned long long)pc, s,
                                (unsigned long long)off, (unsigned long long)moff);
         else if (s) fprintf(stderr, "  #%-2d %016llx %s+%llx (%s)\n", i, (unsigned long long)pc, s, (unsigned long long)off, mod);
         else fprintf(stderr, "  #%-2d %016llx %s+%llx\n", i, (unsigned long long)pc, mod, (unsigned long long)moff);

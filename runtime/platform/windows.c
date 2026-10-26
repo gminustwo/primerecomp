@@ -40,10 +40,12 @@ static LONG CALLBACK vectored_handler(EXCEPTION_POINTERS *ep) {
 
 // The window keeps write tracking (MEM_WRITE_WATCH: the Vulkan renderer's vertex / index cache re-copies only pages the
 // CPU wrote, runtime/nvn/vulkan/exec.c). Without it (refused): no tracking, the renderer reads guest memory in place.
+// (debug) LARECOMP_NO_WRITE_WATCH=1: none, as on Linux / macOS.
 static bool g_write_watch;
 
 bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
-    void *p = VirtualAlloc((void *)(uintptr_t)lo, hi - lo, MEM_RESERVE | MEM_WRITE_WATCH, PAGE_READWRITE);
+    void *p = getenv("LARECOMP_NO_WRITE_WATCH") ? NULL
+            : VirtualAlloc((void *)(uintptr_t)lo, hi - lo, MEM_RESERVE | MEM_WRITE_WATCH, PAGE_READWRITE);
     if (p == (void *)(uintptr_t)lo) g_write_watch = true;
     else p = VirtualAlloc((void *)(uintptr_t)lo, hi - lo, MEM_RESERVE, PAGE_READWRITE);
     if (p != (void *)(uintptr_t)lo) return false;

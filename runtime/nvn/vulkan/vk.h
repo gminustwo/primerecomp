@@ -35,6 +35,7 @@ typedef struct {
     VkSemaphore timeline;      // value = last completed submission number
     VkCommandPool pool;        // render thread only
     bool custom_border, divisor, host_import;
+    uint64_t max_alloc;  // largest single allocation / buffer (maxMemoryAllocationSize, maxBufferSize)
     bool output_layer;  // vertex shaders may write gl_Layer (shaderOutputLayer)
     bool occlusion_precise;
     bool geometry;  // geometry shaders (geometryShader): programs with one are translated with it  // occlusion queries count samples (occlusionQueryPrecise), not just any-passed

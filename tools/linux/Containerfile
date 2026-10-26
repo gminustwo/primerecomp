@@ -1,6 +1,6 @@
 # Build environment for the Linux AppImages (tools/linux/appimage.sh): Ubuntu 22.04, so the result runs on glibc 2.35+.
 # Built once per arch (podman build --arch amd64 / arm64). The amd64 image builds everything, the aarch64 AppImage
-# cross-compiled; the arm64 image is the cross build's sysroot (the same -dev packages) and freezes the arm64 seed
+# cross-compiled; the arm64 image is the cross build's sysroot (the same -dev packages) and freezes the arm64 game code
 # generator helper (PyInstaller only builds for the machine it runs on).
 FROM docker.io/library/ubuntu:22.04
 ARG DEBIAN_FRONTEND=noninteractive

@@ -4,6 +4,20 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 
 ## State (2026-10-25)
 
+- **Linux / Steam Deck AppImage (the user's request, 2026-10-25 evening):** `build/dist/PrimeRecomp-v1.0.0-linux-x86_64.AppImage`
+  (sha256 84c3154d..., built from the working tree incl. the user's uncommitted v1.0.0 bump in launcher.mm /
+  README.md, which were left uncommitted). Not published. Built with the existing pipeline (tools/linux/: Ubuntu
+  22.04 podman container) inside the user's WSL2 Ubuntu 24.04 (podman installed there as root; build tree in
+  /root/primerecomp, synced from this checkout by scratchpad linux/sync.sh - rsync without build/ private/ generated/,
+  CRs stripped from the shell scripts and the Makefile). Tested in WSL on llvmpipe only (no GPU Vulkan there): start
+  screen, a fresh setup (READY, game code in 106 s), title screen, the user's save in Chozo Ruins. Fixes it needed:
+  textures.c's missing sys/stat.h; the guest heap import capped at the device's maxMemoryAllocationSize /
+  maxBufferSize (llvmpipe: 2 GB; the 3.3 GB import made vertex fetches empty - logo / movie / button glyph missing on
+  the title); stencil ops set once per command buffer even with the test off (validation VUID 07848). Linux log now
+  keeps primerecomp.previous.log and its fatal box shows the error line. Windows: LARECOMP_NO_WRITE_WATCH=1 runs
+  without page write tracking, as Linux / macOS do. Untested: real GPUs (RADV on the Deck), the folder dialog in
+  Game Mode (docs/linux.md says: set up in Desktop Mode), Deck performance. README still says "Windows only"
+  (user-edited, uncommitted); docs/linux.md has the Steam Deck steps.
 - **The user is preparing a beta build ("PrimeRecomp").** They asked for, and got (both in the playtest build, wait
   for their reaction):
   1. **Name and icon** (a1324f5): window / message boxes / start screen / packages say PrimeRecomp; docs/icon is
