@@ -47,6 +47,10 @@ int plat_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max, u
     return -1;
 }
 
+bool plat_guest_shared(uint64_t lo, uint64_t hi) { (void)lo; (void)hi; return false; }  // (Linux only)
+int plat_guest_dmabuf(uint64_t addr, uint64_t size) { (void)addr; (void)size; return -1; }
+void plat_guest_untrack(void) {}
+
 int plat_protect(uint64_t addr, uint64_t size, int prot) {
     int p = prot == PLAT_PROT_NONE ? PROT_NONE : prot == PLAT_PROT_READ ? PROT_READ : PROT_READ | PROT_WRITE;
     return mprotect((void *)(uintptr_t)addr, size, p);

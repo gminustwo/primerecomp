@@ -41,7 +41,7 @@ static void rtld_fini(Cpu *c) { (void)c; }  // after nnMain returns: the process
 // Claim the guest address range before anything else can map there. The host allocator places
 // regions at random addresses in the same window; on a collision, re-exec for a fresh layout.
 __attribute__((constructor(101))) static void reserve_guest_space(void) {
-    if (plat_reserve_guest(GUEST_LO, GUEST_HI)) return;
+    if (plat_reserve_guest(GUEST_LO, GUEST_HI)) { plat_guest_shared(HEAP_BASE, HEAP_BASE + HEAP_MAX); return; }
     const char *tries = getenv("LARECOMP_REEXEC");
     int n = tries ? atoi(tries) : 0;
     if (n >= 20) {
@@ -117,6 +117,7 @@ static void teardown(void) {
         if (*p) { (*p)(); n++; }
     kernel_reset();
     if (!plat_reset_guest(GUEST_LO, GUEST_HI)) FATAL("cannot reset guest memory\n");
+    plat_guest_shared(HEAP_BASE, HEAP_BASE + HEAP_MAX);  // (the heap as dma-bufs again: platform.h)
     backend_guest_memory_reset();
     g_nmodules = 0;
     g_reboot = RT_REBOOT_NONE;

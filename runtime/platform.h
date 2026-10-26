@@ -25,8 +25,16 @@ void plat_commit(uint64_t addr, uint64_t size);
 bool plat_reset_guest(uint64_t lo, uint64_t hi);
 // Pages of [addr, addr+size) in the guest window the CPU wrote since the last call over them (write tracking: Windows
 // MEM_WRITE_WATCH), their addresses into pages[] (at most max), and the tracking reset for the range. Returns the
-// count (max: maybe more), or -1 where there is no tracking (macOS, Linux). Page size: *page.
+// count (max: maybe more), or -1 where there is no tracking (macOS; Linux without plat_guest_shared). Page size: *page.
 int plat_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max, uint64_t *page);
+// Linux: [lo, hi) of the claimed window backed by shareable memory (a memfd) instead, so that plat_guest_dmabuf can hand
+// pieces of it to the GPU driver (exec.c: the guest heap import). Again after plat_reset_guest. false: not available
+// (no /dev/udmabuf; other systems), the window stays as it was.
+bool plat_guest_shared(uint64_t lo, uint64_t hi);
+// A dma-buf of [addr, addr+size) of that memory (page aligned), or -1. The fd is the caller's.
+int plat_guest_dmabuf(uint64_t addr, uint64_t size);
+// The GPU holds that memory some other way after all (a host-pointer import): plat_written_pages stops tracking it.
+void plat_guest_untrack(void);
 enum { PLAT_PROT_NONE = 0, PLAT_PROT_READ = 1, PLAT_PROT_RW = 3 };
 int plat_protect(uint64_t addr, uint64_t size, int prot);  // 0 on success
 #define PLAT_PAGE 0x4000ull  // largest page size we deal with (macOS 16K; multiple of Windows' 4K)

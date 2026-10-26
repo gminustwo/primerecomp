@@ -129,7 +129,11 @@ static void pick_device(void) {
     for (uint32_t i = 0; i < nq; i++) {
         VkBool32 present = VK_FALSE;
         vkGetPhysicalDeviceSurfaceSupportKHR(g_vk.phys, i, g_vk.surface, &present);
-        if ((qp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && (qp[i].queueFlags & VK_QUEUE_COMPUTE_BIT) && present) { g_vk.qfam = i; break; }
+        if ((qp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && (qp[i].queueFlags & VK_QUEUE_COMPUTE_BIT) && present) {
+            g_vk.qfam = i;
+            g_vk.qsparse = (qp[i].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) != 0;
+            break;
+        }
     }
     free(qp);
     if (g_vk.qfam == UINT32_MAX) FATAL("no graphics+present queue\n");
@@ -167,7 +171,7 @@ static void create_device(void) {
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, NULL);
     VkExtensionProperties *ep = calloc(ne, sizeof *ep);
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);
-    const char *ext[8];
+    const char *ext[12];
     uint32_t n_ext = 0;
     ext[n_ext++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     g_vk.custom_border = has_ext(ep, ne, VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
@@ -185,7 +189,6 @@ static void create_device(void) {
     if (portability) ext[n_ext++] = VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
     VkPhysicalDevicePortabilitySubsetFeaturesKHR port = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
 #endif
-    free(ep);
 
     // features the backend relies on (all present on current desktop drivers)
     VkPhysicalDeviceVulkan12Features have12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
@@ -194,6 +197,15 @@ static void create_device(void) {
     if (portability) port.pNext = have12.pNext, have12.pNext = &port;
 #endif
     vkGetPhysicalDeviceFeatures2(g_vk.phys, &have);
+    // the guest heap as dma-bufs bound into one sparse buffer (Linux: exec.c gmem_import_dmabuf, platform/linux.c)
+    g_vk.dmabuf_import = have.features.sparseBinding && g_vk.qsparse &&
+                         has_ext(ep, ne, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) &&
+                         has_ext(ep, ne, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
+    if (g_vk.dmabuf_import) {
+        ext[n_ext++] = VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
+        ext[n_ext++] = VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME;
+    }
+    free(ep);
     // gl_Layer from vertex shaders (exec.c: passthrough geometry shaders that only pick the layer)
     g_vk.output_layer = have12.shaderOutputLayer && have12.shaderOutputViewportIndex;
     VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT div = {
@@ -230,6 +242,7 @@ static void create_device(void) {
     b->depthBiasClamp = h->depthBiasClamp;
     b->depthClamp = h->depthClamp;
     b->largePoints = h->largePoints;
+    b->sparseBinding = g_vk.dmabuf_import;
     b->wideLines = h->wideLines;
     b->imageCubeArray = h->imageCubeArray;
     b->sampleRateShading = h->sampleRateShading;
@@ -793,7 +806,10 @@ int ui_run(void) {
     for (;;) {
         if (rt_reboot_requested()) return rt_reboot_requested();  // (runtime/main.c tears the game down)
         SDL_Event e;
-        while (SDL_WaitEventTimeout(&e, 16)) {
+        // the events waiting, then the rest of the loop: a pad streaming events (the Steam Deck's controller) kept a
+        // wait-until-quiet loop from ever ending - no reboot (Quit to Start Screen), rumble or mouse capture updates
+        int nev = 0;
+        if (SDL_WaitEventTimeout(&e, 16)) do {
             if (e.type == SDL_EVENT_QUIT) {
                 LOG("window closed\n");
                 exit(0);
@@ -802,7 +818,7 @@ int ui_run(void) {
             if (input_user_blocked(&e)) continue;  // scripted test runs: the real keyboard / mouse / pads do nothing
             if (menu_handle_event(&e)) continue;
             input_handle_event(&e);
-        }
+        } while (++nev < 256 && SDL_PollEvent(&e));
         extern void input_rumble_pump(void);
         input_rumble_pump();
         menu_apply_window_requests(window);

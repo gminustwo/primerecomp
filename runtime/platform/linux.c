@@ -10,8 +10,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/syscall.h>
 #include <sys/ucontext.h>
 #include <time.h>
 #include <unistd.h>
@@ -42,9 +44,119 @@ bool plat_reset_guest(uint64_t lo, uint64_t hi) {
 
 void plat_commit(uint64_t addr, uint64_t size) { (void)addr; (void)size; }
 
-int plat_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max, uint64_t *page) {  // (no write tracking)
-    (void)addr; (void)size; (void)pages; (void)max; (void)page;
-    return -1;
+// The guest heap as dma-bufs (exec.c gmem_import_dmabuf). A host-pointer import of it is an amdgpu userptr buffer, and
+// the kernel walks every page of every userptr buffer a submission uses, at each submission: ~5 ms for the 3.3 GB heap
+// on a Steam Deck, three times a frame. udmabuf makes dma-bufs of memfd pages, which the driver imports as ordinary
+// GPU memory. (udmabuf caps each at size_limit_mb, 64 MB by default: the importer asks for pieces.)
+// LARECOMP_NO_DMABUF=1: private memory as before.
+#ifndef UDMABUF_CREATE
+struct udmabuf_create { uint32_t memfd, flags; uint64_t offset, size; };
+#define UDMABUF_FLAGS_CLOEXEC 0x01
+#define UDMABUF_CREATE _IOW('u', 0x42, struct udmabuf_create)
+#endif
+static int g_shared_fd = -1;
+static uint64_t g_shared_lo, g_shared_hi;
+
+// Write tracking over the shared memory (plat_written_pages), as Windows' MEM_WRITE_WATCH: userfaultfd's asynchronous
+// write protection (the kernel lifts it at the first write, no handler) and PAGEMAP_SCAN to read and re-arm it (both
+// Linux 6.7; Wine's GetWriteWatch uses the same). Only over memory the GPU holds as dma-bufs: changing the protection of
+// pages under a userptr import makes amdgpu wait for the GPU (its MMU notifier), so a host-pointer import turns it off
+// (plat_guest_untrack). LARECOMP_NO_WRITE_WATCH=1: none.
+struct uffd_api_ { uint64_t api, features, ioctls; };
+struct uffd_range_ { uint64_t start, len; };
+struct uffd_register_ { struct uffd_range_ range; uint64_t mode, ioctls; };
+#define UFFD_API_ 0xAAull
+#define UFFD_USER_MODE_ONLY_ 1
+#define UFFD_FEATURE_WP_HUGETLBFS_SHMEM_ (1ull << 12)
+#define UFFD_FEATURE_WP_UNPOPULATED_ (1ull << 13)
+#define UFFD_FEATURE_WP_ASYNC_ (1ull << 15)
+#define UFFDIO_API_ _IOWR(0xAA, 0x3F, struct uffd_api_)
+#define UFFDIO_REGISTER_ _IOWR(0xAA, 0x00, struct uffd_register_)
+#define UFFDIO_REGISTER_MODE_WP_ (1ull << 1)
+struct page_region_ { uint64_t start, end, categories; };
+struct pm_scan_arg_ {
+    uint64_t size, flags, start, end, walk_end, vec, vec_len, max_pages, category_inverted, category_mask,
+        category_anyof_mask, return_mask;
+};
+#define PAGEMAP_SCAN_ _IOWR('f', 16, struct pm_scan_arg_)
+#define PM_SCAN_WP_MATCHING_ (1ull << 0)
+#define PM_SCAN_CHECK_WPASYNC_ (1ull << 1)
+#define PAGE_IS_WRITTEN_ (1ull << 1)
+static int g_uffd = -1, g_pagemap = -1;
+
+static void track_stop(void) {
+    if (g_uffd >= 0) close(g_uffd), g_uffd = -1;  // (closing it lifts the protection)
+    if (g_pagemap >= 0) close(g_pagemap), g_pagemap = -1;
+}
+
+static void track_start(void) {
+    track_stop();
+    if (getenv("LARECOMP_NO_WRITE_WATCH")) return;
+    int u = (int)syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY_);
+    if (u < 0) return;
+    struct uffd_api_ api = {.api = UFFD_API_,
+                            .features = UFFD_FEATURE_WP_ASYNC_ | UFFD_FEATURE_WP_HUGETLBFS_SHMEM_ | UFFD_FEATURE_WP_UNPOPULATED_};
+    struct uffd_register_ reg = {.range = {g_shared_lo, g_shared_hi - g_shared_lo}, .mode = UFFDIO_REGISTER_MODE_WP_};
+    int pm = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
+    if (pm < 0 || ioctl(u, UFFDIO_API_, &api) != 0 || ioctl(u, UFFDIO_REGISTER_, &reg) != 0) {
+        if (pm >= 0) close(pm);
+        close(u);
+        return;
+    }
+    g_uffd = u, g_pagemap = pm;  // (nothing protected yet: every page counts as written until its first query)
+}
+
+void plat_guest_untrack(void) { track_stop(); }
+
+int plat_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max, uint64_t *page) {
+    if (g_uffd < 0 || addr < g_shared_lo || addr + size > g_shared_hi || max <= 0) return -1;
+    *page = 4096;
+    struct page_region_ rg[256];
+    struct pm_scan_arg_ a = {.size = sizeof a, .flags = PM_SCAN_WP_MATCHING_ | PM_SCAN_CHECK_WPASYNC_, .start = addr & ~0xFFFull,
+                             .end = (addr + size + 0xFFF) & ~0xFFFull, .vec = (uintptr_t)rg, .vec_len = 256,
+                             .category_mask = PAGE_IS_WRITTEN_, .return_mask = PAGE_IS_WRITTEN_};
+    int n = 0;
+    for (;;) {
+        a.max_pages = (uint64_t)(max - n);  // (more than fit: the rest stays unprotected, reported next time)
+        a.walk_end = 0;
+        int r = ioctl(g_pagemap, PAGEMAP_SCAN_, &a);
+        if (r < 0) return -1;
+        for (int i = 0; i < r; i++)
+            for (uint64_t p = rg[i].start; p < rg[i].end && n < max; p += 4096) pages[n++] = p;
+        if (n >= max || !a.walk_end || a.walk_end >= a.end) break;
+        a.start = a.walk_end;
+    }
+    return n;
+}
+
+bool plat_guest_shared(uint64_t lo, uint64_t hi) {
+    track_stop();
+    if (g_shared_fd >= 0) close(g_shared_fd), g_shared_fd = -1;  // (after a reset: its pages are gone from the window)
+    if (getenv("LARECOMP_NO_DMABUF") || access("/dev/udmabuf", R_OK | W_OK) != 0) return false;
+    int fd = memfd_create("primerecomp-heap", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (fd < 0) return false;
+    // (udmabuf wants the size sealed)
+    if (ftruncate(fd, (off_t)(hi - lo)) != 0 || fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK) != 0 ||
+        mmap((void *)(uintptr_t)lo, hi - lo, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED | MAP_NORESERVE, fd, 0) !=
+            (void *)(uintptr_t)lo) {
+        mmap((void *)(uintptr_t)lo, hi - lo, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0);
+        close(fd);
+        return false;
+    }
+    g_shared_fd = fd, g_shared_lo = lo, g_shared_hi = hi;
+    track_start();
+    return true;
+}
+
+int plat_guest_dmabuf(uint64_t addr, uint64_t size) {
+    if (g_shared_fd < 0 || addr < g_shared_lo || addr + size > g_shared_hi || ((addr | size) & 0xFFF) || !size) return -1;
+    int dev = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+    if (dev < 0) return -1;
+    struct udmabuf_create c = {.memfd = (uint32_t)g_shared_fd, .flags = UDMABUF_FLAGS_CLOEXEC, .offset = addr - g_shared_lo,
+                               .size = size};
+    int fd = ioctl(dev, UDMABUF_CREATE, &c);
+    close(dev);
+    return fd;
 }
 
 int plat_protect(uint64_t addr, uint64_t size, int prot) {
