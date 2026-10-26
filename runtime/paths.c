@@ -206,6 +206,121 @@ unsigned long long rt_game_files_size(const char *game_dir) {
     return n;
 }
 
+// ---- earlier copies (paths.h)
+#define MAX_COPIES 16
+
+static bool copies_file(char *out, size_t n) {  // false: none here (not Windows, or this copy doesn't take part)
+#ifdef _WIN32
+    const char *la = getenv("LOCALAPPDATA"), *env = getenv("LARECOMP_DATA_ROOT");
+    char exe[1100];
+    if (!la || !*la || (env && *env) || !resolve(g_exe_dir, exe, sizeof exe) || !path_eq(exe, g_root)) return false;
+    snprintf(out, n, "%s\\PrimeRecomp\\copies.txt", la);
+    return true;
+#else
+    (void)out, (void)n;
+    return false;
+#endif
+}
+
+static int read_copies(const char *path, char (*out)[1100], int max) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    char line[1100];
+    int n = 0;
+    while (n < max && fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        if (line[0]) snprintf(out[n++], 1100, "%s", line);
+    }
+    fclose(f);
+    return n;
+}
+
+static bool real_game_dir(const char *root) {  // <root>/extracted: a folder, not a link
+    char p[1100];
+    snprintf(p, sizeof p, "%s" SEP "extracted", root);
+    return is_dir(p) && !is_link(p);
+}
+
+void rt_note_copy(void) {
+    char path[1100], list[MAX_COPIES][1100];
+    if (!copies_file(path, sizeof path) || !real_game_dir(g_root)) return;
+    int n = read_copies(path, list, MAX_COPIES);
+    if (n && path_eq(list[0], g_root)) return;  // (noted first already)
+    char dir[1100];
+    snprintf(dir, sizeof dir, "%s", path);
+    *strrchr(dir, '\\') = 0;
+    mkdirs(dir);
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f, "%s\n", g_root);
+    for (int i = 0, k = 1; i < n && k < MAX_COPIES; i++)  // (copies deleted since are left out)
+        if (!path_eq(list[i], g_root) && is_dir(list[i])) fprintf(f, "%s\n", list[i]), k++;
+    fclose(f);
+}
+
+int rt_earlier_copies(char (*out)[1100], int max) {
+    char path[1100], list[MAX_COPIES][1100];
+    if (!copies_file(path, sizeof path)) return 0;
+    int n = read_copies(path, list, MAX_COPIES), k = 0;
+    for (int i = 0; i < n && k < max; i++)
+        if (!path_eq(list[i], g_root) && real_game_dir(list[i])) snprintf(out[k++], 1100, "%s", list[i]);
+    return k;
+}
+
+static bool empty_dir(const char *p) {  // (or not there)
+    DIR *d = opendir(p);
+    if (!d) return true;
+    struct dirent *e;
+    bool empty = true;
+    while (empty && (e = readdir(d))) empty = !strcmp(e->d_name, ".") || !strcmp(e->d_name, "..");
+    closedir(d);
+    return empty;
+}
+
+static bool copy_plain(const char *src, const char *dst) {  // a file or folder tree, byte by byte (links skipped)
+    if (is_link(src)) return true;
+    if (is_dir(src)) {
+        mkdir(dst, 0755);
+        DIR *d = opendir(src);
+        if (!d) return false;
+        bool ok = true;
+        struct dirent *e;
+        while ((e = readdir(d))) {
+            if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+            char s[2048], t[2048];
+            snprintf(s, sizeof s, "%s" SEP "%s", src, e->d_name);
+            snprintf(t, sizeof t, "%s" SEP "%s", dst, e->d_name);
+            ok &= copy_plain(s, t);
+        }
+        closedir(d);
+        return ok;
+    }
+    FILE *in = fopen(src, "rb"), *out = in ? fopen(dst, "wb") : NULL;
+    bool ok = in && out;
+    static char buf[1 << 16];
+    size_t k;
+    while (ok && (k = fread(buf, 1, sizeof buf, in)) > 0) ok = fwrite(buf, 1, k, out) == k;
+    if (in) fclose(in);
+    if (out && fclose(out) != 0) ok = false;
+    return ok;
+}
+
+void rt_copy_saves(const char *from, bool settings) {
+    char p[1100];
+    snprintf(p, sizeof p, "%s" SEP "save", from);
+    if (is_dir(p) && !empty_dir(p) && empty_dir("save"))
+        fprintf(stderr, "[paths] saves from %s: %s\n", from, copy_plain(p, "save") ? "copied" : "not all copied");
+    // (larecomp.ini: a copy from before 2026-10-25, renamed by settings_load)
+    const char *ini[] = {"primerecomp.ini", "larecomp.ini"};
+    if (!settings || getenv("LARECOMP_SETTINGS") || exists(ini[0]) || exists(ini[1])) return;
+    for (int i = 0; i < 2; i++) {
+        snprintf(p, sizeof p, "%s" SEP "%s", from, ini[i]);
+        if (!exists(p)) continue;
+        fprintf(stderr, "[paths] settings from %s: %s\n", p, copy_plain(p, ini[i]) ? "copied" : "not copied");
+        break;
+    }
+}
+
 // Window / Dock icon: icon.png shipped next to the exe or in the .app (none for a plain source build). Windows keeps
 // the .exe's own icon (SDL's window class takes it): its .ico has the small taskbar sizes drawn without the margin.
 void rt_window_icon(SDL_Window *w) {

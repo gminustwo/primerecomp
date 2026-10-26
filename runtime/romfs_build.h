@@ -21,6 +21,8 @@ uint64_t romfs_dir_bytes(const char *dir);
 // Copies the folder tree src to dst (hard links where the file system allows: no second copy of 6 GB). progress as
 // above. false = failed.
 bool romfs_copy_tree(const char *src, const char *dst, void (*progress)(uint64_t done, uint64_t total));
+// One file, the same way.
+bool romfs_copy_file(const char *src, const char *dst, void (*progress)(uint64_t done, uint64_t total));
 
 #ifdef __cplusplus
 }

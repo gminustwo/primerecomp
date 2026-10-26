@@ -119,7 +119,8 @@ GAMELIB_SHARED := -shared  # (+ the import library: runtime/gamebuild.c)
 endif
 
 # GAMELIB_ID: what the game code library is built from (the generator, the headers it is compiled against, the
-# flags). A library with another id is rebuilt by the start screen, never loaded.
+# flags). A library with another id is rebuilt by the start screen, never loaded. Their text is hashed: any edit to
+# these files, a comment too, has every player recompile the game (minutes; longer on a Steam Deck) after updating.
 GAMELIB_SRCS := tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/patches.py \
                 tools/simd_c.py tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
                 runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h

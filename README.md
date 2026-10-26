@@ -73,7 +73,9 @@ your position in `positions.txt`.
    takes several minutes.
 3. Press **Play**.
 
-Everything PrimeRecomp writes - game files, saves, settings (`primerecomp.ini`), logs - stays in its own folder.
+Everything PrimeRecomp writes - game files, saves, settings (`primerecomp.ini`), logs - stays in its own folder, apart
+from a short note of where that folder is (`%LOCALAPPDATA%\PrimeRecomp\copies.txt`) so that newer versions find it
+([Updating](#updating)).
 
 ### Linux
 
@@ -103,6 +105,23 @@ your distribution's `fuse3` package. More in [docs/linux.md](docs/linux.md).
 
 The setup puts about 15 GB in `~/.local/share/primerecomp`; [docs/linux.md](docs/linux.md#steam-deck) shows how to
 keep it on the SD card instead.
+
+### Updating
+
+A new version doesn't need your game files again, and keeps your saves and settings:
+
+- **Windows:** extract the new zip anywhere, as you did the first time, and run it. In a new folder it finds your
+  earlier copy (v0.0.3 or newer) by itself and uses its game files, saves and settings. The game files aren't copied
+  again: on the same drive both copies share them, so the update takes no extra space, and you can delete the old
+  folder afterwards. Extracting the new zip over your old PrimeRecomp folder (replacing the files) works too.
+  **From v0.0.2 into a new folder:** on the start screen, choose your old PrimeRecomp folder as the game files
+  folder; it's used the same way (your saves come along, your settings don't).
+- **Linux and Steam Deck:** replace the AppImage with the new one. Your game files, saves and settings stay in
+  `~/.local/share/primerecomp`. On the Deck, give the new file the old one's name, or point the Steam shortcut at
+  the new file (Properties -> Target).
+
+When a new version changes how the game is recompiled, the start screen recompiles it once by itself the first time
+you start the new version (several minutes; longer on a Steam Deck). Nothing needs to be chosen or set up again.
 
 ## Controls
 

@@ -18,6 +18,11 @@ typedef struct {
 // Builds it (a few minutes). false: why says what went wrong (details in the log).
 bool gamebuild_run(const char *game_dir, const GameBuildOpts *opts, char *why, size_t why_size);
 
+// True when the library at path is one this build loads: built with its GAMELIB_ID (the id file next to it; not
+// loaded). In runtime/gamelib.c, declared here because gamelib.h is part of GAMELIB_ID (any edit to it has every
+// player rebuild the game code after an update).
+bool gamelib_current(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

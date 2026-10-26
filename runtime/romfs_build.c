@@ -319,3 +319,9 @@ bool romfs_copy_tree(const char *src, const char *dst, void (*progress)(uint64_t
     free_tree(t);
     return ok;
 }
+
+bool romfs_copy_file(const char *src, const char *dst, void (*progress)(uint64_t, uint64_t)) {
+    struct stat st;
+    uint64_t done = 0;
+    return stat(src, &st) == 0 && copy_file(src, dst, (uint64_t)st.st_size, &done, (uint64_t)st.st_size, progress);
+}

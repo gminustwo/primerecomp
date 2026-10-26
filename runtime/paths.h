@@ -40,6 +40,19 @@ bool rt_remove_game_files(const char *game_dir);
 // Bytes taken by the extracted game files in game_dir (links not followed).
 unsigned long long rt_game_files_size(const char *game_dir);
 
+// Updates without setting up again. macOS and Linux keep one data root for every version. On Windows each copy keeps
+// its own (the .exe's folder), so a copy notes where it is once its game files are set up -
+// %LOCALAPPDATA%\PrimeRecomp\copies.txt, one data root per line, the latest first - and a newer version unpacked into
+// another folder takes an earlier copy's game files, saves and settings from there (runtime/ui/launcher.mm). Only
+// copies whose data root is the .exe's folder (no LARECOMP_DATA_ROOT, no other starting folder) take part, and only
+// with a real extracted/ folder (a dev worktree's link is left out).
+void rt_note_copy(void);  // this copy's game files are set up: noted first
+// The other copies' data roots, latest first (at most max). 0 elsewhere, or when this copy doesn't take part.
+int rt_earlier_copies(char (*out)[1100], int max);
+// The saves (save/) and, with settings, primerecomp.ini of the data root `from`, copied into this one where it has
+// none of its own. Real copies, not links: the game writes them in place.
+void rt_copy_saves(const char *from, bool settings);
+
 typedef struct SDL_Window SDL_Window;
 void rt_window_icon(SDL_Window *w);  // the shipped icon.png, if any
 

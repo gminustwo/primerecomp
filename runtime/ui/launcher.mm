@@ -93,6 +93,25 @@ static std::string check_game_files(const std::string &root) {
     return why;
 }
 
+// Updates keep the game files: in the same data root (macOS, Linux; on Windows a copy unpacked over the earlier one)
+// only the game code is built again, by itself on the start screen (an update changes what it's built from); a
+// Windows copy unpacked into another folder takes an earlier copy's files instead (paths.h rt_earlier_copies), and
+// its saves and settings.
+static std::string g_earlier;  // that copy's data root ("" = none: this one has game files, or there's none)
+static void find_earlier_copy(void) {
+    g_earlier.clear();
+    if (check_copied_files(g_root) != "No game files") return;
+    char roots[8][1100];
+    int n = rt_earlier_copies(roots, 8);
+    for (int i = 0; i < n && g_earlier.empty(); i++)
+        if (check_copied_files(std::string(roots[i]) + "/extracted").empty()) g_earlier = roots[i];
+}
+
+static std::string parent_dir(const std::string &p) {
+    size_t i = p.find_last_of("/\\");
+    return i == std::string::npos ? "." : p.substr(0, i);
+}
+
 // ------------------------------------------------------------------ setup (background thread)
 // The player brings their own game files: a folder holding exefs/ and romfs/. They're copied into the data root (APFS
 // clones / hard links where the file system allows) and the data image the game reads is built from romfs/
@@ -172,6 +191,11 @@ static std::atomic<unsigned long long> g_done, g_total;
 static unsigned long long g_phase_base;
 static std::atomic<float> g_build_frac{-1};  // -1: not building
 static bool g_copy_skipped;                  // (only the game code to build: the bar is all of that)
+static float g_copy_share = 0.1f;            // (1: an earlier copy's game code is used, nothing to build)
+// what the setup does, for the overlay's words: from the player's folder, the game code again after an update, an
+// earlier copy's files (find_earlier_copy, or such a folder picked)
+enum { SETUP_NEW, SETUP_UPDATE, SETUP_EARLIER };
+static std::atomic<int> g_setup_kind{SETUP_NEW};
 static void setup_progress(uint64_t done, uint64_t) { g_done = g_phase_base + done; }
 static void build_progress(double f, const char *step) {
     g_build_frac = (float)f;
@@ -180,7 +204,8 @@ static void build_progress(double f, const char *step) {
 }
 static float extract_progress(void) {
     unsigned long long t = g_total, d = g_done;
-    float b = g_build_frac, f = b >= 0 ? (g_copy_skipped ? b : 0.1f + 0.9f * b) : t ? 0.1f * (float)((double)d / (double)t) : 0;
+    float s = g_copy_share, b = g_build_frac;
+    float f = b >= 0 ? (g_copy_skipped ? b : s + (1 - s) * b) : t ? s * (float)((double)d / (double)t) : 0;
     return f < 0 ? 0 : f > 0.99f ? 0.99f : f;
 }
 
@@ -198,17 +223,54 @@ static bool build_game_code(void) {
     return ok;
 }
 
+// The game files of another copy (an earlier version's game dir, `from`) as they were set up there: hard links where
+// the file system allows (no second copy; that copy stays as it was), the data image too, and its game code when this
+// build can load it
+static bool take_copy(const std::string &from) {
+    g_setup_kind = SETUP_EARLIER;
+    std::string lib = from + "/" GAMELIB_NAME;
+    bool reuse_code = gamelib_current(lib.c_str());
+    g_copy_share = reuse_code ? 1.0f : 0.1f;
+    rt_remove_game_files(g_root.c_str());  // (an interrupted setup's)
+    mkdir(g_root.c_str(), 0755);
+    unsigned long long rbytes = romfs_dir_bytes((from + "/romfs").c_str());
+    g_total = 2 * rbytes;  // (the data image: about as much again)
+    set_job("Bringing over your game files...");
+    fprintf(stderr, "[launcher] game files from %s%s\n", from.c_str(), reuse_code ? " (game code too)" : "");
+    if (!romfs_copy_tree((from + "/exefs").c_str(), (g_root + "/exefs").c_str(), NULL) ||
+        !romfs_copy_tree((from + "/romfs").c_str(), (g_root + "/romfs").c_str(), setup_progress)) {
+        set_failure(FAIL_COPY);
+        return false;
+    }
+    g_phase_base = rbytes, g_done = rbytes;
+    if (!romfs_copy_file((from + "/romfs.bin").c_str(), (g_root + "/romfs.bin").c_str(), setup_progress)) {
+        set_failure(FAIL_COPY);
+        return false;
+    }
+    if (reuse_code && romfs_copy_file(lib.c_str(), (g_root + "/" GAMELIB_NAME).c_str(), NULL) &&
+        romfs_copy_file((lib + ".id").c_str(), (g_root + "/" GAMELIB_NAME ".id").c_str(), NULL))
+        return true;
+    g_copy_share = 0.1f;
+    return build_game_code();
+}
+
 static void *extract_thread(void *) {
     std::string src;
     pthread_mutex_lock(&g_lock);
     src = g_src;
     pthread_mutex_unlock(&g_lock);
-    g_done = 0, g_total = 0, g_phase_base = 0, g_build_frac = -1, g_copy_skipped = false;
+    g_done = 0, g_total = 0, g_phase_base = 0, g_build_frac = -1, g_copy_skipped = false, g_copy_share = 0.1f;
+    g_setup_kind = SETUP_NEW;
     std::string exefs, romfs;
     bool unusable = false;  // (game packages rather than its files)
     if (src.empty() && check_copied_files(g_root).empty()) {  // copied already (an update needs new game code)
         g_copy_skipped = true;
+        if (file_exists(g_root + "/" GAMELIB_NAME ".id")) g_setup_kind = SETUP_UPDATE;  // (else a first setup cut short)
         if (!build_game_code()) goto done;
+        goto check;
+    }
+    if (src.empty() && !g_earlier.empty()) {  // none here, an earlier copy's (find_earlier_copy)
+        if (!take_copy(g_earlier + "/extracted")) goto done;
         goto check;
     }
     set_job("Looking for the game files...");
@@ -223,6 +285,14 @@ static void *extract_thread(void *) {
             (a[strlen(b)] == '/' || a[strlen(b)] == '\\' || !a[strlen(b)])) {
             set_failure(FAIL_NOT_FOUND);
             goto done;
+        }
+        // another PrimeRecomp's folder picked (an earlier version unpacked elsewhere): its files as set up there, and its
+        // saves where this copy has none (its settings were read already: the window's)
+        std::string dir = parent_dir(exefs);
+        if (parent_dir(romfs) == dir && check_copied_files(dir).empty()) {
+            if (!take_copy(dir)) goto done;
+            rt_copy_saves(parent_dir(dir).c_str(), false);
+            goto check;
         }
         rt_remove_game_files(g_root.c_str());  // (an earlier or interrupted setup's; removes the folder too)
         mkdir(g_root.c_str(), 0755);
@@ -247,7 +317,7 @@ static void *extract_thread(void *) {
 check:
     {
         std::string why = check_game_files(g_root);
-        if (why.empty()) set_job("Game files ready.");
+        if (why.empty()) set_job("Game files ready."), rt_note_copy();
         else set_failure(why.find("version") != std::string::npos ? FAIL_VERSION : FAIL_MISSING);
     }
 done:
@@ -690,6 +760,8 @@ static void prelaunch_tab(float sc) {
 extern "C" void launcher_run(const char *root) {
     g_root = root;
     g_start_screen = 1;
+    find_earlier_copy();
+    if (!g_earlier.empty()) rt_copy_saves(g_earlier.c_str(), true);  // (before the window reads the settings)
     ui_window_init();
     SDL_Window *win = ui_window();
     g_launcher_win = win;
@@ -733,7 +805,7 @@ extern "C" void launcher_run(const char *root) {
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
 
     std::string status = check_game_files(g_root);
-    if (status.empty()) load_background();
+    if (status.empty()) load_background(), rt_note_copy();
     Page page = status.empty() ? MAIN : SETUP;
     bool play = false;
     // LARECOMP_LAUNCHER_SHOT=<frame>[:<page>] (test): save build/launcher.png at that frame and exit; page: settings[:<tab>] / askdelete / setup
@@ -752,15 +824,18 @@ extern "C" void launcher_run(const char *root) {
     const char *ap = getenv("LARECOMP_LAUNCHER_AUTOPLAY");
     if (ap && status.empty() && !(runs && !strcmp(ap, "once"))) play = true;  // (test: PLAY at once)
     runs++;
-    if (const char *t = getenv("LARECOMP_LAUNCHER_EXTRACT")) {  // (test) <folder>: set the game files up, log, exit
-        g_src = t;
+    // an update (game files there, the game code not built for this version) or an earlier copy found: set up by itself
+    bool auto_setup = (check_copied_files(g_root).empty() && !status.empty()) || !g_earlier.empty();
+    if (const char *t = getenv("LARECOMP_LAUNCHER_EXTRACT")) {  // (test) <folder>, or auto: what the start screen
+        g_src = strcmp(t, "auto") ? t : "";                     // starts by itself; set the game files up, log, exit
         g_busy = true;
         extract_thread(NULL);
         fprintf(stderr, "[launcher] setup: %s -> %s\n", g_job.c_str(), check_game_files(g_root).empty() ? "READY" : "NOT READY");
         exit(0);
     }
-    if (const char *t = getenv("LARECOMP_LAUNCHER_SETUP")) {  // (test) <folder>: Set up started on the start screen
-        g_src = t;
+    const char *setup_env = getenv("LARECOMP_LAUNCHER_SETUP");  // (test) <folder>: Set up started on the start screen
+    if (setup_env || auto_setup) {
+        g_src = setup_env ? setup_env : "";
         g_busy = true;
         page = SETUP;
         pthread_t th;
@@ -1046,6 +1121,11 @@ extern "C" void launcher_run(const char *root) {
                 const std::string &job_line = job;
                 std::string ex_d = "Copies the game files PrimeRecomp needs and recompiles the game from them. This only "
                                    "needs to be done once and may take a while. Your own files aren't changed.";
+                if (src.empty() && !g_earlier.empty())
+                    ex_d = "Uses the game files of your earlier copy of PrimeRecomp, in " + g_earlier + " (that copy stays "
+                           "as it is), and brings over its saves and settings.";
+                else if (src.empty() && check_copied_files(g_root).empty())
+                    ex_d = "Recompiles the game for this version of PrimeRecomp. Your game files and saves stay as they are.";
                 if (!job.empty()) ex_d += "\n\n" + job + (job_hint.empty() ? "" : ".\n" + job_hint);
 
                 // the controller's cursor starts on the first row (not the X), a few frames while the window lays out
@@ -1064,7 +1144,7 @@ extern "C" void launcher_run(const char *root) {
                     check_left_of_value(src_v);
                     first_row();
                     opt_section("Set up");
-                    if (busy || (src.empty() && !check_copied_files(g_root).empty())) opt_disable_next();
+                    if (busy || (src.empty() && g_earlier.empty() && !check_copied_files(g_root).empty())) opt_disable_next();
                     if (opt_action("Set up game files", busy ? "Working..." : "", ex_d.c_str(), true)) {
                         pthread_mutex_lock(&g_lock);
                         g_busy = true;
@@ -1130,9 +1210,14 @@ extern "C" void launcher_run(const char *root) {
                     float f = test_busy ? 0.42f : extract_progress();
                     // (while the game code is built: what's happening, on whose files - runtime/gamebuild.c)
                     bool recompiling = g_build_frac >= 0;
-                    const char *title = recompiling ? "Recompiling the game" : "Setting up the game files";
-                    static const char *const notes[] = {"This only needs to be done once and may take a while."};
-                    int nnotes = recompiling ? 1 : 0;
+                    int kind = test_busy ? SETUP_NEW : (int)g_setup_kind;
+                    const char *title = recompiling ? (kind == SETUP_NEW ? "Recompiling the game" : "Updating the game")
+                                        : kind == SETUP_EARLIER ? "Bringing over your game files" : "Setting up the game files";
+                    const char *notes[] = {
+                        !recompiling ? "From your earlier copy of PrimeRecomp, which stays as it is."
+                        : kind == SETUP_NEW ? "This only needs to be done once and may take a while."
+                                            : "Once for this version; it may take a while. Your game files and saves stay."};
+                    int nnotes = recompiling || kind == SETUP_EARLIER ? 1 : 0;
                     float tfs = g_font_menu->FontSize * 0.75f, sfs = g_font_small->FontSize * 0.85f;
                     ImVec2 ts = g_font_menu->CalcTextSizeA(tfs, FLT_MAX, 0, title);
                     float line_h = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, "A").y;

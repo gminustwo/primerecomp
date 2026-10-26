@@ -10,6 +10,7 @@
 #include <dlfcn.h>
 #endif
 
+#include "gamebuild.h"  // (gamelib_current)
 #include "paths.h"
 #include "rt.h"
 
@@ -46,12 +47,14 @@ static int candidates(const char *game_dir, char out[3][1100]) {
     return n;
 }
 
+bool gamelib_current(const char *path) { return exists(path) && id_matches(path); }
+
 bool gamelib_present(const char *game_dir) {
     if (g_tables) return true;
     char c[3][1100];
     int n = candidates(game_dir, c);
     for (int i = 0; i < n; i++)
-        if (exists(c[i]) && id_matches(c[i])) return true;
+        if (gamelib_current(c[i])) return true;
     return false;
 }
 
