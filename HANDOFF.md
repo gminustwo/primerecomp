@@ -1,27 +1,26 @@
-# Handoff: 2026-10-25
+# Handoff: 2026-10-26
 
 Where the work stopped, and what to do next. Read with PROGRESS.md (history) and the commit log.
 
 ## State (2026-10-25)
 
-- **START HERE (paused 2026-10-25 late, the user: "put a pin in things here... we'll pick it up tomorrow").**
+- **START HERE (2026-10-26).**
   - **Don't publish or push anything** until the user says so ("don't publish anything"). v0.0.3 is still a
     draft release (pinned to adb1c28, pre-merge binaries); local main is ahead of origin/main by the handoff
-    commits only.
-  - **The user optimized on the Steam Deck itself** and has those changes there: "so we probably don't need the
-    optimizations for steam deck you did here". They aren't here yet (GitHub has only main and the v0.0.1 / v0.0.2
-    tags). First thing tomorrow: ask how they'll hand them over - a branch pushed from the Deck (only after setting
-    the fhclimited identity there: `git config user.name fhclimited` and `user.email
-    347583180+fhclimited@users.noreply.github.com`, or their name reaches GitHub again) or a patch / folder to
-    commit here as fhclimited.
-  - **Then compare theirs with 8675408 (mine) before removing anything.** Told to the user: the general fixes
-    should stay whatever the Deck changes do - slow motion below 60 fps (game.c frame_time: at 30 fps the game ran
-    at half speed on any slow machine), the CPU waiting for the GPU every frame (async readback + non-blocking
-    fence polls, all platforms), Linux's sparse texture checks (textures.c), the pacing-stat fix and the Show FPS
-    game / render / GPU times. Deck-specific, likely to overlap with theirs: the two Steam Deck presets (Video tab,
-    settings_steam_deck_preset), the 30 fps preset on a Deck's first start, and the 30 fps frame-rate option. Drop
-    what duplicates or conflicts with their changes; ask when unsure.
-  - Still open from before: the user's Steam Deck numbers / log with either build (Show FPS: game / render / GPU).
+    commits and the merge below.
+  - **The user's Steam Deck work is merged** (2026-10-26, the user: "merge the changes from the steam-deck branch
+    onto here"): origin/steam-deck-dmabuf, one commit (6d073e9, authored fhclimited), merged as bf306fb. It
+    builds on 8675408 (my Deck work) instead of replacing it: the guest heap as udmabuf dma-bufs on Linux
+    (exec.c gmem_import_dmabuf; vkQueueSubmit no longer walks a 3.3 GB userptr buffer), Linux write tracking
+    (userfaultfd + PAGEMAP_SCAN, platform/linux.c), and ui_run handling the waiting events (at most 256) and then
+    the rest of the loop. On their Deck: render 15.2 -> 8.4 ms a frame standing, 15.4 -> 7.3 ms walking and
+    shooting, 60 fps held. Nothing in it duplicates 8675408, so nothing was dropped. Checked here: Windows build
+    without warnings; Windows keeps the host-pointer import (no dma-buf extensions on its drivers) and plays the
+    landing site at 60 fps, 0 skipped draws, the same image. Not run here: Linux (needs the Deck or a udmabuf
+    system). The remote steam-deck-dmabuf branch is still on GitHub (delete it only when the user asks).
+  - **Open for the user:** a Deck's first start still takes the 30 fps preset (settings.c settings_load ->
+    settings_steam_deck_preset(30)), which their numbers may have made unnecessary; ask before changing it.
+    The playtest build (Windows) isn't updated with the merge: on Windows only ui_run's event loop changed.
 
 - **The macos branch is merged into main** (2026-10-25 late, the user's request: "pull the macos branch and merge
   those changes here"): squashed as 8d3dc15, authored fhclimited - the branch's own commits (89a36ed, 9f72a52,
