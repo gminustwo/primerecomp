@@ -4,6 +4,25 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 
 ## State (2026-10-25)
 
+- **START HERE (paused 2026-10-25 late, the user: "put a pin in things here... we'll pick it up tomorrow").**
+  - **Don't publish or push anything** until the user says so ("don't publish anything"). v0.0.3 is still a
+    draft release (pinned to adb1c28, pre-merge binaries); local main is ahead of origin/main by the handoff
+    commits only.
+  - **The user optimized on the Steam Deck itself** and has those changes there: "so we probably don't need the
+    optimizations for steam deck you did here". They aren't here yet (GitHub has only main and the v0.0.1 / v0.0.2
+    tags). First thing tomorrow: ask how they'll hand them over - a branch pushed from the Deck (only after setting
+    the fhclimited identity there: `git config user.name fhclimited` and `user.email
+    347583180+fhclimited@users.noreply.github.com`, or their name reaches GitHub again) or a patch / folder to
+    commit here as fhclimited.
+  - **Then compare theirs with 8675408 (mine) before removing anything.** Told to the user: the general fixes
+    should stay whatever the Deck changes do - slow motion below 60 fps (game.c frame_time: at 30 fps the game ran
+    at half speed on any slow machine), the CPU waiting for the GPU every frame (async readback + non-blocking
+    fence polls, all platforms), Linux's sparse texture checks (textures.c), the pacing-stat fix and the Show FPS
+    game / render / GPU times. Deck-specific, likely to overlap with theirs: the two Steam Deck presets (Video tab,
+    settings_steam_deck_preset), the 30 fps preset on a Deck's first start, and the 30 fps frame-rate option. Drop
+    what duplicates or conflicts with their changes; ask when unsure.
+  - Still open from before: the user's Steam Deck numbers / log with either build (Show FPS: game / render / GPU).
+
 - **The macos branch is merged into main** (2026-10-25 late, the user's request: "pull the macos branch and merge
   those changes here"): squashed as 8d3dc15, authored fhclimited - the branch's own commits (89a36ed, 9f72a52,
   fb26909) carry a personal name and email, which this repo keeps out of main. At the user's request the remote
