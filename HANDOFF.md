@@ -18,6 +18,19 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
     without warnings; Windows keeps the host-pointer import (no dma-buf extensions on its drivers) and plays the
     landing site at 60 fps, 0 skipped draws, the same image. Not run here: Linux (needs the Deck or a udmabuf
     system). The remote steam-deck-dmabuf branch was then deleted at the user's request (2026-10-26): 6d073e9 is only in local main until main is pushed.
+  - **Updates keep the game files** (6636919, 2026-10-26, the user: "make it so that when new release updates occur,
+    the user doesn't need to re-install the game files"): the start screen rebuilds outdated game code by itself; a
+    new Windows copy in another folder takes the latest earlier copy's files (hard links), game code (same id),
+    saves and settings, found through %LOCALAPPDATA%\PrimeRecomp\copies.txt (paths.h rt_note_copy /
+    rt_earlier_copies); picking an old PrimeRecomp folder (v0.0.2's too) does the same. README "Updating". To ship
+    it, the draft v0.0.3's binaries need rebuilding from main (they're from adb1c28). Test hook:
+    LARECOMP_LAUNCHER_EXTRACT=auto (what the start screen starts by itself); test runs with LOCALAPPDATA pointed at
+    a scratch folder keep the user's copies.txt clean.
+  - **The machine froze (2026-10-26) during a full-load game code build** (32 compiles; release copy, the
+    auto-rebuild test): the user had to restart. The rebuild was not run to its end afterwards - ask before another
+    full-load build here (gamebuild.c already notes this CPU's compilers crashing under full load).
+  - **GAMELIB_ID is the same since v0.0.2** (2f2eef2dc358333a): updating from v0.0.2 needs no recompile. Any edit to
+    GAMELIB_SRCS (comments too; gamelib.h, cpu.h, tools/*.py ...) makes every player recompile after updating.
   - **Open for the user:** a Deck's first start still takes the 30 fps preset (settings.c settings_load ->
     settings_steam_deck_preset(30)), which their numbers may have made unnecessary; ask before changing it.
     The playtest build (Windows) isn't updated with the merge: on Windows only ui_run's event loop changed.
