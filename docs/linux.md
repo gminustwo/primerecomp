@@ -48,6 +48,14 @@ the game's fence polls (each frame, for its exposure readback and its frame fenc
 the CPU and the GPU took turns instead of working at the same time (now a poll answers at once; the readback lands
 in guest memory when its submission is done).
 
+Measured on a Steam Deck itself, the largest cost was one Windows can't show: the guest heap (3.3 GB) was given to
+the GPU as host memory, an amdgpu "userptr" buffer, whose every page the kernel walks again at each submission that
+uses it - ~5 ms a submission, ~15 ms a frame. Where `/dev/udmabuf` is usable (SteamOS: yes) the heap is now shareable
+memory handed to the GPU as dma-bufs, ordinary GPU memory; and with that, Linux has page write tracking too
+(userfaultfd + PAGEMAP_SCAN, Linux 6.7+), so texture checks skip unwritten memory and the vertex cache is on, as on
+Windows. On the Deck's frigate: the render thread's time per frame 15.2 -> 8.4 ms (holding 60 fps with headroom).
+`LARECOMP_NO_DMABUF=1` / `LARECOMP_NO_WRITE_WATCH=1` turn them off.
+
 ## Running the AppImage
     chmod +x PrimeRecomp-<version>-linux-x86_64.AppImage
     ./PrimeRecomp-<version>-linux-x86_64.AppImage
@@ -117,10 +125,12 @@ files or fonts.
 - Platform layer `runtime/platform/linux.c`: like macOS, the guest window (0x70_0000_0000..0x73_2000_0000) is one
   read/write mapping (`MAP_NORESERVE`), crashes are caught with `sigaction` on an alternate stack.
 - The HLE / service / reset tables are ELF sections found through the linker's `__start_` / `__stop_` symbols.
-- Renderer: the Windows Vulkan backend unchanged. No page write tracking yet (Windows: `MEM_WRITE_WATCH`): the vertex
-  / index cache reads guest memory in place (runtime/nvn/vulkan/exec.c), which costs little on an APU such as the
-  Steam Deck's but crosses PCIe on a discrete GPU (a desktop Linux machine's GPU time is higher than on Windows), and
-  texture changes are found by sampling (runtime/nvn/vulkan/textures.c).
+- Renderer: the Windows Vulkan backend unchanged. The guest heap is a memfd imported as udmabuf dma-bufs in one
+  sparse buffer (platform/linux.c plat_guest_shared, exec.c gmem_import_dmabuf) and page write tracking is
+  userfaultfd's asynchronous write protection read with PAGEMAP_SCAN (as Wine's GetWriteWatch; Windows:
+  `MEM_WRITE_WATCH`). Without `/dev/udmabuf` access, or before Linux 6.7, the heap is a host-pointer import as before,
+  with no write tracking: the vertex / index data is read in place (crossing PCIe on a discrete GPU) and texture
+  changes are found by sampling (runtime/nvn/vulkan/textures.c).
 - Without the user's Switch fonts the game text uses DejaVu Sans (TrueType; the game's font engine can't use CFF
   fonts such as Noto Sans CJK).
 - Pages: 4K and 16K kernels (Asahi) work; 64K-page kernels (some ARM servers) are not supported.

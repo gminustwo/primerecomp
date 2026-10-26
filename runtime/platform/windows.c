@@ -78,6 +78,10 @@ void plat_commit(uint64_t addr, uint64_t size) {
                 (unsigned long long)size, GetLastError());
 }
 
+bool plat_guest_shared(uint64_t lo, uint64_t hi) { (void)lo; (void)hi; return false; }  // (Linux only)
+int plat_guest_dmabuf(uint64_t addr, uint64_t size) { (void)addr; (void)size; return -1; }
+void plat_guest_untrack(void) {}
+
 int plat_protect(uint64_t addr, uint64_t size, int prot) {
     DWORD p = prot == PLAT_PROT_NONE ? PAGE_NOACCESS : prot == PLAT_PROT_READ ? PAGE_READONLY : PAGE_READWRITE, old;
     if (addr >= g_lo && addr < g_hi) plat_commit(addr, size);

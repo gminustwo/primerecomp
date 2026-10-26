@@ -9,6 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef __linux__
+#include <unistd.h>  // (close: gmem_import_dmabuf)
+#endif
 
 #include "../../kernel.h"
 #include "shaders.h"
@@ -2325,41 +2328,135 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
 // It stops at the device's largest allocation (g_vk.max_alloc: 2 GB on Mesa's llvmpipe, whose vertex fetches from a
 // larger import came out empty - the title screen's logo and movie): vertex / index data past that is copied.
 // LARECOMP_VK_NO_GMEM=1: no import, reads return zero.
+// Where the heap is shareable memory (Linux with udmabuf, platform.h plat_guest_shared) it is imported as dma-bufs
+// instead, 64 MB pieces bound into one sparse buffer: a host-pointer import is an amdgpu userptr buffer, whose every
+// page the kernel walks again at each submission that uses it (~5 ms a submission for the 3.3 GB heap on a Steam Deck,
+// ~15 ms a frame - the frame rate's largest cost there); a dma-buf is ordinary GPU memory. LARECOMP_VK_NO_DMABUF=1: the
+// host-pointer import.
+#define GMEM_USAGE (VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | \
+                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT)
+#define GMEM_PIECE (64ull << 20)
 static VkBuffer gmem_buf;
-static VkDeviceMemory gmem_mem;
+static VkDeviceMemory gmem_mem;                              // (host-pointer import)
+static VkDeviceMemory gmem_piece[HEAP_MAX / GMEM_PIECE + 1];  // (dma-buf import) bound into gmem_buf
+static int gmem_npiece;
+static bool gmem_untracked;  // (Linux) a host-pointer import: no write tracking, no vertex cache
 static uint64_t gmem_size;
 
-static bool gmem_import(uint64_t size) {
-    PFN_vkGetMemoryHostPointerPropertiesEXT props =
-        (PFN_vkGetMemoryHostPointerPropertiesEXT)vkGetDeviceProcAddr(g_vk.dev, "vkGetMemoryHostPointerPropertiesEXT");
-    VkMemoryHostPointerPropertiesEXT mp = {.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
-    if (!props || props(g_vk.dev, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, (void *)(uintptr_t)HEAP_BASE, &mp) != VK_SUCCESS ||
-        !mp.memoryTypeBits)
-        return false;
-    VkImportMemoryHostPointerInfoEXT imp = {.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
-                                            .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
-                                            .pHostPointer = (void *)(uintptr_t)HEAP_BASE};
-    VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .pNext = &imp, .allocationSize = size,
-                               .memoryTypeIndex = (uint32_t)__builtin_ctz(mp.memoryTypeBits)};
-    VkDeviceMemory mem;
-    if (vkAllocateMemory(g_vk.dev, &ai, NULL, &mem) != VK_SUCCESS) return false;
+static void gmem_release(void) {  // (nothing submitted may still use it)
+    if (gmem_buf) vkDestroyBuffer(g_vk.dev, gmem_buf, NULL);
+    if (gmem_mem) vkFreeMemory(g_vk.dev, gmem_mem, NULL);
+    for (int i = 0; i < gmem_npiece; i++) vkFreeMemory(g_vk.dev, gmem_piece[i], NULL);
+    gmem_buf = VK_NULL_HANDLE;
+    gmem_mem = VK_NULL_HANDLE;
+    gmem_npiece = 0;
+}
+
+static bool gmem_import_dmabuf(uint64_t size, VkBuffer *pbuf, VkDeviceMemory *pieces, int *npieces) {
+#ifndef __linux__
+    (void)size; (void)pbuf; (void)pieces; (void)npieces;
+    return false;
+#else
+    static int no = -1;
+    if (no < 0) no = getenv("LARECOMP_VK_NO_DMABUF") != NULL;
+    if (no || !g_vk.dmabuf_import) return false;
+    PFN_vkGetMemoryFdPropertiesKHR fdprops = (PFN_vkGetMemoryFdPropertiesKHR)vkGetDeviceProcAddr(g_vk.dev, "vkGetMemoryFdPropertiesKHR");
+    if (!fdprops) return false;
     VkExternalMemoryBufferCreateInfo eb = {.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
-                                           .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
-    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .pNext = &eb, .size = size,
-                             .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT};
+                                           .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT};
+    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .pNext = &eb, .flags = VK_BUFFER_CREATE_SPARSE_BINDING_BIT,
+                             .size = size, .usage = GMEM_USAGE};
     VkBuffer buf;
-    if (vkCreateBuffer(g_vk.dev, &bi, NULL, &buf) != VK_SUCCESS) { vkFreeMemory(g_vk.dev, mem, NULL); return false; }
-    vkBindBufferMemory(g_vk.dev, buf, mem, 0);
+    if (vkCreateBuffer(g_vk.dev, &bi, NULL, &buf) != VK_SUCCESS) return false;
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(g_vk.dev, buf, &req);
+    VkSparseMemoryBind binds[HEAP_MAX / GMEM_PIECE + 1];
+    int n = 0;
+    const char *why = NULL;
+    if (GMEM_PIECE % req.alignment) why = "piece alignment";
+    for (uint64_t off = 0; off < size && !why; off += GMEM_PIECE, n++) {
+        uint64_t len = size - off < GMEM_PIECE ? size - off : GMEM_PIECE;
+        int fd = plat_guest_dmabuf(HEAP_BASE + off, len);
+        if (fd < 0) { why = "no dma-buf (udmabuf)"; break; }
+        VkMemoryFdPropertiesKHR fp = {.sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR};
+        uint32_t types = fdprops(g_vk.dev, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT, fd, &fp) == VK_SUCCESS
+                             ? fp.memoryTypeBits & req.memoryTypeBits : 0;
+        VkImportMemoryFdInfoKHR imp = {.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR,
+                                       .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT, .fd = fd};
+        VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .pNext = &imp, .allocationSize = len,
+                                   .memoryTypeIndex = types ? (uint32_t)__builtin_ctz(types) : 0};
+        if (!types || vkAllocateMemory(g_vk.dev, &ai, NULL, &pieces[n]) != VK_SUCCESS) {  // (imported: the fd is the driver's)
+            close(fd);
+            why = types ? "import failed" : "no memory type";
+            break;
+        }
+        binds[n] = (VkSparseMemoryBind){.resourceOffset = off, .size = len, .memory = pieces[n]};
+    }
+    if (!why) {
+        VkSparseBufferMemoryBindInfo bb = {.buffer = buf, .bindCount = (uint32_t)n, .pBinds = binds};
+        VkBindSparseInfo bs = {.sType = VK_STRUCTURE_TYPE_BIND_SPARSE_INFO, .bufferBindCount = 1, .pBufferBinds = &bb};
+        VkFenceCreateInfo fi = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        VkFence fence;
+        // (bound before any submission uses it: sparse binds aren't ordered with submissions)
+        if (vkCreateFence(g_vk.dev, &fi, NULL, &fence) != VK_SUCCESS) why = "fence";
+        else {
+            if (vkQueueBindSparse(g_vk.queue, 1, &bs, fence) != VK_SUCCESS ||
+                vkWaitForFences(g_vk.dev, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+                why = "sparse bind failed";
+            vkDestroyFence(g_vk.dev, fence, NULL);
+        }
+    }
+    if (why) {
+        LOG("[vk] guest heap as dma-bufs: %s (piece %d): host-pointer import instead\n", why, n);
+        for (int i = 0; i < n; i++) vkFreeMemory(g_vk.dev, pieces[i], NULL);
+        vkDestroyBuffer(g_vk.dev, buf, NULL);
+        return false;
+    }
+    *pbuf = buf;
+    *npieces = n;
+    return true;
+#endif
+}
+
+static bool gmem_import(uint64_t size) {
+    VkBuffer buf;
+    VkDeviceMemory mem = VK_NULL_HANDLE, pieces[HEAP_MAX / GMEM_PIECE + 1];
+    int npieces = 0;
+    if (!gmem_import_dmabuf(size, &buf, pieces, &npieces)) {
+        PFN_vkGetMemoryHostPointerPropertiesEXT props =
+            (PFN_vkGetMemoryHostPointerPropertiesEXT)vkGetDeviceProcAddr(g_vk.dev, "vkGetMemoryHostPointerPropertiesEXT");
+        VkMemoryHostPointerPropertiesEXT mp = {.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
+        if (!g_vk.host_import || !props ||
+            props(g_vk.dev, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, (void *)(uintptr_t)HEAP_BASE, &mp) != VK_SUCCESS ||
+            !mp.memoryTypeBits)
+            return false;
+        VkImportMemoryHostPointerInfoEXT imp = {.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
+                                                .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
+                                                .pHostPointer = (void *)(uintptr_t)HEAP_BASE};
+        VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .pNext = &imp, .allocationSize = size,
+                                   .memoryTypeIndex = (uint32_t)__builtin_ctz(mp.memoryTypeBits)};
+        if (vkAllocateMemory(g_vk.dev, &ai, NULL, &mem) != VK_SUCCESS) return false;
+        VkExternalMemoryBufferCreateInfo eb = {.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
+                                               .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
+        VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .pNext = &eb, .size = size, .usage = GMEM_USAGE};
+        if (vkCreateBuffer(g_vk.dev, &bi, NULL, &buf) != VK_SUCCESS) { vkFreeMemory(g_vk.dev, mem, NULL); return false; }
+        vkBindBufferMemory(g_vk.dev, buf, mem, 0);
+#ifdef __linux__
+        plat_guest_untrack();  // (write tracking would stall on the userptr import: platform/linux.c)
+        gmem_untracked = true;
+#endif
+    }
     if (gmem_buf) {  // the heap grew: the old import may still be in use by submitted work
         vk_wait_seq(submit_seq);
-        vkDestroyBuffer(g_vk.dev, gmem_buf, NULL);
-        vkFreeMemory(g_vk.dev, gmem_mem, NULL);
+        gmem_release();
     }
     gmem_buf = buf;
     gmem_mem = mem;
+    memcpy(gmem_piece, pieces, sizeof pieces[0] * (size_t)npieces);
+    gmem_npiece = npieces;
     gmem_size = size;
-    LOG("[vk] guest heap imported for shader global memory: %llu MB\n", (unsigned long long)(size >> 20));
+    if (npieces) LOG("[vk] guest heap imported for shader global memory: %llu MB, %d dma-bufs\n", (unsigned long long)(size >> 20), npieces);
+    else LOG("[vk] guest heap imported for shader global memory: %llu MB\n", (unsigned long long)(size >> 20));
     return true;
 }
 
@@ -2367,7 +2464,7 @@ static uint64_t gmem_tried;  // heap size the import was last attempted for (gme
 
 static VkDescriptorBufferInfo gmem_info(void) {
     static int off = -1;
-    if (off < 0) off = getenv("LARECOMP_VK_NO_GMEM") != NULL || !g_vk.host_import;
+    if (off < 0) off = getenv("LARECOMP_VK_NO_GMEM") != NULL || (!g_vk.host_import && !g_vk.dmabuf_import);
     uint64_t want = (kernel_heap_size() + 0xFFFF) & ~0xFFFFull;
     if (want > HEAP_MAX) want = HEAP_MAX;
     if (g_vk.max_alloc && want > (g_vk.max_alloc & ~0xFFFFull)) {
@@ -2585,7 +2682,7 @@ static bool vcache_lookup(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceS
             vc_on = 0;
         }
     }
-    if (!vc_on || !gmem_buf || size > VC_MAX_RANGE) return false;
+    if (!vc_on || gmem_untracked || !gmem_buf || size > VC_MAX_RANGE) return false;
     uint64_t lo = (addr - HEAP_BASE) & ~(VC_PAGE - 1), hi = (addr - HEAP_BASE + size + VC_PAGE - 1) & ~(VC_PAGE - 1);
     if (hi > gmem_size) return false;
     uint64_t pend = vk_pending_seq();
@@ -2711,13 +2808,9 @@ void vk_exec_reset(void) {
     memset(pipe_tab, 0, sizeof pipe_tab);
     g_cs_n = 0;
     gcopy_gen++;
-    if (gmem_buf) {
-        vkDestroyBuffer(g_vk.dev, gmem_buf, NULL);
-        vkFreeMemory(g_vk.dev, gmem_mem, NULL);
-        gmem_buf = VK_NULL_HANDLE;
-        gmem_mem = VK_NULL_HANDLE;
-    }
+    gmem_release();
     gmem_size = gmem_tried = 0;
+    gmem_untracked = false;
     for (int i = 0; i < VC_TAB; i++)  // (the vertex cache: copies of the old pages)
         if (vc_tab[i].buf) vmaDestroyBuffer(g_vk.vma, vc_tab[i].buf, vc_tab[i].mem);
     memset(vc_tab, 0, sizeof vc_tab);

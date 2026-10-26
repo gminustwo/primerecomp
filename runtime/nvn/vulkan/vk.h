@@ -39,6 +39,8 @@ typedef struct {
     VkSemaphore timeline;      // value = last completed submission number
     VkCommandPool pool;        // render thread only
     bool custom_border, divisor, host_import;
+    bool qsparse;       // the queue binds sparse memory (VK_QUEUE_SPARSE_BINDING_BIT)
+    bool dmabuf_import;  // the guest heap as dma-bufs in a sparse buffer (exec.c gmem_import_dmabuf)
     uint64_t max_alloc;  // largest single allocation / buffer (maxMemoryAllocationSize, maxBufferSize)
     bool output_layer;  // vertex shaders may write gl_Layer (shaderOutputLayer)
     bool occlusion_precise;  // occlusion queries count samples (occlusionQueryPrecise), not just any-passed
