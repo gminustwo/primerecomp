@@ -4,9 +4,17 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 
 ## State (2026-10-25)
 
-- **Linux / Steam Deck AppImage (the user's request, 2026-10-25 evening):** `build/dist/PrimeRecomp-v1.0.0-linux-x86_64.AppImage`
-  (sha256 84c3154d..., built from the working tree incl. the user's uncommitted v1.0.0 bump in launcher.mm /
-  README.md, which were left uncommitted). Not published. Built with the existing pipeline (tools/linux/: Ubuntu
+- **v0.0.2 is released** (2026-10-25 evening, the user's request: "bump it to v0.0.2", README for Linux, their Buy Me
+  a Coffee link https://buymeacoffee.com/rengar - README badge + support section, .github/FUNDING.yml):
+  https://github.com/gminustwo/primerecomp/releases/tag/v0.0.2, tag v0.0.2 on 9fa288a, assets
+  PrimeRecomp-v0.0.2-windows.zip (sha256 68225bf5...5c1a) and PrimeRecomp-v0.0.2-linux-x86_64.AppImage (sha256
+  bcf460e7...6d43). Both checked before publishing: fresh setup READY and the title screen (Windows from the zip
+  without MSYS2, build/disttest_v002; Linux in WSL on llvmpipe). (The user's uncommitted v1.0.0 bump became v0.0.2.)
+  **The user is testing the AppImage on a Steam Deck next:** ask how it went (setup in Desktop Mode, Game Mode,
+  controls, frame rate) and for ~/.local/share/primerecomp/primerecomp.log. GitHub's Sponsor button also needs
+  Settings -> General -> Features -> Sponsorships ticked (the user was told).
+- **Linux / Steam Deck AppImage (the user's request, 2026-10-25 evening):** first built as v1.0.0, released as
+  v0.0.2 (above). Built with the existing pipeline (tools/linux/: Ubuntu
   22.04 podman container) inside the user's WSL2 Ubuntu 24.04 (podman installed there as root; build tree in
   /root/primerecomp, synced from this checkout by scratchpad linux/sync.sh - rsync without build/ private/ generated/,
   CRs stripped from the shell scripts and the Makefile). Tested in WSL on llvmpipe only (no GPU Vulkan there): start
@@ -16,8 +24,12 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   the title); stencil ops set once per command buffer even with the test off (validation VUID 07848). Linux log now
   keeps primerecomp.previous.log and its fatal box shows the error line. Windows: LARECOMP_NO_WRITE_WATCH=1 runs
   without page write tracking, as Linux / macOS do. Untested: real GPUs (RADV on the Deck), the folder dialog in
-  Game Mode (docs/linux.md says: set up in Desktop Mode), Deck performance. README still says "Windows only"
-  (user-edited, uncommitted); docs/linux.md has the Steam Deck steps.
+  Game Mode (docs/linux.md says: set up in Desktop Mode), Deck performance. The README and docs/linux.md have the
+  Steam Deck steps. Next release's AppImage, as root in WSL (`wsl -d Ubuntu -u root`): rsync this checkout to
+  /root/primerecomp without build/ private/ generated/ .git/ tools/venv/ .venv/, strip CRs from tools/**/*.sh,
+  tools/linux/AppRun and the Makefile, then `cd /root/primerecomp && podman run --rm -v /root/primerecomp:/src -w /src
+  localhost/primerecomp-build:amd64 tools/linux/package.sh x86_64` -> build/dist/ there (the image, deps/ and
+  helper/ are already built, so it takes a few minutes).
 - **The user is preparing a beta build ("PrimeRecomp").** They asked for, and got (both in the playtest build, wait
   for their reaction):
   1. **Name and icon** (a1324f5): window / message boxes / start screen / packages say PrimeRecomp; docs/icon is
@@ -49,7 +61,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
      HOST_INPUT `mouse:<dx>/<dy>:<frames>`, `key:Mouse Left`; LARECOMP_LOOK_LOG=<n>.
      Not checked: beam keys 1-4 (the test save has only the Power Beam), real mouse capture by hand (scripted runs
      never capture), the feel of the default sensitivity (0.044 deg per count; Source's 2.0).
-  - **v0.0.1 is released** (2026-10-25, the user's request): https://github.com/gminustwo/primerecomp/releases/tag/v0.0.1,
+  - **v0.0.1 was released** (2026-10-25, the user's request; v0.0.2 above is the latest): https://github.com/gminustwo/primerecomp/releases/tag/v0.0.1,
     tag v0.0.1 on 4b1e840, asset PrimeRecomp-v0.0.1-windows.zip (sha256 d470ad62...2d4c, built by `make dist` from
     that commit). Checked before publishing: fresh setups from the zip reach READY (build/disttest*, one with
     LARECOMP_GAMEBUILD_FLAKY=1), and the packaged exe, with no MSYS2 on PATH, boots to the title screen at 60 fps.
