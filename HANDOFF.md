@@ -6,8 +6,10 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 
 - **The macos branch is merged into main** (2026-10-25 late, the user's request: "pull the macos branch and merge
   those changes here"): squashed as 8d3dc15, authored fhclimited - the branch's own commits (89a36ed, 9f72a52,
-  fb26909) carry a personal name and email, which this repo keeps out of main (the user was told; origin/macos
-  still has them). Checked here: Windows build without warnings, the Landing Site save at 60 fps with the same image
+  fb26909) carry a personal name and email, which this repo keeps out of main. At the user's request the remote
+  macos branch was then deleted (2026-10-25), and so were the local backups holding old identities (strip-la,
+  backup-before-identity-rewrite, refs/original). The user's Mac lacks the fhclimited git identity: they were told
+  to set it there. "Don't publish anything yet" (the user): v0.0.3 stays a draft, nothing pushed after 138318a. Checked here: Windows build without warnings, the Landing Site save at 60 fps with the same image
   as before, no skipped draws; Linux AppImage builds and boots to the title (llvmpipe) on a v0.0.2 setup. Game
   library inputs unchanged. The **draft v0.0.3 release is pinned to adb1c28** (its binaries predate the merge);
   for the macOS work in a release, rebuild the zip / AppImage from main (and PrimeRecomp.app on a Mac: docs/macos.md).
