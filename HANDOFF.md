@@ -39,6 +39,10 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
      rt_frame_step, the presenting thread's minus GPU waits, the submissions' GPU timestamps - always on now); the
      log's `[vk] t=` lines have `per frame: game .. render .. gpu .. ms`. On the i9 / 5090 at 1280x720: 2.5 / 4.5 /
      0.4 ms at the Landing Site.
+  **v0.0.3 is a DRAFT release** (commit 8675408; notes: scratchpad release_v003.md): PrimeRecomp-v0.0.3-windows.zip
+  (sha256 c5fb48dd...fd21; checked: fresh setup from the zip READY in 85 s, boot at 60 fps / sim 60 Hz) and
+  PrimeRecomp-v0.0.3-linux-x86_64.AppImage (sha256 2ab8c79e...679c). Not published: the user is asked first
+  (publishing makes it Latest and creates the v0.0.3 tag: `gh release edit v0.0.3 --draft=false --latest`).
   Ask the user for the overlay's numbers on the Deck (and its log): that says what limits it now. The game library's
   inputs didn't change, so a v0.0.2 setup on the Deck stays valid (checked: the v0.0.3 AppImage in WSL loads
   ~/prt/data2's v0.0.2 primegame.so, title screen fine; llvmpipe 25 fps at sim 57 Hz).
