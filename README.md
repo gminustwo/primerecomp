@@ -1,8 +1,11 @@
 # PrimeRecomp
 
-**PrimeRecomp** runs *Metroid Prime Remastered* (Nintendo Switch, 2023) natively on Windows. The game's code is
-statically recompiled - translated ahead of time from the Switch's ARM64 code into C and compiled for your PC - and
-the Switch's system services and NVN graphics are reimplemented on Windows and Vulkan. No emulator runs.
+[![Buy me a coffee](https://img.shields.io/badge/Buy_me_a_coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/rengar)
+
+**PrimeRecomp** runs *Metroid Prime Remastered* (Nintendo Switch, 2023) natively on Windows and Linux, including the
+Steam Deck. The game's code is statically recompiled - translated ahead of time from the Switch's ARM64 code into C
+and compiled for your PC - and the Switch's system services and NVN graphics are reimplemented on the PC, with Vulkan
+for the graphics. No emulator runs.
 
 > [!IMPORTANT]
 > **PrimeRecomp is built on [LAS Recomp](https://github.com/peiikai/LASRecomp) by
@@ -22,30 +25,44 @@ the Switch's system services and NVN graphics are reimplemented on Windows and V
 
 ![Samus at the Landing Site on Tallon IV](docs/landing_site.jpg)
 
-## Status: v0.0.1 (early beta)
+## Status: v0.0.2 (early beta)
 
-This is the first public build. The game boots, the Frigate Orpheon plays through, and Tallon IV is playable (the
-Landing Site, Chozo Ruins and Magmoor Caverns have been played so far), with saving and loading. Expect bugs:
-graphics glitches (some lighting, visor effects such as rain drops missing at times), and possibly crashes or
-freezes in areas nobody has reached yet. Windows only for now.
+The game boots, the Frigate Orpheon plays through, and Tallon IV is playable (the Landing Site, Chozo Ruins and
+Magmoor Caverns have been played so far), with saving and loading. Graphics bugs remain: some lighting is wrong, and
+visor effects such as rain drops are missing at times. Areas nobody has reached yet may still crash or freeze.
+
+**New in v0.0.2: Linux and the Steam Deck.** The Linux version is experimental: so far it has run on a software
+renderer only, not yet on real Linux GPUs or a Steam Deck, so reports of how it goes are very welcome.
+
+### Still to do
+
+- Fixing the remaining graphics bugs
+- Testing the Linux version on real hardware, the Steam Deck first
+- A macOS version (LAS Recomp already runs on macOS, so much of the groundwork is there)
+- An Android version
 
 If something goes wrong, please open an [issue](https://github.com/gminustwo/primerecomp/issues) and attach
-`primerecomp.log` from the PrimeRecomp folder (it always holds the latest run; `primerecomp.previous.log` the run
-before). For a graphics problem, press **F9** at the spot: it saves a capture of that frame in `build\f9_<frame>\`
-(zip it up), and **F8** notes your position in `positions.txt`.
+`primerecomp.log` (Windows: in the PrimeRecomp folder; Linux and Steam Deck: in `~/.local/share/primerecomp`). It
+always holds the latest run, and `primerecomp.previous.log` the run before. For a graphics problem, press **F9** at
+the spot: it saves a capture of that frame in `build/f9_<frame>/` in that same folder (zip it up), and **F8** notes
+your position in `positions.txt`.
 
 ## Requirements
 
-- Windows 10 or 11, 64-bit
+- **Windows:** Windows 10 or 11, 64-bit
+- **Linux:** a 64-bit x86 distribution with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, Arch, SteamOS
+  on the Steam Deck, ...)
 - A CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Zen or newer)
-- A GPU with a Vulkan 1.3 driver (any current NVIDIA, AMD or Intel driver)
+- A GPU with a Vulkan 1.3 driver (any current NVIDIA, AMD or Intel driver; on Linux, Mesa's RADV / ANV or NVIDIA's)
 - About 15 GB of free disk space (the game files are copied in, about 7 GB, plus the recompiled game)
 - Your own Metroid Prime Remastered v1.0.0 game files, **extracted**: a folder holding `exefs` and `romfs`
   (extract both from your own dump with your usual Switch tools)
 
 ## Getting started
 
-1. Download `PrimeRecomp-v0.0.1-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
+### Windows
+
+1. Download `PrimeRecomp-v0.0.2-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
    extract it somewhere you can write to (e.g. Documents or a games folder - not Program Files).
 2. Run `primerecomp.exe`. The start screen asks for your game files: choose the folder that holds `exefs` and
    `romfs`, then **Set up**. It copies what it needs and recompiles the game on your PC. This happens once and
@@ -54,11 +71,38 @@ before). For a graphics problem, press **F9** at the spot: it saves a capture of
 
 Everything PrimeRecomp writes - game files, saves, settings (`primerecomp.ini`), logs - stays in its own folder.
 
+### Linux
+
+1. Download `PrimeRecomp-v0.0.2-linux-x86_64.AppImage` from
+   [Releases](https://github.com/gminustwo/primerecomp/releases) and make it executable (`chmod +x`, or in your file
+   manager: Properties -> Permissions -> executable).
+2. Run it. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs`, **Set up**, then
+   **Play**.
+
+Everything it writes goes to `~/.local/share/primerecomp`. If the AppImage won't start with a FUSE error, install
+your distribution's `fuse3` package. More in [docs/linux.md](docs/linux.md).
+
+### Steam Deck
+
+1. In Desktop Mode, put the AppImage in your home folder (e.g. `~/Games/PrimeRecomp/`), right-click it ->
+   Properties -> Permissions -> "Is executable", and copy your game files (the folder with `exefs` and `romfs`) onto
+   the Deck or its SD card.
+2. Run the AppImage, choose the game folder and **Set up** (once; it takes a while on the Deck). Do this in Desktop
+   Mode: the folder picker is a desktop file dialog.
+3. Add it to Steam: Games -> Add a Non-Steam Game to My Library -> Browse (set the file type to "All Files") -> the
+   AppImage. It then starts from Game Mode.
+4. In the game, press both sticks in to open PrimeRecomp's menu and set Controls -> Face buttons to **Xbox**, so the
+   Deck's A button is A.
+
+The setup puts about 15 GB in `~/.local/share/primerecomp`; [docs/linux.md](docs/linux.md#steam-deck) shows how to
+keep it on the SD card instead.
+
 ## Controls
 
-A controller works out of the box (Xbox, PlayStation, Switch Pro, Steam Controller and others), using the game's
-own Dual Stick layout. With a controller that has a gyro you can use the game's Pointer / Hybrid motion aiming
-(pause, Options -> Controls -> Control Scheme).
+A controller works out of the box (Xbox, PlayStation, Switch Pro, Steam Controller, Steam Deck and others), using
+the game's own Dual Stick layout. The face buttons follow the Switch's layout (A on the right) until you switch
+PrimeRecomp's menu -> Controls -> Face buttons to Xbox (A at the bottom). With a controller that has a gyro you
+can use the game's Pointer / Hybrid motion aiming (pause, Options -> Controls -> Control Scheme).
 
 Keyboard and mouse play like a PC shooter:
 
@@ -90,11 +134,18 @@ In the game's menus Enter / Space confirm, Esc goes back and Q / E switch pages.
 - Gyro aiming with controllers that have one, rumble
 - Any cutscene skippable
 
+## Support PrimeRecomp
+
+If you enjoy PrimeRecomp, you can support its development by
+[buying me a coffee](https://buymeacoffee.com/rengar). Bug reports and a star for this repository and for
+[LAS Recomp](https://github.com/peiikai/LASRecomp) help too.
+
 ## Building from source
 
 See [docs/BUILD-windows.md](docs/BUILD-windows.md). In short: `tools\setup_windows.ps1` installs MSYS2 and the
 tools; with your own extracted game files in `extracted/`, `make gen` recompiles the game and `make` builds
-`build/primerecomp.exe`. `make dist` packages a release.
+`build/primerecomp.exe`. `make dist` packages a release. Linux: see [docs/linux.md](docs/linux.md) - `make appimage`
+builds the AppImage in an Ubuntu 22.04 container (from Windows, that works inside WSL2).
 
 Developer notes: [PROGRESS.md](PROGRESS.md) (history) and [HANDOFF.md](HANDOFF.md) (current state). Link's
 Awakening's game code (its patches, its memory hooks, the randomizer, cheats and cosmetics) has been removed; LAS
@@ -210,3 +261,11 @@ The Windows release includes these components; their source code for the exact v
 The build scripts that fetch and build these (with checksums) are in this repository: `tools/build_deps_windows.sh`
 and `tools/primegen.spec`. The Windows build takes SDL 3, shaderc, libiconv and the compiler runtime from MSYS2's
 UCRT64 packages (https://packages.msys2.org, which links each package's source).
+
+The Linux AppImage bundles the same components, built from pinned sources (with checksums) in an Ubuntu 22.04
+container by `tools/linux/build_deps.sh` and `tools/linux/gen_helper.sh`, in these versions: FFmpeg 9.0.2 (the same
+LGPL configuration), SDL 3 3.4.16 (https://github.com/libsdl-org/SDL/releases/tag/release-3.4.16), shaderc 2026.3
+(https://github.com/google/shaderc/releases/tag/v2026.3), Zig 0.17.0, PyInstaller 6.22.3, CPython 3.12.15
+(https://github.com/python/cpython/releases/tag/v3.12.15), Capstone 5.0.9, Unicorn 2.1.4, python-lz4 4.4.5 and the
+Baloo 2 font; the other sources are linked in the table above. The C / C++ runtime (glibc, libstdc++), the Vulkan
+loader and the GPU drivers are the system's and are not bundled.
