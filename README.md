@@ -32,10 +32,14 @@ Magmoor Caverns have been played so far), with saving and loading. Graphics bugs
 visor effects such as rain drops are missing at times. Areas nobody has reached yet may still crash or freeze.
 
 **New in v0.0.3: Steam Deck performance.** v0.0.2 brought Linux and the Steam Deck; on the Deck it ran at about 25
-fps. v0.0.3 removes the Linux-only costs behind that, lets the CPU and GPU work at the same time, keeps the game at
-full speed when the frame rate drops (it used to slow down with it), and adds Steam Deck presets (Video tab; a Deck
-starts with the steady 30 fps one) and a 30 fps option. Show FPS now also says whether the CPU or the GPU is the
-limit. The Linux version is still experimental, so reports of how it goes are very welcome.
+fps. v0.0.3 removes the Linux-only costs behind that (the largest: how the game's memory was shared with the GPU, which
+cost the Deck about 15 ms a frame), lets the CPU and GPU work at the same time, keeps the game at full speed when the
+frame rate drops (it used to slow down with it), and adds Steam Deck presets (Video tab; a Deck starts with the steady
+30 fps one) and a 30 fps option. Show FPS now also says whether the CPU or the GPU is the limit. The Linux version is
+still experimental, so reports of how it goes are very welcome.
+
+Also new: **updating no longer means setting up again.** A new version uses the game files, saves and settings you
+already have ([Updating](#updating)).
 
 ### Still to do
 
