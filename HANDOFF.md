@@ -17,7 +17,7 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
     shooting, 60 fps held. Nothing in it duplicates 8675408, so nothing was dropped. Checked here: Windows build
     without warnings; Windows keeps the host-pointer import (no dma-buf extensions on its drivers) and plays the
     landing site at 60 fps, 0 skipped draws, the same image. Not run here: Linux (needs the Deck or a udmabuf
-    system). The remote steam-deck-dmabuf branch is still on GitHub (delete it only when the user asks).
+    system). The remote steam-deck-dmabuf branch was then deleted at the user's request (2026-10-26): 6d073e9 is only in local main until main is pushed.
   - **Open for the user:** a Deck's first start still takes the 30 fps preset (settings.c settings_load ->
     settings_steam_deck_preset(30)), which their numbers may have made unnecessary; ask before changing it.
     The playtest build (Windows) isn't updated with the merge: on Windows only ui_run's event loop changed.
