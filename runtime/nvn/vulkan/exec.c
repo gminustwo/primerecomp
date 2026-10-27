@@ -874,15 +874,18 @@ const char *renderer_stats(void) {
              (unsigned long long)stat_dispatches, (unsigned long long)stat_flushes, (double)stat_wait_ns / 1e6,
              atomic_exchange(&stat_compiles, 0), (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0,
              vk_live_textures(), vk_live_images());
-    {   // (and the game's simulation steps per second: 60 at any frame rate - 120 at 120 - while it keeps up)
-        extern uint64_t game_ticks_total(void);
-        static uint64_t last_ticks, last_ns;
-        uint64_t ticks = game_ticks_total(), ns = SDL_GetTicksNS();
+    {   // (and the game's simulation steps per second: 60 at any frame rate - 120 at 120, the frame rate at Uncapped -
+        // and its speed, game time per real time: 1 while it keeps up)
+        extern uint64_t game_ticks_total(void), game_sim_ns(void);
+        static uint64_t last_ticks, last_sim, last_ns;
+        uint64_t ticks = game_ticks_total(), sim = game_sim_ns(), ns = SDL_GetTicksNS();
         double hz = last_ns ? (double)(ticks - last_ticks) * 1e9 / (double)(ns - last_ns) : 0;
-        last_ticks = ticks, last_ns = ns;
+        double speed = last_ns ? (double)(sim - last_sim) / (double)(ns - last_ns) : 0;
+        last_ticks = ticks, last_sim = sim, last_ns = ns;
         size_t n = strlen(stats_text);
-        snprintf(stats_text + n, sizeof stats_text - n, " | per frame: game %.1f render %.1f gpu %.1f ms, sim %.0f Hz",
-                 g_frame_ms[0], g_frame_ms[1], g_frame_ms[2], hz);
+        snprintf(stats_text + n, sizeof stats_text - n,
+                 " | per frame: game %.1f render %.1f gpu %.1f ms, sim %.0f Hz, speed %.2fx", g_frame_ms[0],
+                 g_frame_ms[1], g_frame_ms[2], hz, speed);
     }
     stat_feedback_copies = stat_upload_bytes = 0;
     {

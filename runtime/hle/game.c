@@ -20,17 +20,25 @@ const char *game_level_name(void) { return "-"; }
 // The game steps a fixed 1/60 s per simulation tick (CGameArchitectureSupport::Update; rt_frame_step below says how
 // much time a frame adds); at 120 every place that builds that 1/60 builds 1/120 instead (tools/patches.py
 // STEP_SITES), so the game runs at the same speed with twice the steps. 30: a frame every 1/30 s, two ticks each
-// (slower machines: a steady 30 at full speed). Uncapped (0): frames as fast as they come, the simulation at 60.
+// (slower machines: a steady 30 at full speed). Uncapped (0): frames as fast as they come, up to UNCAPPED_MAX_FPS
+// (game_pace_present). The game runs a tick every frame however short the frame was (CGameArchitectureSupport::Update
+// below: more only to catch up), so with a 1/60 tick an uncapped 400 fps ran the game 6.7x too fast; there each
+// frame's tick is the time it took instead (frame_time), at most 1/60 (slower frames take whole 1/60 ticks, as at 60).
+#define UNCAPPED_MAX_FPS 1000
 int game_frame_rate(void) {
     static int env = -2;
     if (env == -2) env = getenv("LARECOMP_FPS") ? atoi(getenv("LARECOMP_FPS")) : -1;
     return env >= 0 ? env : g_settings.frame_rate;
 }
 
+static _Atomic uint32_t g_uncapped_step;  // (float bits; 0: none yet) Uncapped: the current frame's tick
+
 uint32_t rt_sim_step_bits(int negative) {
-    float step = 1.0f / (game_frame_rate() == 120 ? 120 : 60);
+    int fps = game_frame_rate();
+    float step = 1.0f / (fps == 120 ? 120 : 60);
     uint32_t b;
     memcpy(&b, &step, 4);
+    if (fps <= 0 && g_uncapped_step) b = g_uncapped_step;
     return negative ? b | 0x80000000u : b;
 }
 
@@ -39,9 +47,16 @@ uint32_t rt_sim_step_bits(int negative) {
 // frame, that elapsed time and the passes of its tick loop the frame before ("[tick]").
 static int g_tick_passes, g_ticks;
 static volatile uint64_t g_present_ns;  // when the latest present's deadline wait ended
-static _Atomic uint64_t g_ticks_total;  // (the stats line's simulation rate: exec.c renderer_stats)
-void rt_tick_body(void) { g_ticks++; g_ticks_total++; }
+static _Atomic uint64_t g_ticks_total, g_sim_ns;  // (the stats line's simulation rate and speed: exec.c renderer_stats)
+void rt_tick_body(void) {
+    g_ticks++, g_ticks_total++;
+    uint32_t b = rt_sim_step_bits(0);
+    float step;
+    memcpy(&step, &b, 4);
+    g_sim_ns += (uint64_t)(step * 1e9f);
+}
 uint64_t game_ticks_total(void) { return g_ticks_total; }
+uint64_t game_sim_ns(void) { return g_sim_ns; }  // the game time the simulation has advanced
 unsigned rt_tick_pass(void) {
     g_tick_passes++;
     return rt_sim_step_bits(1);
@@ -59,10 +74,23 @@ static unsigned frame_time(Cpu *c) {
         const char *e = getenv("LARECOMP_MAX_TICKS");
         g_frame_ticks_max = e && atoi(e) >= 1 ? atoi(e) : 3;
     }
-    uint32_t tb = rt_sim_step_bits(0);
     float tick, el, t;
-    memcpy(&tick, &tb, 4);
     memcpy(&el, &c->v[8], 4);
+    if (game_frame_rate() <= 0) {
+        // Uncapped: this frame's tick is its own time, but at least 1/UNCAPPED_MAX_FPS: what a shorter frame's tick
+        // ran ahead of real time comes off the next ones (frames slower than 1/60: whole 1/60 ticks below, as at 60)
+        static float ahead;
+        float want = (el >= 0 ? el : 1.0f / 60) - ahead, s = want;
+        if (s < 1.0f / UNCAPPED_MAX_FPS) s = 1.0f / UNCAPPED_MAX_FPS;
+        if (s > 1.0f / 60) s = 1.0f / 60;
+        ahead = s > want ? fminf(s - want, 1.0f / 60) : 0;
+        el = want > s ? want : s;
+        uint32_t sb;
+        memcpy(&sb, &s, 4);
+        g_uncapped_step = sb;
+    }
+    uint32_t tb = rt_sim_step_bits(0);
+    memcpy(&tick, &tb, 4);
     if (!(el >= 0)) el = tick;  // (NaN, a clock going back)
     float n = roundf(el / tick);
     t = n >= 1 && fabsf(el - n * tick) < 0.25f * tick ? n * tick : el;
@@ -134,7 +162,7 @@ void game_pace_present(int interval) {
         LOG("[pace] frames presented by thread %x\n", t ? t->handle : 0);
     }
     int fps = game_frame_rate();
-    if (fps <= 0) return;
+    if (fps <= 0) fps = UNCAPPED_MAX_FPS;
     static uint64_t next;
     uint64_t period = (uint64_t)(1e9 * (interval > 0 ? interval : 1) / fps), now = plat_now_ns();
     if (!next || now > next + 4 * period) next = now;

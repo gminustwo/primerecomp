@@ -314,11 +314,15 @@ void vk_pipeline_cache_save(void) {
 }
 
 // ================================================================== swapchain
+extern int game_frame_rate(void);  // runtime/hle/game.c (0: Uncapped)
+
 static VkPresentModeKHR present_mode(void) {
     // MAILBOX by default: the game paces itself (vi.c's emulated 60 Hz vsync), and with FIFO every submission
     // queued behind the one waiting for a window image, so the game's fence waits followed the presentation engine:
     // a throttled / captured / busy compositor slowed the whole game (4-21 fps with the GPU mostly idle; mailbox:
-    // 60). No tearing. LARECOMP_VK_PRESENT=fifo|immediate|mailbox to choose.
+    // 60). No tearing. Without mailbox (FIFO: frames wait for the display), the Uncapped frame rate - vsync off -
+    // takes IMMEDIATE instead, or it would be held to the refresh rate. LARECOMP_VK_PRESENT=fifo|immediate|mailbox to
+    // choose.
     const char *e = getenv("LARECOMP_VK_PRESENT");
     VkPresentModeKHR want = !e || !strcmp(e, "mailbox") ? VK_PRESENT_MODE_MAILBOX_KHR
                           : !strcmp(e, "immediate") ? VK_PRESENT_MODE_IMMEDIATE_KHR : VK_PRESENT_MODE_FIFO_KHR;
@@ -329,6 +333,8 @@ static VkPresentModeKHR present_mode(void) {
     vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.phys, g_vk.surface, &n, m);
     VkPresentModeKHR got = VK_PRESENT_MODE_FIFO_KHR;
     for (uint32_t i = 0; i < n; i++) if (m[i] == want) got = want;
+    if (got != want && !e && game_frame_rate() <= 0)
+        for (uint32_t i = 0; i < n; i++) if (m[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) got = m[i];
     static int logged = -1;  // (the log says which: FIFO makes the game's fence waits follow the display, see above)
     if ((int)got != logged) {
         static const char *const name[] = {"immediate", "mailbox", "fifo", "fifo relaxed"};
@@ -342,7 +348,10 @@ static VkPresentModeKHR present_mode(void) {
     return got;
 }
 
+static int sc_uncapped = -1;  // the frame rate was Uncapped when the swapchain was made (present_mode)
+
 static void create_swapchain(void) {
+    sc_uncapped = game_frame_rate() <= 0;
     VkSurfaceCapabilitiesKHR caps;
     VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_vk.phys, g_vk.surface, &caps));
     int w, h;
@@ -425,7 +434,9 @@ bool vk_frame_begin(const float clear[4]) {
     int w, h;
     SDL_GetWindowSizeInPixels(window, &w, &h);
     if (!w || !h) return false;  // minimised
-    if (!g_vk.swapchain || (uint32_t)w != g_vk.sc_extent.width || (uint32_t)h != g_vk.sc_extent.height) recreate_swapchain();
+    if (!g_vk.swapchain || (uint32_t)w != g_vk.sc_extent.width || (uint32_t)h != g_vk.sc_extent.height ||
+        (game_frame_rate() <= 0) != sc_uncapped)  // (to or from Uncapped: present_mode may change)
+        recreate_swapchain();
     if (!g_vk.swapchain) return false;
     static int trace = -1;
     if (trace < 0) trace = getenv("LARECOMP_VK_TRACE") != NULL;

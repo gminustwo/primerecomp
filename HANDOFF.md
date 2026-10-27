@@ -5,6 +5,15 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 ## State (2026-10-25)
 
 - **START HERE (2026-10-26).**
+  - **Uncapped frame rate fixed (2026-10-27**, the user: "turning off vsync doesn't actually turn off vsync"; they
+    didn't say which switch - the game has no V-Sync option, Uncapped is the nearest). The game runs one simulation
+    tick per frame however short the frame (CGameArchitectureSupport::Update's loop always ticks once), so Uncapped's
+    1/60 tick ran the game ~6x fast at 400 fps. Now each frame's tick is its own time (game.c frame_time), up to 1000
+    fps (game_pace_present), time a short frame ran ahead taken off the next. Measured at Uncapped (RTX 5090, ~400-530
+    fps in play): speed 1.00x (new on the stats line), walk 10.8 u/s and jump peak 3.68 as at 60. Without mailbox
+    (Mac / Deck?), Uncapped now presents IMMEDIATE instead of FIFO; the swapchain is remade on switching to or from
+    Uncapped. Test hook LARECOMP_INPUT_CLOCK=60 (script frames as 1/60 s of time). Not in the user's copy yet; if they
+    meant the GPU driver's or the Deck's vsync switch, ask.
   - **v0.0.3 is RELEASED, Latest** (2026-10-26, the user: "make v0.0.3 the full release"; a pre-release before that):
     https://github.com/gminustwo/primerecomp/releases/tag/v0.0.3, tag v0.0.3 on 97cd7e8 (created by publishing). Same assets as the draft below. Notes gained two lines (scratchpad release_v003_notes.md of
     session 67cd6949): the gunship's glass (dual-source blending, 8d3dc15) and shaders compiling again on the first

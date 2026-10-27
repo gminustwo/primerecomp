@@ -466,6 +466,16 @@ void input_frame(uint64_t frame) {
     motion_frame(frame);  // (LARECOMP_GYRO_TEST)
     const char *spec = getenv("LARECOMP_INPUT");
     if (!spec) return;
+    {   // LARECOMP_INPUT_CLOCK=<hz>: the script's frames are 1/<hz> s since the first frame, not presented frames
+        // (tests at the Uncapped frame rate, where frames and game time no longer go together)
+        static int hz = -1;
+        static uint64_t t0;
+        if (hz < 0) hz = getenv("LARECOMP_INPUT_CLOCK") ? atoi(getenv("LARECOMP_INPUT_CLOCK")) : 0;
+        if (hz > 0) {
+            if (!t0) t0 = plat_now_ns();
+            frame = (plat_now_ns() - t0) * hz / 1000000000ull;
+        }
+    }
     static const char *const names[] = {"A", "B", "X", "Y", "LSTICK", "RSTICK", "L", "R", "ZL", "ZR", "PLUS",
                                         "MINUS", "LEFT", "UP", "RIGHT", "DOWN"};
     uint64_t b = 0;
