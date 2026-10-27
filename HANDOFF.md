@@ -5,7 +5,14 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 ## State (2026-10-25)
 
 - **START HERE (2026-10-26).**
-  - **v0.0.3 rebuilt from main, still a DRAFT** (the user: "rebuild the v0.0.3 release from main. I will want to test
+  - **v0.0.3 is a PRE-RELEASE** (2026-10-26, the user: "push a pre-release for me to look at on github"):
+    https://github.com/gminustwo/primerecomp/releases/tag/v0.0.3, tag v0.0.3 on 97cd7e8 (created by publishing),
+    v0.0.2 stays Latest. Same assets as the draft below. Notes gained two lines (scratchpad release_v003_notes.md of
+    session 67cd6949): the gunship's glass (dual-source blending, 8d3dc15) and shaders compiling again on the first
+    play after updating (the tint removal). macOS isn't in the notes and has no asset. main still isn't pushed
+    (origin/main 138318a). To make it the full release when the user says so: `gh release edit v0.0.3
+    --prerelease=false --latest`, and push main.
+  - **v0.0.3 rebuilt from main** (was a draft; the user: "rebuild the v0.0.3 release from main. I will want to test
     on my mac and steamdeck so don't publish the release yet. push to a branch I can pull from on those systems"):
     branch **release-v0.0.3** on GitHub (local main = that branch; origin/main is still 138318a - main itself isn't
     pushed). The draft now targets the branch head, with new assets and notes (scratchpad release_v003_notes.md):
@@ -43,8 +50,9 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
     full-load build here (gamebuild.c already notes this CPU's compilers crashing under full load).
   - **GAMELIB_ID is the same since v0.0.2** (2f2eef2dc358333a): updating from v0.0.2 needs no recompile. Any edit to
     GAMELIB_SRCS (comments too; gamelib.h, cpu.h, tools/*.py ...) makes every player recompile after updating.
-  - **Open for the user:** a Deck's first start still takes the 30 fps preset (settings.c settings_load ->
-    settings_steam_deck_preset(30)), which their numbers may have made unnecessary; ask before changing it.
+  - **The Deck's 30 fps preset stays the first-start default** (settings.c settings_load ->
+    settings_steam_deck_preset(30)); the user, 2026-10-26: "the 30fps mode doesn't seem to make much difference but
+    we'll keep it for now".
     The playtest build (Windows) isn't updated with the merge: on Windows only ui_run's event loop changed.
 
 - **The macos branch is merged into main** (2026-10-25 late, the user's request: "pull the macos branch and merge
