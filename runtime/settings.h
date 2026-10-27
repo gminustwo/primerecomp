@@ -43,6 +43,7 @@ typedef struct {
     int frame_rate;      // frames per second: 60 (the Switch's), 120 (the simulation too), 30 (two 60 Hz steps a frame), or
                          // 0 = uncapped, a simulation step per frame of its own time (runtime/hle/game.c); LARECOMP_FPS
                          // overrides it
+    bool vsync;          // no tearing; Uncapped then follows the display's refresh (runtime/nvn/vulkan/device.c present_mode)
     int fov;             // first-person vertical field of view in degrees, FOV_MIN..FOV_MAX (55: the game's): game.c
     bool skippable_cutscenes;  // every cutscene can be skipped, seen before or not (runtime/hle/game.c)
     bool gyro;           // the controller's gyro / accelerometer reach the game's motion controls (runtime/hle/motion.c)

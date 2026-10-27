@@ -317,24 +317,27 @@ void vk_pipeline_cache_save(void) {
 extern int game_frame_rate(void);  // runtime/hle/game.c (0: Uncapped)
 
 static VkPresentModeKHR present_mode(void) {
-    // MAILBOX by default: the game paces itself (vi.c's emulated 60 Hz vsync), and with FIFO every submission
-    // queued behind the one waiting for a window image, so the game's fence waits followed the presentation engine:
-    // a throttled / captured / busy compositor slowed the whole game (4-21 fps with the GPU mostly idle; mailbox:
-    // 60). No tearing. Without mailbox (FIFO: frames wait for the display), the Uncapped frame rate - vsync off -
-    // takes IMMEDIATE instead, or it would be held to the refresh rate. LARECOMP_VK_PRESENT=fifo|immediate|mailbox to
-    // choose.
+    // V-Sync on (Video tab, the default): MAILBOX - the game paces itself (game.c game_pace_present), and with FIFO
+    // every submission queued behind the one waiting for a window image, so the game's fence waits followed the
+    // presentation engine: a throttled / captured / busy compositor slowed the whole game (4-21 fps with the GPU
+    // mostly idle; mailbox: 60). No tearing. At the Uncapped frame rate FIFO, though: frames at the display's refresh
+    // rate (the game's speed follows the frame times there). V-Sync off: IMMEDIATE, each frame shown when it's done
+    // (tearing), else MAILBOX. FIFO where those aren't offered (it always is). LARECOMP_VK_PRESENT=fifo|immediate|
+    // mailbox to choose.
     const char *e = getenv("LARECOMP_VK_PRESENT");
-    VkPresentModeKHR want = !e || !strcmp(e, "mailbox") ? VK_PRESENT_MODE_MAILBOX_KHR
-                          : !strcmp(e, "immediate") ? VK_PRESENT_MODE_IMMEDIATE_KHR : VK_PRESENT_MODE_FIFO_KHR;
+    VkPresentModeKHR want = VK_PRESENT_MODE_MAILBOX_KHR, then = VK_PRESENT_MODE_FIFO_KHR;
+    if (e) want = !strcmp(e, "mailbox") ? VK_PRESENT_MODE_MAILBOX_KHR : !strcmp(e, "immediate") ? VK_PRESENT_MODE_IMMEDIATE_KHR
+                                                                         : VK_PRESENT_MODE_FIFO_KHR;
+    else if (!g_settings.vsync) want = VK_PRESENT_MODE_IMMEDIATE_KHR, then = VK_PRESENT_MODE_MAILBOX_KHR;
+    else if (game_frame_rate() <= 0) want = VK_PRESENT_MODE_FIFO_KHR;
     uint32_t n = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.phys, g_vk.surface, &n, NULL);
     VkPresentModeKHR m[16];
     if (n > 16) n = 16;
     vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.phys, g_vk.surface, &n, m);
-    VkPresentModeKHR got = VK_PRESENT_MODE_FIFO_KHR;
-    for (uint32_t i = 0; i < n; i++) if (m[i] == want) got = want;
-    if (got != want && !e && game_frame_rate() <= 0)
-        for (uint32_t i = 0; i < n; i++) if (m[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) got = m[i];
+    bool has_want = false, has_then = false;
+    for (uint32_t i = 0; i < n; i++) has_want |= m[i] == want, has_then |= m[i] == then;
+    VkPresentModeKHR got = has_want ? want : has_then ? then : VK_PRESENT_MODE_FIFO_KHR;
     static int logged = -1;  // (the log says which: FIFO makes the game's fence waits follow the display, see above)
     if ((int)got != logged) {
         static const char *const name[] = {"immediate", "mailbox", "fifo", "fifo relaxed"};
@@ -348,10 +351,12 @@ static VkPresentModeKHR present_mode(void) {
     return got;
 }
 
-static int sc_uncapped = -1;  // the frame rate was Uncapped when the swapchain was made (present_mode)
+// what present_mode chose from: V-Sync, and Uncapped or not (a change makes a new swapchain: vk_frame_begin)
+static int present_key(void) { return g_settings.vsync * 2 + (game_frame_rate() <= 0); }
+static int sc_present_key = -1;
 
 static void create_swapchain(void) {
-    sc_uncapped = game_frame_rate() <= 0;
+    sc_present_key = present_key();
     VkSurfaceCapabilitiesKHR caps;
     VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_vk.phys, g_vk.surface, &caps));
     int w, h;
@@ -426,6 +431,9 @@ static void image_barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, V
 
 typedef struct { uint32_t image; VkSemaphore acquired; bool ok; } Frame;
 static Frame cur_frame;
+// kernel.c: this thread's time blocked. Waiting for the display (FIFO: V-Sync with Uncapped) in the acquire and the
+// present counts too: idle, not work (exec.c vk_pace_frame - a 60 Hz display's whole 16.7 ms frames were "too slow")
+extern __thread uint64_t g_blocked_ns;
 
 // Acquire the next window image and begin rendering into it (cleared to `clear`). Returns false when there is
 // nothing to draw into (minimised window).
@@ -435,7 +443,7 @@ bool vk_frame_begin(const float clear[4]) {
     SDL_GetWindowSizeInPixels(window, &w, &h);
     if (!w || !h) return false;  // minimised
     if (!g_vk.swapchain || (uint32_t)w != g_vk.sc_extent.width || (uint32_t)h != g_vk.sc_extent.height ||
-        (game_frame_rate() <= 0) != sc_uncapped)  // (to or from Uncapped: present_mode may change)
+        present_key() != sc_present_key)
         recreate_swapchain();
     if (!g_vk.swapchain) return false;
     static int trace = -1;
@@ -444,6 +452,7 @@ bool vk_frame_begin(const float clear[4]) {
     slot = (slot + 1) % FRAMES;
     if (!acquire_sem[slot]) acquire_sem[slot] = binary_semaphore();
     vk_wait_seq(slot_seq[slot]);
+    uint64_t t_acquire = SDL_GetTicksNS();
     VkResult r = vkAcquireNextImageKHR(g_vk.dev, g_vk.swapchain, UINT64_MAX, acquire_sem[slot], VK_NULL_HANDLE, &cur_frame.image);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
         recreate_swapchain();
@@ -452,6 +461,7 @@ bool vk_frame_begin(const float clear[4]) {
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) { LOG("[vk] acquire failed: %d\n", r); return false; }
     cur_frame.acquired = acquire_sem[slot];
     slot_seq[slot] = vk_pending_seq();
+    g_blocked_ns += SDL_GetTicksNS() - t_acquire;
     VkCommandBuffer cb = vk_cmd();
     image_barrier(cb, g_vk.sc_images[cur_frame.image], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     VkRenderingAttachmentInfo ca = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = g_vk.sc_views[cur_frame.image],
@@ -515,7 +525,9 @@ void vk_frame_end(const char *shot_path) {
     vk_submit_extra(cur_frame.acquired, done_sem[img], VK_NULL_HANDLE);
     VkPresentInfoKHR pi = {.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .waitSemaphoreCount = 1, .pWaitSemaphores = &done_sem[img],
                            .swapchainCount = 1, .pSwapchains = &g_vk.swapchain, .pImageIndices = &img};
+    uint64_t t_present = SDL_GetTicksNS();
     VkResult r = vkQueuePresentKHR(g_vk.queue, &pi);
+    g_blocked_ns += SDL_GetTicksNS() - t_present;
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) recreate_swapchain();
     cur_frame.ok = false;
     if (shot_path) {

@@ -182,7 +182,8 @@ In the game's menus Enter / Space confirm, Esc goes back and Q / E switch pages.
 - Mouse aim that turns and aims directly, as in a PC shooter; full keyboard, mouse and controller rebinding
 - Any resolution up to 8K, AMD FSR 1 upscaling, SMAA anti-aliasing, anisotropic texture filtering
 - Ultrawide and any aspect ratio (the HUD stays in the 16:9 middle), adjustable field of view
-- 30, 60 or 120 frames per second, at full game speed even when the frame rate drops
+- 30, 60, 120 or uncapped frames per second (your screen's refresh rate with V-Sync on, as fast as your machine goes
+  with it off), at full game speed even when the frame rate drops
 - Steam Deck presets
 - Gyro aiming with controllers that have one, rumble
 - Any cutscene skippable

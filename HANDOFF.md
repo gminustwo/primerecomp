@@ -12,8 +12,16 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
     fps (game_pace_present), time a short frame ran ahead taken off the next. Measured at Uncapped (RTX 5090, ~400-530
     fps in play): speed 1.00x (new on the stats line), walk 10.8 u/s and jump peak 3.68 as at 60. Without mailbox
     (Mac / Deck?), Uncapped now presents IMMEDIATE instead of FIFO; the swapchain is remade on switching to or from
-    Uncapped. Test hook LARECOMP_INPUT_CLOCK=60 (script frames as 1/60 s of time). Not in the user's copy yet; if they
-    meant the GPU driver's or the Deck's vsync switch, ask.
+    Uncapped. Test hook LARECOMP_INPUT_CLOCK=60 (script frames as 1/60 s of time).
+  - **V-Sync option (2026-10-27**, the user: "I want you to add a vsync option"; they want "as fast as is stable,
+    but 120fps or 144 fps is fine", tearing OK; their screen is 4K 143 Hz). Video tab, `vsync` in the ini, on by
+    default. On: MAILBOX as before, but FIFO at Uncapped (= the display's refresh: 144.0 fps here). Off: IMMEDIATE
+    (tearing; Uncapped ~570 fps on the title). The swapchain is remade on a change (tested from the menu: FIFO ->
+    immediate mid-run, saved). Acquire / present waits count as blocked (exec.c vk_pace_frame: a 60 Hz FIFO's 16.7 ms
+    frames would have looked too slow and set the 30 fps mode). FIFO frame times jitter (under 5 / over 9 ms in turn
+    at 144 Hz), so Uncapped's tick is now the average frame time (~16 frames), pulled back to real time: step sd 0.22
+    ms vs 4.0 ms measured. Gameplay at V-Sync on + Uncapped: 144 fps, 1.00x, walk and jump as at 60. Not in the
+    user's copy yet.
   - **v0.0.3 is RELEASED, Latest** (2026-10-26, the user: "make v0.0.3 the full release"; a pre-release before that):
     https://github.com/gminustwo/primerecomp/releases/tag/v0.0.3, tag v0.0.3 on 97cd7e8 (created by publishing). Same assets as the draft below. Notes gained two lines (scratchpad release_v003_notes.md of
     session 67cd6949): the gunship's glass (dual-source blending, 8d3dc15) and shaders compiling again on the first

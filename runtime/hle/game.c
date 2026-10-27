@@ -77,14 +77,20 @@ static unsigned frame_time(Cpu *c) {
     float tick, el, t;
     memcpy(&el, &c->v[8], 4);
     if (game_frame_rate() <= 0) {
-        // Uncapped: this frame's tick is its own time, but at least 1/UNCAPPED_MAX_FPS: what a shorter frame's tick
-        // ran ahead of real time comes off the next ones (frames slower than 1/60: whole 1/60 ticks below, as at 60)
-        static float ahead;
-        float want = (el >= 0 ? el : 1.0f / 60) - ahead, s = want;
-        if (s < 1.0f / UNCAPPED_MAX_FPS) s = 1.0f / UNCAPPED_MAX_FPS;
-        if (s > 1.0f / 60) s = 1.0f / 60;
-        ahead = s > want ? fminf(s - want, 1.0f / 60) : 0;
-        el = want > s ? want : s;
+        // Uncapped: a frame's tick is the time frames take, averaged over ~16 of them - single frame times jitter
+        // (V-Sync's FIFO at 144 Hz: under 5 and over 9 ms in turn while the screen shows one every 6.9 ms; ticks that
+        // followed them made the motion uneven) - and pulled back to real time by what the game has run ahead or
+        // behind. At least 1/UNCAPPED_MAX_FPS; frames slower than 1/60 take whole 1/60 ticks below, as at 60.
+        static float avg, ahead;  // the average frame time; game time ahead of real time (negative: behind)
+        float e = el >= 0 ? el : 1.0f / 60, s;
+        avg = avg > 0 ? avg + (fminf(e, 1.0f / 60) - avg) / 16 : fminf(e, 1.0f / 60);
+        if (e - ahead >= 1.0f / 60) {
+            s = 1.0f / 60, el = e - ahead, ahead = 0;
+        } else {
+            s = fminf(fmaxf(avg - ahead / 16, 1.0f / UNCAPPED_MAX_FPS), 1.0f / 60);
+            ahead += s - e;
+            el = s;
+        }
         uint32_t sb;
         memcpy(&sb, &s, 4);
         g_uncapped_step = sb;
@@ -119,22 +125,27 @@ unsigned rt_frame_step(Cpu *c) {
         const char *e = getenv("LARECOMP_TICK_LOG");
         if (!e || sscanf(e, "%ld:%ld", &from, &left) != 2) from = -1;
     }
-    extern uint64_t renderer_present_count(void);
-    if (from >= 0 && left > 0 && (long)renderer_present_count() >= from) {
-        left--;
-        float el;
-        memcpy(&el, &c->v[8], 4);
-        LOG("[tick] frame %llu elapsed %.3f ms, %.3f ms after the present, tick loop passes before %d, ticks %d\n", (unsigned long long)renderer_present_count(),
-            el * 1000, (double)(plat_now_ns() - g_present_ns) / 1e6, g_tick_passes, g_ticks);
-    }
-    g_tick_passes = g_ticks = 0;
     static int once;
     if (!once++) {
         extern KThread *kernel_current_thread(void);
         KThread *t = kernel_current_thread();
         LOG("[pace] the game's update runs on thread %x\n", t ? t->handle : 0);
     }
-    return frame_time(c);
+    float el;
+    memcpy(&el, &c->v[8], 4);
+    unsigned r = frame_time(c);
+    extern uint64_t renderer_present_count(void);
+    if (from >= 0 && left > 0 && (long)renderer_present_count() >= from) {
+        left--;
+        uint32_t sb = rt_sim_step_bits(0);
+        float step;
+        memcpy(&step, &sb, 4);
+        LOG("[tick] frame %llu elapsed %.3f ms, step %.3f ms, %.3f ms after the present, tick loop passes before %d, "
+            "ticks %d\n", (unsigned long long)renderer_present_count(), el * 1000, step * 1000,
+            (double)(plat_now_ns() - g_present_ns) / 1e6, g_tick_passes, g_ticks);
+    }
+    g_tick_passes = g_ticks = 0;
+    return r;
 }
 
 void rt_movie_dt(Cpu *c) {  // (debug, LARECOMP_TICK_LOG) the time step the movies advance by

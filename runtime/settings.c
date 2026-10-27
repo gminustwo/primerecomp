@@ -24,6 +24,7 @@ Settings g_settings = {
     .movie_audio = true,
     .show_fps = false,
     .frame_rate = 60,
+    .vsync = true,
     .upscaler = UPSCALE_FSR1,
     .res_lines = 2160,
     .fov = FOV_GAME,
@@ -153,6 +154,7 @@ void settings_load(void) {
             int r = atoi(val);
             g_settings.frame_rate = r == 120 || r == 30 || r == 0 ? r : 60;
         }
+        else if (!strcmp(key, "vsync")) g_settings.vsync = atoi(val) != 0;
         else if (!strcmp(key, "fov")) g_settings.fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
         else if (!strcmp(key, "skippable_cutscenes")) g_settings.skippable_cutscenes = atoi(val) != 0;
         else if (!strcmp(key, "gyro")) g_settings.gyro = atoi(val) != 0;
@@ -205,6 +207,7 @@ void settings_save(void) {
     fprintf(f, "movie_audio = %d\n", g_settings.movie_audio);
     fprintf(f, "show_fps = %d\n", g_settings.show_fps);
     fprintf(f, "frame_rate = %d\n", g_settings.frame_rate);
+    fprintf(f, "vsync = %d\n", g_settings.vsync);
     fprintf(f, "fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.skippable_cutscenes,
             g_settings.gyro);
     fprintf(f, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
