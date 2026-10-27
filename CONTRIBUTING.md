@@ -15,10 +15,13 @@ Pull requests that include Nintendo files can't be merged. Screenshots and short
 
 ## Reporting bugs
 
-Report bugs as a [GitHub issue](https://github.com/gminustwo/primerecomp/issues). Please include:
+Report bugs and request features on the [PrimeRecomp Discord](https://discord.gg/TmWPy28wf) rather than as
+GitHub issues: they're easier to keep track of there. Please include:
 
+- screenshots, a GIF or a short video of the problem
 - your platform (Windows / Linux / Steam Deck / macOS), hardware (CPU, GPU) and window size / aspect ratio
 - what you did, what happened, and what you expected
+- a copy of your save file: the `save` folder, zipped, from the folder named below
 - `primerecomp.log`, which always holds the latest run (`primerecomp.previous.log` the one before): on Windows in
   the PrimeRecomp folder, on Linux and the Steam Deck in `~/.local/share/primerecomp`, on macOS in
   `~/Library/Application Support/io.github.primerecomp`

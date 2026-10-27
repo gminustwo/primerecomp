@@ -28,8 +28,18 @@ for the graphics. No emulator runs.
 ## Status: v0.0.3 (early beta)
 
 The game boots, the Frigate Orpheon plays through, and Tallon IV is playable (the Landing Site, Chozo Ruins and
-Magmoor Caverns have been played so far), with saving and loading. Graphics bugs remain: some lighting is wrong, and
-visor effects such as rain drops are missing at times. Areas nobody has reached yet may still crash or freeze.
+Magmoor Caverns have been played so far), with saving and loading. Areas nobody has reached yet may still crash or
+freeze.
+
+> [!WARNING]
+> **Known issues.** Each one is crossed out here once it's fixed.
+>
+> - Steam Deck performance still isn't great, with major slowdowns when going through doors
+> - Numerous graphics and rendering issues
+> - Lighting issues persist
+> - Samus' character model doesn't render correctly on the pause screen
+>
+> Found something else? See [Bugs and feature requests](#bugs-and-feature-requests).
 
 **New in v0.0.3: Steam Deck performance.** v0.0.2 brought Linux and the Steam Deck; on the Deck it ran at about 25
 fps. v0.0.3 removes the Linux-only costs behind that (the largest: how the game's memory was shared with the GPU, which
@@ -49,11 +59,23 @@ already have ([Updating](#updating)).
   isn't a download yet
 - An Android version
 
-If something goes wrong, please open an [issue](https://github.com/gminustwo/primerecomp/issues) and attach
-`primerecomp.log` (Windows: in the PrimeRecomp folder; Linux and Steam Deck: in `~/.local/share/primerecomp`). It
-always holds the latest run, and `primerecomp.previous.log` the run before. For a graphics problem, press **F9** at
-the spot: it saves a capture of that frame in `build/f9_<frame>/` in that same folder (zip it up), and **F8** notes
-your position in `positions.txt`.
+### Bugs and feature requests
+
+Please report bugs and request features on the [PrimeRecomp Discord][discord] rather than as GitHub issues: it's much
+easier to keep track of them there. For a bug, these help the most:
+
+- **Screenshots, a GIF or a short video** of the problem
+- **The details:** what happened, what you were doing and where in the game, and your system (Windows, Linux or Steam
+  Deck; CPU and GPU)
+- **A copy of your save file:** zip up the `save` folder (Windows: in the PrimeRecomp folder; Linux and Steam Deck:
+  `~/.local/share/primerecomp/save`)
+- `primerecomp.log`, if you can, from the folder that holds `save`. It always holds the latest run, and
+  `primerecomp.previous.log` the run before.
+
+For a graphics problem, you can also press **F9** at the spot: it saves a capture of that frame in
+`build/f9_<frame>/` in that same folder (zip it up). **F8** notes your position in `positions.txt`.
+
+[discord]: https://discord.gg/TmWPy28wf
 
 ## Requirements
 
