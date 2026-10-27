@@ -21,9 +21,16 @@ Known: the first time a new shader is drawn MoltenVK compiles it for Metal, whic
 momentarily black object; later runs use the caches (`cache/` in the data folder, saved when the app quits).
 
 ## Running the app
-1. Copy `PrimeRecomp.app` to Applications (or anywhere) and open it. A build you made yourself opens directly; one
-   downloaded from the internet is ad-hoc signed, not notarized: if macOS refuses to open it, allow it under System
-   Settings -> Privacy & Security -> Open Anyway.
+1. Open the release's `PrimeRecomp-<version>-macOS.dmg` and drag `PrimeRecomp.app` onto Applications (or anywhere).
+   A build you made yourself opens directly. A downloaded one is ad-hoc signed, not notarized, and macOS marks it
+   and every file in it as downloaded: it refuses the app, and kills the generator and zig inside it when the start
+   screen runs them (checked 2026-10-26 on macOS 27 with a quarantined copy of the v0.0.3 dmg: both exit 137). Clear
+   the mark once in Terminal (again after each update):
+
+       xattr -dr com.apple.quarantine /Applications/PrimeRecomp.app
+
+   Then open it. (Whether System Settings -> Privacy & Security -> Open Anyway alone also lets the app run its
+   tools is untested.)
 2. The start screen asks for your own game files: choose the folder that holds `exefs` and `romfs`, then **Set up**.
    It copies them in and recompiles the game for your Mac (a few minutes, once).
 3. Press **Play**.

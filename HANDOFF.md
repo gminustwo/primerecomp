@@ -5,6 +5,17 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 ## State (2026-10-25)
 
 - **START HERE (2026-10-26).**
+  - **v0.0.3 is the full release (Latest) and now has a macOS asset** (2026-10-26, on the user's Mac; the user: "I
+    pushed a release for this from windows but it didn't include the mac release. fix it"): PrimeRecomp-v0.0.3-macOS.dmg
+    (sha256 f0949185...cff51), `make dmg` from the v0.0.3 tag (97cd7e8) on the M3 Max. GAMELIB_ID on the Mac is
+    95d45970a8df7ad6, the same as the user's existing Mac setup (no recompile). Checked: the app copied out of the dmg
+    set up a fresh data root from exefs / romfs (READY, game code in 88 s with the bundled primegen and zig), then boots
+    to the title and the frigate's landing deck at 60 fps, 0 skipped draws. **A downloaded copy is quarantined** (each
+    file, once copied out of a quarantined dmg): spctl rejects the app, and the bundled zig and primegen are killed
+    when run (exit 137); after `xattr -dr com.apple.quarantine` all three run. So the release notes, README (new
+    "macOS (Apple Silicon)" in Getting started / Updating / Requirements) and docs/macos.md tell Mac users to run that
+    command after installing and after each update. Untested: whether Open Anyway alone covers the bundled tools. A
+    code-side fix for later: the app clearing the quarantine flag from its own Resources before running them.
   - **v0.0.3 is a PRE-RELEASE** (2026-10-26, the user: "push a pre-release for me to look at on github"):
     https://github.com/gminustwo/primerecomp/releases/tag/v0.0.3, tag v0.0.3 on 97cd7e8 (created by publishing),
     v0.0.2 stays Latest. Same assets as the draft below. Notes gained two lines (scratchpad release_v003_notes.md of
