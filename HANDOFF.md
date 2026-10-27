@@ -9,9 +9,13 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
     https://github.com/gminustwo/primerecomp/releases/tag/v0.0.3, tag v0.0.3 on 97cd7e8 (created by publishing),
     v0.0.2 stays Latest. Same assets as the draft below. Notes gained two lines (scratchpad release_v003_notes.md of
     session 67cd6949): the gunship's glass (dual-source blending, 8d3dc15) and shaders compiling again on the first
-    play after updating (the tint removal). macOS isn't in the notes and has no asset. main still isn't pushed
-    (origin/main 138318a). To make it the full release when the user says so: `gh release edit v0.0.3
-    --prerelease=false --latest`, and push main.
+    play after updating (the tint removal). macOS isn't in the notes and has no asset. To make it the full
+    release when the user says so: `gh release edit v0.0.3 --prerelease=false --latest`.
+  - **main is pushed** (2026-10-26, the user's request). **Bugs and feature requests go to the Discord**
+    (https://discord.gg/TmWPy28wf), not GitHub issues: README "Bugs and feature requests", CONTRIBUTING.md and the
+    v0.0.3 notes say so. **README's known-issues box** (the WARNING under "Status") is the user's list; they asked to
+    cross items out (`~~...~~`) as they're fixed, so do that when one is: Deck slowdowns at doors, graphics /
+    rendering issues, lighting, Samus' model on the pause screen. The release notes' Known issues match it.
   - **v0.0.3 rebuilt from main** (was a draft; the user: "rebuild the v0.0.3 release from main. I will want to test
     on my mac and steamdeck so don't publish the release yet. push to a branch I can pull from on those systems"):
     branch **release-v0.0.3** on GitHub (local main = that branch; origin/main is still 138318a - main itself isn't
