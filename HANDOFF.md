@@ -240,6 +240,14 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   - Also seen in the user's log: 120 fps around frames 6482-7198 with frame_rate = 60 (unexplained, check).
 - **Playable:** boot, menus, the whole frigate, onto Tallon IV (the user's own playthrough), 60 / 120 fps.
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
+- **The user's Steam copy is now the v0.0.3 release** (2026-10-26 night, the user: "extract it and retarget my steam
+  shortcut for me. keep my saves from the old test one"): `private/playtest/PrimeRecomp/` (the release zip,
+  extracted; its save/ and primerecomp.ini copied from the old playtest folder, the 39 KB save_0; game files and
+  game code hard-linked from build/dist/PrimeRecomp by LARECOMP_LAUNCHER_EXTRACT=auto: READY, no rebuild). The
+  Steam shortcut (userdata/1612431156/config/shortcuts.vdf, backup shortcuts.vdf.bak-before-v003 beside it) now
+  targets its primerecomp.exe, Start In that folder. Its log, F9 captures and positions.txt are there now. It's a
+  release layout: the old update/ + Install_update.bat route doesn't apply; new builds go in by extracting a
+  zip into another folder (README "Updating"). The old folder below stays as it was.
 - **The user's playtest build:** `private/playtest/MPRRecomp/` (gitignored: it holds the game library), started
   from Steam (its shortcut targets primerecomp.exe; Steam Input applies). Their log is `primerecomp.log` there, F9
   captures go to `build/f9_<frame>/`, F8 appends positions to `positions.txt`. It holds build 7dd445a (release
