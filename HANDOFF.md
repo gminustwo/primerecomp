@@ -5,12 +5,10 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 ## State (2026-10-25)
 
 - **START HERE (2026-10-26).**
-  - **v0.0.3 is a PRE-RELEASE** (2026-10-26, the user: "push a pre-release for me to look at on github"):
-    https://github.com/gminustwo/primerecomp/releases/tag/v0.0.3, tag v0.0.3 on 97cd7e8 (created by publishing),
-    v0.0.2 stays Latest. Same assets as the draft below. Notes gained two lines (scratchpad release_v003_notes.md of
+  - **v0.0.3 is RELEASED, Latest** (2026-10-26, the user: "make v0.0.3 the full release"; a pre-release before that):
+    https://github.com/gminustwo/primerecomp/releases/tag/v0.0.3, tag v0.0.3 on 97cd7e8 (created by publishing). Same assets as the draft below. Notes gained two lines (scratchpad release_v003_notes.md of
     session 67cd6949): the gunship's glass (dual-source blending, 8d3dc15) and shaders compiling again on the first
-    play after updating (the tint removal). macOS isn't in the notes and has no asset. To make it the full
-    release when the user says so: `gh release edit v0.0.3 --prerelease=false --latest`.
+    play after updating (the tint removal). macOS isn't in the notes and has no asset.
   - **main is pushed** (2026-10-26, the user's request). **Bugs and feature requests go to the Discord**
     (https://discord.gg/TmWPy28wf), not GitHub issues: README "Bugs and feature requests", CONTRIBUTING.md and the
     v0.0.3 notes say so. **README's known-issues box** (the WARNING under "Status") is the user's list; they asked to
