@@ -25,7 +25,7 @@ PC, with Vulkan for the graphics. No emulator runs.
 
 ![Samus at the Landing Site on Tallon IV](docs/landing_site.jpg)
 
-## Status: v0.0.3 (early beta)
+## Status: v0.0.4 (early beta)
 
 The game boots, the Frigate Orpheon plays through, and Tallon IV is playable (the Landing Site, Chozo Ruins and
 Magmoor Caverns have been played so far), with saving and loading. Areas nobody has reached yet may still crash or
@@ -40,6 +40,11 @@ freeze.
 > - ~~Samus' character model doesn't render correctly on the pause screen~~
 >
 > Found something else? See [Bugs and feature requests](#bugs-and-feature-requests).
+
+**New in v0.0.4: smoother doors.** Going through a door used to freeze the game for up to half a second while the
+next room's textures were decoded on the CPU. They're now decoded on the graphics card, and lighting and texture
+uploads no longer hold up the frame (the worst frame at a door on a fast PC: 293 ms before, under 20 ms now). Also
+new: a V-Sync option (Video tab), and Samus' model on the pause screen is fixed.
 
 **New in v0.0.3: Steam Deck performance.** v0.0.2 brought Linux and the Steam Deck; on the Deck it ran at about 25
 fps. v0.0.3 removes the Linux-only costs behind that (the largest: how the game's memory was shared with the GPU, which
@@ -92,7 +97,7 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 
 ### Windows
 
-1. Download `PrimeRecomp-v0.0.3-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
+1. Download `PrimeRecomp-v0.0.4-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
    extract it somewhere you can write to (e.g. Documents or a games folder - not Program Files).
 2. Run `primerecomp.exe`. The start screen asks for your game files: choose the folder that holds `exefs` and
    `romfs`, then **Set up**. It copies what it needs and recompiles the game on your PC. This happens once and
@@ -124,7 +129,7 @@ appears, MoltenVK compiles its shader for Metal, which can show as a brief hitch
 
 ### Linux
 
-1. Download `PrimeRecomp-v0.0.3-linux-x86_64.AppImage` from
+1. Download `PrimeRecomp-v0.0.4-linux-x86_64.AppImage` from
    [Releases](https://github.com/gminustwo/primerecomp/releases) and make it executable (`chmod +x`, or in your file
    manager: Properties -> Permissions -> executable).
 2. Run it. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs`, **Set up**, then
