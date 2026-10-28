@@ -626,6 +626,7 @@ void backend_present(NvnTexture *t) {
         }
         const char *shot_path = getenv("LARECOMP_SHOT_PATH");  // (parallel test runs: each its own, tools/shot.sh)
         vk_frame_end(shot ? (shot_path ? shot_path : "build/window.png") : requested[0] ? requested : NULL);
+        vk_astc_gpu_check_run();  // (LARECOMP_ASTC_CHECK)
         if (shot && getenv("LARECOMP_EXIT_AFTER_SHOT")) { fflush(stderr); _exit(0); }
     } else {
         renderer_submit();
@@ -798,6 +799,7 @@ void ui_window_init(void) {
     create_swapchain();
     vk_exec_init();
     vk_shaders_init();
+    vk_astc_gpu_selftest();  // (LARECOMP_ASTC_SELFTEST only)
 }
 
 SDL_Window *ui_window(void) { return window; }

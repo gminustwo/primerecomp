@@ -74,6 +74,18 @@ VkSpan vk_transient_copy(const void *data, uint64_t size, uint64_t align);
 VkSpan vk_readback(uint64_t size);  // host-cached GPU -> CPU staging (read right after the copy completes)
 VkDescriptorSet vk_alloc_set(VkDescriptorSetLayout layout);
 
+// ---- ASTC decoded on the GPU (astc_gpu.c), for GPUs without ASTC: a span of the transient ring holds the blocks
+// and the RGBA8 texels they decode to
+bool vk_astc_gpu_ready(void);  // false: decode on the CPU (no compute decoder, or LARECOMP_ASTC_CPU)
+uint64_t vk_astc_gpu_align(void);  // the span's alignment
+void vk_astc_gpu_bind(VkCommandBuffer cb, VkBuffer buf, uint64_t off, uint64_t size);
+void vk_astc_gpu_dispatch(VkCommandBuffer cb, uint64_t in_off, uint64_t out_off, uint32_t w, uint32_t h, uint32_t bw,
+                          uint32_t bh, bool srgb);  // offsets from the span's start
+void vk_astc_gpu_barrier(VkCommandBuffer cb);  // the dispatches' texels -> the copies that read them
+void vk_astc_gpu_selftest(void);  // LARECOMP_ASTC_SELFTEST
+void vk_astc_gpu_check_note(const uint8_t *blocks, uint32_t w, uint32_t h, uint32_t bw, uint32_t bh, bool srgb);
+void vk_astc_gpu_check_run(void);  // LARECOMP_ASTC_CHECK: after a present
+
 // ---- textures (textures.c)
 typedef struct TexBackend {
     VkImage image;

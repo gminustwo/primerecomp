@@ -697,7 +697,75 @@ static void bh_probe(const uint8_t *src, const LevelLayout *l, uint32_t bpb, uin
     free(rgba);
 }
 
+// (debug) LARECOMP_LOG_SLOW_UPLOADS=<ms>: uploads that took longer, with where the time went
+static long slow_ms = -1;
+static uint64_t ut0, ut_hash, ut_swz, ut_astc;
+
+// ASTC where the GPU has none (desktop, Steam Deck): the blocks go into one transient span, every level and layer, and
+// the compute decoder (astc_gpu.c) turns them into RGBA8 texels behind them in the span, copied into the image. The CPU
+// decoder took ~10 ms per 1024x1024 texture on the render thread: half a second at a door. False: decode on the CPU.
+static bool upload_astc_gpu(NvnTexture *t, TexBackend *b, const uint8_t *base, uint32_t layers, uint32_t levels,
+                            uint64_t layer_size, bool linear) {
+    if (!vk_astc_gpu_ready()) return false;
+    uint32_t bw = b->astc_bw, bh = b->astc_bh;
+    uint64_t in_sz = 0, out_sz = 0;
+    for (uint32_t lv = 0; lv < levels; lv++) {
+        LevelLayout l = tegra_level(&t->layout, lv);
+        if (l.wb != (l.w + bw - 1) / bw || l.hb < (l.h + bh - 1) / bh) return false;  // (the decoders' block rows)
+        in_sz += (uint64_t)l.wb * l.hb * 16;
+        out_sz += ((uint64_t)l.w * l.h * 4 + 15) & ~15ull;
+    }
+    in_sz *= layers, out_sz *= layers;
+    VkSpan s = vk_transient(in_sz + out_sz, vk_astc_gpu_align());
+    VkCommandBuffer cb = vk_upload_cmd();
+    vk_astc_gpu_bind(cb, s.buf, s.off, in_sz + out_sz);
+    uint64_t in = 0, out = in_sz;
+    for (uint32_t layer = 0; layer < layers; layer++) {
+        for (uint32_t lv = 0; lv < levels; lv++) {
+            LevelLayout l = tegra_level(&t->layout, lv);
+            const uint8_t *src = base + layer * layer_size + l.offset;
+            uint8_t *blocks = (uint8_t *)s.ptr + in;
+            uint64_t q0 = slow_ms ? SDL_GetTicksNS() : 0;
+            if (linear) for (uint32_t y = 0; y < l.hb; y++) memcpy(blocks + (uint64_t)y * l.wb * 16, src + (uint64_t)y * t->stride, l.wb * 16);
+            else tegra_deswizzle(src, blocks, l.wb, l.hb, 1, 16, l.block_height_log2, l.block_depth_log2);
+            if (slow_ms) ut_swz += SDL_GetTicksNS() - q0;
+            vk_astc_gpu_check_note(blocks, l.w, l.h, bw, bh, b->astc_srgb);  // (LARECOMP_ASTC_CHECK)
+            vk_astc_gpu_dispatch(cb, in, out, l.w, l.h, bw, bh, b->astc_srgb);
+            in += (uint64_t)l.wb * l.hb * 16;
+            out += ((uint64_t)l.w * l.h * 4 + 15) & ~15ull;
+        }
+    }
+    vk_astc_gpu_barrier(cb);
+    out = in_sz;
+    for (uint32_t layer = 0; layer < layers; layer++) {
+        for (uint32_t lv = 0; lv < levels; lv++) {
+            LevelLayout l = tegra_level(&t->layout, lv);
+            VkBufferImageCopy rg = {.bufferOffset = s.off + out, .bufferRowLength = l.w, .bufferImageHeight = l.h,
+                                    .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, lv, layer, 1},
+                                    .imageExtent = {l.w < level_w(b, lv) ? l.w : level_w(b, lv), l.h < level_h(b, lv) ? l.h : level_h(b, lv), 1}};
+            vk_dl_note_upload((void *)b->image, rg.imageExtent.width, rg.imageExtent.height, rg.imageSubresource.mipLevel);
+            vkCmdCopyBufferToImage(cb, s.buf, b->image, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
+            out += ((uint64_t)l.w * l.h * 4 + 15) & ~15ull;
+        }
+    }
+    return true;
+}
+
+static void upload_texture_(NvnTexture *t, TexBackend *b);
 static void upload_texture(NvnTexture *t, TexBackend *b) {
+    if (slow_ms < 0) slow_ms = getenv("LARECOMP_LOG_SLOW_UPLOADS") ? atol(getenv("LARECOMP_LOG_SLOW_UPLOADS")) : 0;
+    if (!slow_ms) { upload_texture_(t, b); return; }
+    ut0 = SDL_GetTicksNS(), ut_hash = ut_swz = ut_astc = 0;
+    upload_texture_(t, b);
+    uint64_t dt = SDL_GetTicksNS() - ut0;
+    if (dt >= (uint64_t)slow_ms * 1000000)
+        LOG("[upload] f%llu %ux%u x%u lv%u fmt %#x%s %.1f MB: %.2f ms (hash %.2f, deswizzle %.2f, astc %.2f)\n",
+            (unsigned long long)vk_frame_counter(), t->width, t->height, t->layout.layers ? t->layout.layers : 1,
+            t->layout.levels, t->format, b->astc_bw ? " astc" : "", tegra_total_size(&t->layout) / 1048576.0, dt / 1e6,
+            ut_hash / 1e6, ut_swz / 1e6, ut_astc / 1e6);
+}
+
+static void upload_texture_(NvnTexture *t, TexBackend *b) {
     bool sparse = t->pool && (t->pool->flags & NVN_POOL_VIRTUAL);
     if ((!t->addr && !sparse) || t->target == 10) return;
     const uint8_t *base = (const uint8_t *)(uintptr_t)t->addr;
@@ -777,7 +845,9 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
         if (sh == b->sample_hash) return;
     }
     prof_tex_full++; prof_tex_full_bytes += total; if (b->dynamic) prof_tex_dyn++;
+    if (slow_ms) ut_hash = SDL_GetTicksNS();
     uint64_t h = hash_full(mem, total);
+    if (slow_ms) ut_hash = SDL_GetTicksNS() - ut_hash;
     b->full_frame = frame;
     b->sample_hash = fnv_sample(mem, total);
     if (b->uploaded && h == b->data_hash) return;
@@ -792,6 +862,7 @@ upload:
     uint64_t layer_size = tegra_layer_size(&t->layout);
     bool linear = (t->flags & 0x10) != 0;
     uint32_t levels = t->layout.levels < b->levels ? t->layout.levels : b->levels;
+    if (b->astc_bw && upload_astc_gpu(t, b, base, layers, levels, layer_size, linear)) return;
     for (uint32_t layer = 0; layer < layers; layer++) {
         for (uint32_t lv = 0; lv < levels; lv++) {
             LevelLayout l = tegra_level(&t->layout, lv);
@@ -799,10 +870,13 @@ upload:
             if (b->astc_bw) {  // blocks -> linear block rows -> RGBA8 texels
                 const uint8_t *src = base + layer * layer_size + l.offset;
                 uint8_t *blocks = malloc((uint64_t)l.wb * l.hb * 16);
+                uint64_t q0 = slow_ms ? SDL_GetTicksNS() : 0;
                 if (linear) for (uint32_t y = 0; y < l.hb; y++) memcpy(blocks + (uint64_t)y * l.wb * 16, src + (uint64_t)y * t->stride, l.wb * 16);
                 else tegra_deswizzle(src, blocks, l.wb, l.hb, 1, 16, l.block_height_log2, l.block_depth_log2);
+                uint64_t q1 = slow_ms ? SDL_GetTicksNS() : 0;
                 VkSpan s = vk_transient((uint64_t)l.w * l.h * 4, 16);
                 astc_decode_ldr(blocks, l.w, l.h, b->astc_bw, b->astc_bh, b->astc_srgb, s.ptr);
+                if (slow_ms) ut_swz += q1 - q0, ut_astc += SDL_GetTicksNS() - q1;
                 free(blocks);
                 VkBufferImageCopy rg = {.bufferOffset = s.off, .bufferRowLength = l.w, .bufferImageHeight = l.h,
                                         .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, lv, layer, 1},
@@ -818,11 +892,13 @@ upload:
             VkSpan s = vk_transient((uint64_t)out_row * l.hb * l.d, 16);
             uint8_t *lin = expand ? malloc(sz) : s.ptr;
             const uint8_t *src = base + layer * layer_size + l.offset;
+            uint64_t q0 = slow_ms ? SDL_GetTicksNS() : 0;
             if (linear) {
                 for (uint32_t y = 0; y < l.hb; y++) memcpy(lin + (uint64_t)y * row, src + (uint64_t)y * t->stride, row);
             } else {
                 tegra_deswizzle(src, lin, l.wb, l.hb, l.d, fi->bpb, l.block_height_log2, l.block_depth_log2);
             }
+            if (slow_ms) ut_swz += SDL_GetTicksNS() - q0;
             {   // (debug) LARECOMP_DUMP_TEX=<w>x<h>: level 0 of uploads that size, as stored and as decoded
                 static int dw = -1, dh;
                 if (dw < 0 && !(getenv("LARECOMP_DUMP_TEX") && sscanf(getenv("LARECOMP_DUMP_TEX"), "%dx%d", &dw, &dh) == 2)) dw = 0;

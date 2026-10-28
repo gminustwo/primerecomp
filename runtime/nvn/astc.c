@@ -93,6 +93,17 @@ static const uint8_t cunq_data[] = {
 static const uint16_t cunq_off[16] = {0,6,14,24,36,52,72,96,128,168,216,280,360,456,584,744};  // QUANT_256: identity
 _Static_assert(sizeof wunq_data == 142 && sizeof cunq_data == 936, "unquantization table size");
 
+void astc_tables(uint32_t *out) {
+    uint32_t *o = out;
+    for (int i = 0; i < 21; i++) *o++ = q_bits[i];
+    for (int i = 0; i < 21; i++) *o++ = q_trits[i];
+    for (int i = 0; i < 21; i++) *o++ = q_quints[i];
+    for (int i = 0; i < 142; i++) *o++ = wunq_data[i];
+    for (int i = 0; i < 12; i++) *o++ = wunq_off[i];
+    for (int i = 0; i < 936; i++) *o++ = cunq_data[i];
+    for (int i = 0; i < 16; i++) *o++ = cunq_off[i];
+}
+
 // ---- bits ----
 
 typedef struct { uint64_t lo, hi; } Bits128;

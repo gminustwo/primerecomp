@@ -13,3 +13,9 @@ void astc_decode_ldr(const uint8_t *blocks, uint32_t width, uint32_t height, uin
 
 // One block -> bw*bh*4 bytes (rows of bw texels). Returns false for an error block (output magenta).
 bool astc_decode_block(const uint8_t block[16], uint32_t bw, uint32_t bh, bool srgb, uint8_t *rgba_out);
+
+// The decoder's tables, for the GPU decoder (runtime/nvn/vulkan/astc_gpu.c), one per word in this order: bits /
+// trits / quints per quantization level (21 each), weight unquantization (142) and its offsets (12), colour
+// unquantization (936) and its offsets (16).
+#define ASTC_TABLE_WORDS (3 * 21 + 142 + 12 + 936 + 16)
+void astc_tables(uint32_t *out);
