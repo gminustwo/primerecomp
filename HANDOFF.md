@@ -1,16 +1,32 @@
-# Handoff: 2026-10-27
+# Handoff: 2026-10-28
 
 Where the work stopped, and what to do next. Read with PROGRESS.md (history) and the commit log.
 
 ## State (2026-10-25)
 
+- **Ultrawide HUD (25c6f9e, 2026-10-28**, the user: "the 3d game environment looks fine. the UI needs to also be
+  adjusted to fit the ultrawide screen ... What I mean is the HUD elements"). In play, the HUD's side pieces (radar,
+  threat bar, visor / beam icons, map, missile count, the frames, the scan visor's frame and corner brackets) go out
+  to the window's sides as whole pieces; energy bar, hint text, scan panels stay in the middle; menus (game_in_play
+  false: pause screens, map, title, file select) stay 16:9. How: exec.c hud_side - the draw's vertices through its
+  vertex shader on the CPU (maxwell/vsim.c, straight-line float shaders only), a triangle list split into connected
+  pieces (grouped when < 0.05 apart across: text lines stay whole), drawn in up to 3 parts with their own viewports.
+  Side = a piece's middle beyond 0.33 of the box's half-width (combat HUD: middle pieces within 0.23, side ones from
+  0.42). Video tab "HUD position": Screen edges (default) / 21:9 / Middle 16:9 (`hud` in the ini; LARECOMP_HUD for
+  tests). Checked at 2560x720 (32:9) and 1680x720 (21:9): combat HUD, scan visor (scanning, "Scan complete" panel),
+  walking / turning / jumping 290 frames (no piece changed sides), the lock-on hint text, file select (text whole),
+  map and inventory pause screens (16:9 as before), the F1 Video tab; 16:9 untouched (no HUD work at all). ~0.25 ms
+  of CPU a frame at 32:9. Known: the small "[ ]" ends beside the energy number are part of the side frames' mesh and
+  go out with them. Not looked at: morph ball HUD, thermal / X-ray visors (later items), boss bars. Test hook:
+  LARECOMP_LOG_HUD=<from>:<to>. Not pushed, not in a release or the user's copy (their monitor is 16:9: a resized
+  window shows it).
 - **PICK UP HERE (stopped 2026-10-27 late; the user: "create a handoff for now and well pick it up tomorrow").**
   Open, in the user's order - details in the bullets below:
-  1. **Ultrawide (GitHub issue #1): fixed in local main only (07d6e85)** - not in the user's Steam copy, not in the
-     v0.0.4 draft, not pushed. Ask the user: put it into v0.0.4 (rebuild the zip / AppImage with
-     build/session_69905a54/dist_win.sh and appimage.sh, replace the draft's assets, add a line to its notes) and
-     their copy? The squish itself was never reproduced: the reporters offered photos / video - a capture of it, or
-     where exactly, would settle whether the fix covers it.
+  1. **Ultrawide (GitHub issue #1): fixed in local main only (07d6e85; HUD spread 25c6f9e above)** - not in the
+     user's Steam copy, not in the v0.0.4 draft, not pushed. Ask the user: put it into v0.0.4 (rebuild the zip /
+     AppImage with build/session_69905a54/dist_win.sh and appimage.sh, replace the draft's assets, add a line to its
+     notes) and their copy? The squish itself was never reproduced: the reporters offered photos / video - a capture
+     of it, or where exactly, would settle whether the fix covers it.
   2. **Crates should be scannable** (the user, while playing): which room? Unknown, and whether plain crates are
      scannable on the Switch is unconfirmed (a web search found nothing). Ask where; then compare the scan visor
      there with the game's data for that actor.
