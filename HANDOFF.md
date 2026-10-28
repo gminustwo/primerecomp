@@ -18,6 +18,8 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
     black one the game clears itself - [cclear] now logs address, target and colour), thin orange edge lines on her
     armour (NaN probe of her fragment shader: none; stippled at 720p test windows, thin lines at 4K - may be the
     game's rim light), and a thin cyan diagonal line from the arm cannon in the Burning Trail (there before the fix).
+    In the user's Steam copy: its exe (and dll.a, README) is f6eb888's release build, swapped in place in
+    private/playtest/PrimeRecomp-9584b5a/ (the old ones kept as *.bak-9584b5a); checked there on the pause screen.
   - **Door hitches (2026-10-27**, the user: "jitter and frame drops when going through doors ... this is still pretty
     bad on steam deck performance too. so continue working on that"). Measured at the Magmoor save station's door
     (the user's save; script: intro A presses, ZR at 5900/5960/6020, STICK_UP from 6150 at 60 fps): the frame the next
