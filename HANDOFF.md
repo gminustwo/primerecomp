@@ -5,6 +5,19 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 ## State (2026-10-25)
 
 - **START HERE (2026-10-26).**
+  - **Samus on the pause screen fixed (2026-10-27**, the user: "fix the render issues with samus' character models on
+    the pause screen"): spikes from her left hand. Cause: the translator's LDC.64 with the address register among
+    its destinations (`LDC.64 R24, c[4][R24-0x18]`) read the second word through the first one's loaded value
+    (translate.c: the address is now held in `ldc_addr_`). In MPR's skinning shaders that is bone 3's x row, so every
+    vertex with 3-4 bone weights was off (64 of 15154 in the upper body); 5 skinning shaders on the pause screen had
+    it, likely the same ones as for skinned models elsewhere. Found with LARECOMP_SKIP_COUNT=<count>,... (skip draws
+    by vertex / index count) and LARECOMP_DUMP_DRAW=<count> (debug frame: that draw's indices, streams, vertex cbufs
+    as build/draw_<count>_*), then the translated GLSL compiled as C++ and run on the dump (scratchpad vsemu/: the
+    body of main() #included in a harness) against numpy skinning: 0 of 15154 differ after the fix. README item
+    crossed out. Looked at and left: the doll's dull, dark look (no reference to compare; her env cube is a 1x1
+    black one the game clears itself - [cclear] now logs address, target and colour), thin orange edge lines on her
+    armour (NaN probe of her fragment shader: none; stippled at 720p test windows, thin lines at 4K - may be the
+    game's rim light), and a thin cyan diagonal line from the arm cannon in the Burning Trail (there before the fix).
   - **Door hitches (2026-10-27**, the user: "jitter and frame drops when going through doors ... this is still pretty
     bad on steam deck performance too. so continue working on that"). Measured at the Magmoor save station's door
     (the user's save; script: intro A presses, ZR at 5900/5960/6020, STICK_UP from 6150 at 60 fps): the frame the next

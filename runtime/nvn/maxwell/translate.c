@@ -1207,6 +1207,10 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         char rb[16];
         const char *dyn = a == RZ ? NULL : reg(c, a, rb);
         if (dyn && off >= 0x8000) off -= 0x10000;
+        // LDC.64 R24, c[4][R24-0x18]: the first register written is the address. Read it once, before - the second
+        // half read through the loaded value (the pause screen's Samus: bones 3-4 of a vertex off, spikes from her hand).
+        bool hold = dyn && n > 1 && a >= d && a < d + n;
+        if (hold) sp(&c->body, "    { uint ldc_addr_ = %s;\n", dyn), dyn = "ldc_addr_";
         for (int i = 0; i < n; i++) {
             char cb[256];
             cbuf_ref(c, idx, off + 4 * i, dyn, cb);
@@ -1215,6 +1219,7 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
             set_reg(c, d + i, cb);
             if (!dyn && d + i != RZ) c->reg_cbuf[d + i] = 1 + ((uint32_t)idx << 16 | (uint32_t)(off + 4 * i));
         }
+        if (hold) sp(&c->body, "    }\n");
     } else if (OPM(0xdf00000000000000ull, 0xff40000000000000ull)) {  // TLD4S
         emit_tld4s(c, w);
     } else if (OPM(0xd000000000000000ull, 0xf600000000000000ull)) {  // TEXS

@@ -37,7 +37,7 @@ freeze.
 > - Steam Deck performance still isn't great, with major slowdowns when going through doors
 > - Numerous graphics and rendering issues
 > - Lighting issues persist
-> - Samus' character model doesn't render correctly on the pause screen
+> - ~~Samus' character model doesn't render correctly on the pause screen~~
 >
 > Found something else? See [Bugs and feature requests](#bugs-and-feature-requests).
 

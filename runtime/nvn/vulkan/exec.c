@@ -3254,6 +3254,16 @@ static void draw_(CmdRec *r, bool indexed) {
             }
         }
         for (int i = 0; i < nskip; i++) if (last_hash == skip[i]) SKIP(SKIP_LIST);
+        static uint64_t skipn[16];  // LARECOMP_SKIP_COUNT=<count>,...: draws of these vertex / index counts (test)
+        static int nskipn = -1;
+        if (nskipn < 0) {
+            nskipn = 0;
+            for (const char *p = getenv("LARECOMP_SKIP_COUNT"); p && *p && nskipn < 16;) {
+                skipn[nskipn++] = strtoull(p, (char **)&p, 10);
+                while (*p == ',') p++;
+            }
+        }
+        for (int i = 0; i < nskipn; i++) if (r->x[2] == skipn[i]) SKIP(SKIP_LIST);
         if (g_debug_frame && getenv("LARECOMP_LOG_FSHASH")) LOG("[fshash] fs=%llx hash %016llx\n", (unsigned long long)fs, (unsigned long long)last_hash);
         g_cur_fs_hash = last_hash, g_cur_fs_addr = fs;
     }
@@ -3670,6 +3680,39 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
                 (unsigned long long)st.sbuf[0][i].addr, (unsigned long long)st.sbuf[0][i].size,
                 (unsigned long long)st.sbuf[1][i].addr, (unsigned long long)st.sbuf[1][i].size,
                 (unsigned long long)HEAP_BASE, (unsigned long long)gmem_size);
+    const char *dd = getenv("LARECOMP_DUMP_DRAW");  // (test) <count>: that draw's indices, vertex streams and vertex
+    if (dd && strtoull(dd, NULL, 10) == r->x[2]) {   // cbufs, as build/draw_<count>_*.bin (+ .txt: what they are)
+        char path[160];
+        snprintf(path, sizeof path, "build/draw_%llu.txt", (unsigned long long)r->x[2]);
+        FILE *f = fopen(path, "w");
+        if (f) {
+            fprintf(f, "mode %llu count %llu indexed %d itype %llu base_vertex %lld\n", (unsigned long long)r->x[0],
+                    (unsigned long long)r->x[2], indexed, indexed ? (unsigned long long)r->x[1] : 0ull,
+                    indexed ? (long long)(int32_t)r->x[4] : 0ll);
+            for (int i = 0; i < 32; i++)
+                if (pr->vi->attr_mask & (1u << i)) {
+                    uint32_t a = i < st.nattrib ? st.attrib[i] : 0;
+                    fprintf(f, "attr %d fmt %#x stream %u offset %u\n", i, a & 0xFF, (a >> 8) & 0x1F, a >> 13);
+                }
+            for (int s = 0; s < 4; s++)
+                if (st.vbuf[s].addr) fprintf(f, "stream %d stride %u size %llu\n", s, s < st.nstream ? st.stream[s][0] : 0,
+                                             (unsigned long long)st.vbuf[s].size);
+            for (int c = 3; c < 18; c++)
+                if (((pr->vi->cbuf_mask >> c) & 1) && st.ubuf[0][c - 3].addr)
+                    fprintf(f, "cbuf %d size %u\n", c, (unsigned)st.ubuf[0][c - 3].size);
+            fclose(f);
+        }
+        uint64_t isz = !indexed ? 0 : r->x[1] == 0 ? 1 : r->x[1] == 1 ? 2 : 4;
+        if (indexed && (f = (snprintf(path, sizeof path, "build/draw_%llu_idx.bin", (unsigned long long)r->x[2]), fopen(path, "wb"))))
+            fwrite((const void *)(uintptr_t)r->x[3], isz, r->x[2], f), fclose(f);
+        for (int s = 0; s < 4; s++)
+            if (st.vbuf[s].addr && (f = (snprintf(path, sizeof path, "build/draw_%llu_vb%d.bin", (unsigned long long)r->x[2], s), fopen(path, "wb"))))
+                fwrite((const void *)(uintptr_t)st.vbuf[s].addr, 1, st.vbuf[s].size, f), fclose(f);
+        for (int c = 3; c < 18; c++)
+            if (((pr->vi->cbuf_mask >> c) & 1) && st.ubuf[0][c - 3].addr &&
+                (f = (snprintf(path, sizeof path, "build/draw_%llu_cb%d.bin", (unsigned long long)r->x[2], c), fopen(path, "wb"))))
+                fwrite((const void *)(uintptr_t)st.ubuf[0][c - 3].addr, 1, st.ubuf[0][c - 3].size, f), fclose(f);
+    }
     if (getenv("LARECOMP_DEBUG_DATA")) {  // vertex streams 0-1 and fragment cbufs: the first floats
         for (int s = 0; s < 4; s++) {  // (the first 32 words, as floats and as raw bits: some attributes carry integers)
             if (!st.vbuf[s].addr) continue;
@@ -4417,8 +4460,10 @@ static void exec_list(uint64_t handle, int depth) {
             snap_reason = "clear-color"; snapshots_invalidate(NULL);
             int index = (int)r->x[0];
             if (getenv("LARECOMP_LOG_CLEARS") && index < st.rt.ncolor && st.rt.color[index])
-                LOG("[cclear] frame %llu idx %d %ux%u f%#x mask %#x\n", (unsigned long long)renderer_present_count(), index,
-                    st.rt.color[index]->width, st.rt.color[index]->height, st.rt.color[index]->format, (uint32_t)r->x[2]);
+                LOG("[cclear] frame %llu idx %d @%llx %ux%u f%#x target %u mask %#x: %g %g %g %g\n",
+                    (unsigned long long)renderer_present_count(), index, (unsigned long long)st.rt.color[index]->addr,
+                    st.rt.color[index]->width, st.rt.color[index]->height, st.rt.color[index]->format, st.rt.color[index]->target,
+                    (uint32_t)r->x[2], ((const float *)x)[0], ((const float *)x)[1], ((const float *)x)[2], ((const float *)x)[3]);
             if (ct_on() && index < st.rt.ncolor && st.rt.color[index])
                 LOG("[ct] clear-color %p mask %#x sc %d %d %d %d\n", (void *)st.rt.color[index], (uint32_t)r->x[2], st.scissor[0][0], st.scissor[0][1],
                     st.scissor[0][2], st.scissor[0][3]);
