@@ -410,24 +410,21 @@ static void tab_display(void) {
                "CPU), GPU the graphics card's work. The largest is what holds the frame rate back - a frame at 60 "
                "fps has 16.7 ms.");
     {
-        static const char *const rates[] = {"30", "60 (original)", "120", "Uncapped"};
-        static const int values[] = {30, 60, 120, 0};
-        int i = g_settings.frame_rate == 30 ? 0 : g_settings.frame_rate == 120 ? 2 : g_settings.frame_rate == 0 ? 3 : 1;
-        if (opt_choice("Frame rate", &i, rates, 4, 1,
+        static const char *const rates[] = {"30", "60 (original)", "120"};
+        static const int values[] = {30, 60, 120};
+        int i = g_settings.frame_rate == 30 ? 0 : g_settings.frame_rate == 120 ? 2 : 1;
+        if (opt_choice("Frame rate", &i, rates, 3, 1,
                        "Frames per second. 60 is the game's own rate. 120 also runs the game's simulation twice as "
-                       "often, so motion is smoother; game speed stays the same. Uncapped: as many as V-Sync lets "
-                       "through - your screen's refresh rate with V-Sync on (144 on a 144 Hz screen), as fast as "
-                       "your machine goes with it off (up to 1000) - at the same game speed. 30: for slower machines "
-                       "and the Steam Deck - a steady 30 at full game speed.\n\nWhen your machine can't keep up, the "
-                       "game still runs at full speed (down to 20 fps), only less smoothly.", false))
+                       "often, so motion is smoother; game speed stays the same. 30: for slower machines and the "
+                       "Steam Deck - a steady 30 at full game speed.\n\nWhen your machine can't keep up, the game "
+                       "still runs at full speed (down to 20 fps), only less smoothly.", false))
             g_settings.frame_rate = values[i];
     }
     // (runtime/nvn/vulkan/device.c present_mode; the swapchain is remade on a change)
     opt_toggle("V-Sync", &g_settings.vsync, true,
-               "On: no tearing - the screen only ever shows whole frames. With the Uncapped frame rate, frames "
-               "follow your screen's refresh rate.\n\nOff: each frame goes to the screen the moment it's done - a "
-               "little less input lag, but tearing (a line across the image where two frames meet). With Uncapped, "
-               "as many frames as your machine can draw.");
+               "On: no tearing - the screen only ever shows whole frames.\n\nOff: each frame goes to the screen "
+               "the moment it's done - a little less input lag, but tearing (a line across the image where two "
+               "frames meet).");
 
     opt_section("Rendering");
     // display order -> RES_* (the ini / enum order predates the menu order)

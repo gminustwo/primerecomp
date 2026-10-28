@@ -152,7 +152,7 @@ void settings_load(void) {
         else if (!strcmp(key, "show_fps")) g_settings.show_fps = atoi(val) != 0;
         else if (!strcmp(key, "frame_rate")) {
             int r = atoi(val);
-            g_settings.frame_rate = r == 120 || r == 30 || r == 0 ? r : 60;
+            g_settings.frame_rate = r == 120 || r == 30 ? r : r == 0 ? 120 : 60;  // (0: Uncapped, gone since 2026-10-27)
         }
         else if (!strcmp(key, "vsync")) g_settings.vsync = atoi(val) != 0;
         else if (!strcmp(key, "fov")) g_settings.fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);

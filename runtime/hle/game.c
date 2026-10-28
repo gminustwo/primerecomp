@@ -20,25 +20,21 @@ const char *game_level_name(void) { return "-"; }
 // The game steps a fixed 1/60 s per simulation tick (CGameArchitectureSupport::Update; rt_frame_step below says how
 // much time a frame adds); at 120 every place that builds that 1/60 builds 1/120 instead (tools/patches.py
 // STEP_SITES), so the game runs at the same speed with twice the steps. 30: a frame every 1/30 s, two ticks each
-// (slower machines: a steady 30 at full speed). Uncapped (0): frames as fast as they come, up to UNCAPPED_MAX_FPS
-// (game_pace_present). The game runs a tick every frame however short the frame was (CGameArchitectureSupport::Update
-// below: more only to catch up), so with a 1/60 tick an uncapped 400 fps ran the game 6.7x too fast; there each
-// frame's tick is the time it took instead (frame_time), at most 1/60 (slower frames take whole 1/60 ticks, as at 60).
-#define UNCAPPED_MAX_FPS 1000
+// (slower machines: a steady 30 at full speed). (No uncapped rate since 2026-10-27, at the user's request: the game
+// runs a tick every frame however short the frame was, so one needed a tick of each frame's own time.)
 int game_frame_rate(void) {
     static int env = -2;
-    if (env == -2) env = getenv("LARECOMP_FPS") ? atoi(getenv("LARECOMP_FPS")) : -1;
-    return env >= 0 ? env : g_settings.frame_rate;
+    if (env == -2) {
+        int e = getenv("LARECOMP_FPS") ? atoi(getenv("LARECOMP_FPS")) : -1;
+        env = e == 30 || e == 60 || e == 120 ? e : -1;
+    }
+    return env > 0 ? env : g_settings.frame_rate;
 }
 
-static _Atomic uint32_t g_uncapped_step;  // (float bits; 0: none yet) Uncapped: the current frame's tick
-
 uint32_t rt_sim_step_bits(int negative) {
-    int fps = game_frame_rate();
-    float step = 1.0f / (fps == 120 ? 120 : 60);
+    float step = 1.0f / (game_frame_rate() == 120 ? 120 : 60);
     uint32_t b;
     memcpy(&b, &step, 4);
-    if (fps <= 0 && g_uncapped_step) b = g_uncapped_step;
     return negative ? b | 0x80000000u : b;
 }
 
@@ -76,25 +72,6 @@ static unsigned frame_time(Cpu *c) {
     }
     float tick, el, t;
     memcpy(&el, &c->v[8], 4);
-    if (game_frame_rate() <= 0) {
-        // Uncapped: a frame's tick is the time frames take, averaged over ~16 of them - single frame times jitter
-        // (V-Sync's FIFO at 144 Hz: under 5 and over 9 ms in turn while the screen shows one every 6.9 ms; ticks that
-        // followed them made the motion uneven) - and pulled back to real time by what the game has run ahead or
-        // behind. At least 1/UNCAPPED_MAX_FPS; frames slower than 1/60 take whole 1/60 ticks below, as at 60.
-        static float avg, ahead;  // the average frame time; game time ahead of real time (negative: behind)
-        float e = el >= 0 ? el : 1.0f / 60, s;
-        avg = avg > 0 ? avg + (fminf(e, 1.0f / 60) - avg) / 16 : fminf(e, 1.0f / 60);
-        if (e - ahead >= 1.0f / 60) {
-            s = 1.0f / 60, el = e - ahead, ahead = 0;
-        } else {
-            s = fminf(fmaxf(avg - ahead / 16, 1.0f / UNCAPPED_MAX_FPS), 1.0f / 60);
-            ahead += s - e;
-            el = s;
-        }
-        uint32_t sb;
-        memcpy(&sb, &s, 4);
-        g_uncapped_step = sb;
-    }
     uint32_t tb = rt_sim_step_bits(0);
     memcpy(&tick, &tb, 4);
     if (!(el >= 0)) el = tick;  // (NaN, a clock going back)
@@ -173,7 +150,6 @@ void game_pace_present(int interval) {
         LOG("[pace] frames presented by thread %x\n", t ? t->handle : 0);
     }
     int fps = game_frame_rate();
-    if (fps <= 0) fps = UNCAPPED_MAX_FPS;
     static uint64_t next;
     uint64_t period = (uint64_t)(1e9 * (interval > 0 ? interval : 1) / fps), now = plat_now_ns();
     if (!next || now > next + 4 * period) next = now;

@@ -467,7 +467,7 @@ void input_frame(uint64_t frame) {
     const char *spec = getenv("LARECOMP_INPUT");
     if (!spec) return;
     {   // LARECOMP_INPUT_CLOCK=<hz>: the script's frames are 1/<hz> s since the first frame, not presented frames
-        // (tests at the Uncapped frame rate, where frames and game time no longer go together)
+        // (the same script at any frame rate: LARECOMP_INPUT_CLOCK=60 at 120 fps)
         static int hz = -1;
         static uint64_t t0;
         if (hz < 0) hz = getenv("LARECOMP_INPUT_CLOCK") ? atoi(getenv("LARECOMP_INPUT_CLOCK")) : 0;

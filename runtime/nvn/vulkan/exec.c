@@ -891,8 +891,8 @@ const char *renderer_stats(void) {
              (unsigned long long)stat_dispatches, (unsigned long long)stat_flushes, (double)stat_wait_ns / 1e6,
              atomic_exchange(&stat_compiles, 0), (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0,
              vk_live_textures(), vk_live_images());
-    {   // (and the game's simulation steps per second: 60 at any frame rate - 120 at 120, the frame rate at Uncapped -
-        // and its speed, game time per real time: 1 while it keeps up)
+    {   // (and the game's simulation steps per second: 60 at any frame rate - 120 at 120 - and its speed, game time
+        // per real time: 1 while it keeps up)
         extern uint64_t game_ticks_total(void), game_sim_ns(void);
         static uint64_t last_ticks, last_sim, last_ns;
         uint64_t ticks = game_ticks_total(), sim = game_sim_ns(), ns = SDL_GetTicksNS();

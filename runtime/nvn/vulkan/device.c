@@ -314,22 +314,17 @@ void vk_pipeline_cache_save(void) {
 }
 
 // ================================================================== swapchain
-extern int game_frame_rate(void);  // runtime/hle/game.c (0: Uncapped)
-
 static VkPresentModeKHR present_mode(void) {
     // V-Sync on (Video tab, the default): MAILBOX - the game paces itself (game.c game_pace_present), and with FIFO
     // every submission queued behind the one waiting for a window image, so the game's fence waits followed the
     // presentation engine: a throttled / captured / busy compositor slowed the whole game (4-21 fps with the GPU
-    // mostly idle; mailbox: 60). No tearing. At the Uncapped frame rate FIFO, though: frames at the display's refresh
-    // rate (the game's speed follows the frame times there). V-Sync off: IMMEDIATE, each frame shown when it's done
-    // (tearing), else MAILBOX. FIFO where those aren't offered (it always is). LARECOMP_VK_PRESENT=fifo|immediate|
-    // mailbox to choose.
+    // mostly idle; mailbox: 60). No tearing. V-Sync off: IMMEDIATE, each frame shown when it's done (tearing), else
+    // MAILBOX. FIFO where those aren't offered (it always is). LARECOMP_VK_PRESENT=fifo|immediate|mailbox to choose.
     const char *e = getenv("LARECOMP_VK_PRESENT");
     VkPresentModeKHR want = VK_PRESENT_MODE_MAILBOX_KHR, then = VK_PRESENT_MODE_FIFO_KHR;
     if (e) want = !strcmp(e, "mailbox") ? VK_PRESENT_MODE_MAILBOX_KHR : !strcmp(e, "immediate") ? VK_PRESENT_MODE_IMMEDIATE_KHR
                                                                          : VK_PRESENT_MODE_FIFO_KHR;
     else if (!g_settings.vsync) want = VK_PRESENT_MODE_IMMEDIATE_KHR, then = VK_PRESENT_MODE_MAILBOX_KHR;
-    else if (game_frame_rate() <= 0) want = VK_PRESENT_MODE_FIFO_KHR;
     uint32_t n = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.phys, g_vk.surface, &n, NULL);
     VkPresentModeKHR m[16];
@@ -351,8 +346,8 @@ static VkPresentModeKHR present_mode(void) {
     return got;
 }
 
-// what present_mode chose from: V-Sync, and Uncapped or not (a change makes a new swapchain: vk_frame_begin)
-static int present_key(void) { return g_settings.vsync * 2 + (game_frame_rate() <= 0); }
+// what present_mode chose from: V-Sync (a change makes a new swapchain: vk_frame_begin)
+static int present_key(void) { return g_settings.vsync; }
 static int sc_present_key = -1;
 
 static void create_swapchain(void) {
@@ -431,8 +426,8 @@ static void image_barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, V
 
 typedef struct { uint32_t image; VkSemaphore acquired; bool ok; } Frame;
 static Frame cur_frame;
-// kernel.c: this thread's time blocked. Waiting for the display (FIFO: V-Sync with Uncapped) in the acquire and the
-// present counts too: idle, not work (exec.c vk_pace_frame - a 60 Hz display's whole 16.7 ms frames were "too slow")
+// kernel.c: this thread's time blocked. Waiting for the display (FIFO) in the acquire and the present counts too:
+// idle, not work (exec.c vk_pace_frame - a 60 Hz display's whole 16.7 ms frames were "too slow")
 extern __thread uint64_t g_blocked_ns;
 
 // Acquire the next window image and begin rendering into it (cleared to `clear`). Returns false when there is

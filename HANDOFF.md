@@ -5,6 +5,12 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 ## State (2026-10-25)
 
 - **START HERE (2026-10-26).**
+  - **No more Uncapped frame rate (2026-10-27**, the user: "its working pretty well right now. One thing, remove the
+    uncapped FPS option"): the Video tab's Frame rate is 30 / 60 / 120; the mode is gone from the code too (game.c's
+    per-frame tick and UNCAPPED_MAX_FPS, device.c's FIFO at Uncapped). V-Sync stays: on MAILBOX, off IMMEDIATE.
+    An ini's `frame_rate = 0` loads as 120; LARECOMP_FPS takes 30 / 60 / 120 only. The two bullets below about
+    Uncapped are history. Checked: an ini with 0 plays at 120 fps, sim 120 Hz, speed 1.00x, mailbox; the menu's
+    Frame rate stops at 120.
   - **Branch deck-test on GitHub (2026-10-27**, the user: "push to a branch I can try on my deck"): local main with
     this session's work (Uncapped fix, V-Sync option, the door-hitch commits, the pause-screen fix) merged with
     origin/main's macOS docs commit (5e3f2db). main itself isn't pushed: origin/main stays at 5e3f2db. Waiting on the
