@@ -5,6 +5,10 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 ## State (2026-10-25)
 
 - **START HERE (2026-10-26).**
+  - **Branch deck-test on GitHub (2026-10-27**, the user: "push to a branch I can try on my deck"): local main with
+    this session's work (Uncapped fix, V-Sync option, the door-hitch commits, the pause-screen fix) merged with
+    origin/main's macOS docs commit (5e3f2db). main itself isn't pushed: origin/main stays at 5e3f2db. Waiting on the
+    user's Deck results: doors (README "Deck slowdowns at doors" stays until then) and the pause screen.
   - **Samus on the pause screen fixed (2026-10-27**, the user: "fix the render issues with samus' character models on
     the pause screen"): spikes from her left hand. Cause: the translator's LDC.64 with the address register among
     its destinations (`LDC.64 R24, c[4][R24-0x18]`) read the second word through the first one's loaded value
