@@ -5,6 +5,22 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 ## State (2026-10-25)
 
 - **START HERE (2026-10-26).**
+  - **Door hitches (2026-10-27**, the user: "jitter and frame drops when going through doors ... this is still pretty
+    bad on steam deck performance too. so continue working on that"). Measured at the Magmoor save station's door
+    (the user's save; script: intro A presses, ZR at 5900/5960/6020, STICK_UP from 6150 at 60 fps): the frame the next
+    room shows was 293 + 261 ms, ~500 ms of ASTC decoded on the CPU on the render thread (~50 textures of 1024x1024 at
+    ~10 ms). Fixed, in order: b74525d ASTC decoded by a compute shader (astc_gpu.c; bit-exact with astc.c:
+    LARECOMP_ASTC_SELFTEST / LARECOMP_ASTC_CHECK), a1c05a4 sparse lighting volumes uploaded page by page (were 10-70
+    ms each at every mapping change; LARECOMP_SPARSE_CHECK) and sampled textures without dedicated allocations (14-42
+    ms vkAllocateMemory each), e91aadd shader builds below the game's threads. Now at 120 fps on the RTX 5090 / i9:
+    door worst frame 11-17 ms (was 293), save load 95-227 ms (was 800+; the rest is the transient ring growing on
+    the first load - pre-allocating chunks would help - and GPU waits). Tools: LARECOMP_VK_PROF=1 with
+    LARECOMP_HITCH_MS=<ms> (per-frame categories, image / view creation), LARECOMP_LOG_SLOW_UPLOADS=<ms>,
+    LARECOMP_COMPILE_THREADS, LARECOMP_INPUT_CLOCK. **Not run on a Deck**: the README's "Deck slowdowns at doors"
+    stays until the user checks. A Windows Deck stand-in (6 E-cores) showed 25-70 ms gaps everywhere, title included,
+    that look like Windows scheduling on parked cores, not the game (no busy threads: 32% of one core in play).
+    Left on a door: first-use BC texture deswizzle + hash on the render thread (1-2.5 ms per 2048x2048 here); the GPU
+    could read them in place from the imported heap (exec.c guest_direct) and deswizzle like the ASTC path.
   - **Uncapped frame rate fixed (2026-10-27**, the user: "turning off vsync doesn't actually turn off vsync"; they
     didn't say which switch - the game has no V-Sync option, Uncapped is the nearest). The game runs one simulation
     tick per frame however short the frame (CGameArchitectureSupport::Update's loop always ticks once), so Uncapped's
