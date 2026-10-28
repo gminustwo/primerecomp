@@ -4,7 +4,18 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 
 ## State (2026-10-25)
 
-- **Ultrawide HUD (25c6f9e, 2026-10-28**, the user: "the 3d game environment looks fine. the UI needs to also be
+- **Ultrawide is in the v0.0.4 draft and the user's Steam copy (2026-10-28**, the user: "yes put it in v0.0.4 and
+  my steam copy"). release-v0.0.4 fast-forwarded to main (pushed: origin/release-v0.0.4 = local main; main itself
+  still not pushed). Draft assets replaced: PrimeRecomp-v0.0.4-windows.zip (sha256 babbd759...80cc, from 9a53ce1;
+  same 144 files as v0.0.3, only exe / dll.a / README new) and PrimeRecomp-v0.0.4-linux-x86_64.AppImage (sha256
+  ebcaac02...7d91); notes (build/session_69905a54/release_v004_notes.md; the earlier ones *_9e0d513.md) gained two
+  ultrawide bullets. The previous v0.0.4 build is in build/dist-v0.0.4-9e0d513/. The user's copy
+  (private/playtest/PrimeRecomp-9584b5a/) has the zip's exe / dll.a / README; the 1abae74 ones are *.bak-1abae74.
+  Checked: the copy on a scratch copy of the user's Phendrana save, fullscreen 4K 16:9 (HUD as before, 120 fps) and
+  windowed 2560x720 (HUD at the edges, radar blips in the radar, 120 fps); the AppImage in WSL boots to the intro (0
+  faults, 0 skipped). Found on that save and fixed (9a53ce1): the radar's blips are one instanced draw, which stayed
+  in the middle - instances are pieces now. Still a draft: publishing waits for the user.
+- **Ultrawide HUD (25c6f9e, 9a53ce1, 2026-10-28**, the user: "the 3d game environment looks fine. the UI needs to also be
   adjusted to fit the ultrawide screen ... What I mean is the HUD elements"). In play, the HUD's side pieces (radar,
   threat bar, visor / beam icons, map, missile count, the frames, the scan visor's frame and corner brackets) go out
   to the window's sides as whole pieces; energy bar, hint text, scan panels stay in the middle; menus (game_in_play
@@ -18,15 +29,14 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   map and inventory pause screens (16:9 as before), the F1 Video tab; 16:9 untouched (no HUD work at all). ~0.25 ms
   of CPU a frame at 32:9. Known: the small "[ ]" ends beside the energy number are part of the side frames' mesh and
   go out with them. Not looked at: morph ball HUD, thermal / X-ray visors (later items), boss bars. Test hook:
-  LARECOMP_LOG_HUD=<from>:<to>. Not pushed, not in a release or the user's copy (their monitor is 16:9: a resized
-  window shows it).
+  LARECOMP_LOG_HUD=<from>:<to>. Instanced draws (9a53ce1): each instance a piece; mixed sides drawn in runs of
+  instances, only when the instance-rate streams step once per instance. (The user's monitor is 16:9: a resized
+  window shows it.)
 - **PICK UP HERE (stopped 2026-10-27 late; the user: "create a handoff for now and well pick it up tomorrow").**
   Open, in the user's order - details in the bullets below:
-  1. **Ultrawide (GitHub issue #1): fixed in local main only (07d6e85; HUD spread 25c6f9e above)** - not in the
-     user's Steam copy, not in the v0.0.4 draft, not pushed. Ask the user: put it into v0.0.4 (rebuild the zip /
-     AppImage with build/session_69905a54/dist_win.sh and appimage.sh, replace the draft's assets, add a line to its
-     notes) and their copy? The squish itself was never reproduced: the reporters offered photos / video - a capture
-     of it, or where exactly, would settle whether the fix covers it.
+  1. **Ultrawide (GitHub issue #1): done - in the v0.0.4 draft and the user's copy (first bullet above).** The
+     squish itself was never reproduced: the reporters offered photos / video - a capture of it, or where exactly,
+     would settle whether the fix covers it (the release notes ask for that).
   2. **Crates should be scannable** (the user, while playing): which room? Unknown, and whether plain crates are
      scannable on the Switch is unconfirmed (a web search found nothing). Ask where; then compare the scan visor
      there with the game's data for that actor.
@@ -40,10 +50,12 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   4. Waiting on the user: the Deck (branch deck-test = 1abae74: doors, pause screen, no Uncapped), the v0.0.4 dmg on
      their Mac, publishing v0.0.4 (then answer issues #1 and #2 - #2, "no option to disable vsync", is the v0.0.4
      V-Sync option; post nothing on GitHub without the user).
-  - **Where things are:** local main e1dfe02 (+ this note) is ahead of every remote branch; origin/main 5e3f2db,
-    deck-test 1abae74, release-v0.0.4 9e0d513 (the v0.0.4 draft's target). The user's Steam shortcut runs
-    private/playtest/PrimeRecomp-9584b5a/, its exe 1abae74's release build (V-Sync option, door fixes, pause-screen
-    fix, no Uncapped; old exe *.bak-9584b5a). **Test runs are muted** (LARECOMP_NO_AUDIO=1: the user hears them).
+  - **Where things are:** origin/release-v0.0.4 = local main (the v0.0.4 draft's target, ultrawide included);
+    origin/main 5e3f2db, deck-test 1abae74. The user's Steam shortcut runs private/playtest/PrimeRecomp-9584b5a/,
+    its exe 9a53ce1's release build (the v0.0.4 zip's: ultrawide HUD, V-Sync option, door fixes, pause-screen fix,
+    no Uncapped; older exes *.bak-1abae74, *.bak-9584b5a). **Test runs are muted** (LARECOMP_NO_AUDIO=1: the user
+    hears them). Testing the user's copy without touching it: LARECOMP_SAVE_DIR / LARECOMP_SETTINGS on scratch
+    copies, back up and restore its primerecomp.log / .previous.log, and a build/ folder for shots (remove it after).
     This session's scripts (scratchpad 69905a54 may be gone) are in build/session_69905a54/: dist_win.sh (Windows zip
     with v0.0.3's tested zig/), appimage*.sh (WSL container build and tests, run from PowerShell: Git Bash mangles
     /mnt paths), release_v004_notes.md, vsemu/harness.cpp (a translated GLSL shader body compiled as C++ on a
