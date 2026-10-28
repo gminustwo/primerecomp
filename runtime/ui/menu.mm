@@ -396,8 +396,17 @@ static void tab_display(void) {
         const char *aspects[] = {"Unlocked", "Original 16:9"};
         opt_choice("Aspect ratio", &g_settings.aspect, aspects, 2, ASPECT_UNLOCKED,
                    "Unlocked: a window wider than 16:9 - an ultrawide screen, 21:9 or 32:9 - shows more of the world "
-                   "to the sides instead of black bars. The visor and HUD keep their shape in the middle; menus and "
-                   "the title screen stay 16:9. Original 16:9: the game's own framing, with bars.");
+                   "to the sides instead of black bars. The HUD keeps its shape (HUD position: where its side pieces "
+                   "go); menus and the title screen stay 16:9. Original 16:9: the game's own framing, with bars.");
+    }
+    {   // (runtime/nvn/vulkan/exec.c hud_side)
+        const char *places[] = {"Screen edges", "21:9", "Middle 16:9"};
+        opt_choice("HUD position", &g_settings.hud, places, 3, HUD_EDGES,
+                   "On a screen wider than 16:9, with the aspect ratio unlocked: where the HUD's side pieces go - the "
+                   "radar, map, visor and beam icons, missile count and the frames around them. Screen edges: out to "
+                   "the sides of the screen. 21:9: as far as a 21:9 screen's edges - on a 32:9 screen, nearer the "
+                   "middle. Middle 16:9: where the game puts them, in the middle of the screen. The energy bar stays "
+                   "in the middle, and menus stay 16:9.");
     }
     bool fs = g_settings.fullscreen;
     if (opt_toggle("Fullscreen", &fs, false, "Fills the screen. Also: F11, Alt+Enter or Cmd+Ctrl+F.")) {

@@ -3,6 +3,9 @@
 #include <stdbool.h>
 
 enum { ASPECT_UNLOCKED = 0, ASPECT_ORIGINAL = 1 };
+// Where the HUD's side pieces go in a window wider than 16:9 (runtime/nvn/vulkan/exec.c hud_side): the window's
+// edges, a 21:9 frame's (on 32:9: nearer the middle), or the middle 16:9 as the game draws them
+enum { HUD_EDGES = 0, HUD_21_9 = 1, HUD_MIDDLE = 2 };
 enum { RES_MATCH = 0, /* 1..8: LAS's 1x..8x, now RES_FIXED */ RES_DYNAMIC = 9, RES_Q75 = 10, RES_Q25 = 11, RES_Q50 = 12,
        RES_FIXED = 13 /* g_settings.res_lines lines */ };
 // (11 was 67% of the display: "67%" in the settings file now loads as RES_Q75)
@@ -28,6 +31,7 @@ extern const char *const g_language_names[N_LANGUAGES];  // for the menu ("Auto"
 
 typedef struct {
     int aspect;          // ASPECT_*: unlocked = fill the window (wider/taller views), original = 16:9 with bars
+    int hud;             // HUD_*: unlocked aspect, wider than 16:9: where the HUD's side pieces go
     bool fullscreen;
     int res_mode;        // RES_MATCH, RES_FIXED (res_lines), RES_DYNAMIC, RES_Q75/50/25 (share of the display)
     int res_lines;       // RES_FIXED: render height in lines, one of g_res_lines (2160 = 4K)

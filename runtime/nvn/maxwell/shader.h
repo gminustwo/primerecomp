@@ -121,3 +121,14 @@ extern const uint8_t *maxwell_dbg_vs;
 // code: shader binary (with the 0x50-byte SPH header for graphics stages)
 ShaderInfo *maxwell_translate(const uint8_t *code, size_t max_size, int stage, const ShaderKey *key);
 void maxwell_free(ShaderInfo *s);
+
+// vsim.c: a straight-line vertex shader (attribute loads / stores, float MOV / ADD / MUL / FMA) run on the CPU, for
+// where a draw's vertices land. Build: NULL for any other shader. Run: attr[i] = generic attribute i, cbuf[k] / its
+// size = hardware constant buffer k (NULL: unbound); pos = the clip-space position; false if a read is out of range.
+typedef struct VsSim VsSim;
+VsSim *maxwell_vsim_build(const uint8_t *code, size_t max_size);
+void maxwell_vsim_free(VsSim *s);
+uint32_t maxwell_vsim_attrs(const VsSim *s);  // attributes read (bit i: attribute i)
+uint32_t maxwell_vsim_cbufs(const VsSim *s);  // constant buffers read
+bool maxwell_vsim_run(const VsSim *s, const float attr[32][4], const uint8_t *const cbuf[18], const uint32_t cbuf_size[18],
+                      float pos[4]);
