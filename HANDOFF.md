@@ -53,10 +53,21 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
     at 144 Hz), so Uncapped's tick is now the average frame time (~16 frames), pulled back to real time: step sd 0.22
     ms vs 4.0 ms measured. Gameplay at V-Sync on + Uncapped: 144 fps, 1.00x, walk and jump as at 60. Not in the
     user's copy yet.
+  - **v0.0.3 is the full release (Latest) and now has a macOS asset** (2026-10-26, on the user's Mac; the user: "I
+    pushed a release for this from windows but it didn't include the mac release. fix it"): PrimeRecomp-v0.0.3-macOS.dmg
+    (sha256 f0949185...cff51), `make dmg` from the v0.0.3 tag (97cd7e8) on the M3 Max. GAMELIB_ID on the Mac is
+    95d45970a8df7ad6, the same as the user's existing Mac setup (no recompile). Checked: the app copied out of the dmg
+    set up a fresh data root from exefs / romfs (READY, game code in 88 s with the bundled primegen and zig), then boots
+    to the title and the frigate's landing deck at 60 fps, 0 skipped draws. **A downloaded copy is quarantined** (each
+    file, once copied out of a quarantined dmg): spctl rejects the app, and the bundled zig and primegen are killed
+    when run (exit 137); after `xattr -dr com.apple.quarantine` all three run. So the release notes, README (new
+    "macOS (Apple Silicon)" in Getting started / Updating / Requirements) and docs/macos.md tell Mac users to run that
+    command after installing and after each update. Untested: whether Open Anyway alone covers the bundled tools. A
+    code-side fix for later: the app clearing the quarantine flag from its own Resources before running them.
   - **v0.0.3 is RELEASED, Latest** (2026-10-26, the user: "make v0.0.3 the full release"; a pre-release before that):
     https://github.com/gminustwo/primerecomp/releases/tag/v0.0.3, tag v0.0.3 on 97cd7e8 (created by publishing). Same assets as the draft below. Notes gained two lines (scratchpad release_v003_notes.md of
     session 67cd6949): the gunship's glass (dual-source blending, 8d3dc15) and shaders compiling again on the first
-    play after updating (the tint removal). macOS isn't in the notes and has no asset.
+    play after updating (the tint removal). The macOS dmg came later (the bullet above).
   - **main is pushed** (2026-10-26, the user's request). **Bugs and feature requests go to the Discord**
     (https://discord.gg/TmWPy28wf), not GitHub issues: README "Bugs and feature requests", CONTRIBUTING.md and the
     v0.0.3 notes say so. **README's known-issues box** (the WARNING under "Status") is the user's list; they asked to

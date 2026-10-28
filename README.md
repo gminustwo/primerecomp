@@ -2,10 +2,10 @@
 
 [![Buy me a coffee](https://img.shields.io/badge/Buy_me_a_coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/rengar)
 
-**PrimeRecomp** runs *Metroid Prime Remastered* (Nintendo Switch, 2023) natively on Windows and Linux, including the
-Steam Deck. The game's code is statically recompiled - translated ahead of time from the Switch's ARM64 code into C
-and compiled for your PC - and the Switch's system services and NVN graphics are reimplemented on the PC, with Vulkan
-for the graphics. No emulator runs.
+**PrimeRecomp** runs *Metroid Prime Remastered* (Nintendo Switch, 2023) natively on Windows, macOS (Apple Silicon) and
+Linux, including the Steam Deck. The game's code is statically recompiled - translated ahead of time from the Switch's
+ARM64 code into C and compiled for your PC - and the Switch's system services and NVN graphics are reimplemented on the
+PC, with Vulkan for the graphics. No emulator runs.
 
 > [!IMPORTANT]
 > **PrimeRecomp is built on [LAS Recomp](https://github.com/peiikai/LASRecomp) by
@@ -48,15 +48,14 @@ frame rate drops (it used to slow down with it), and adds Steam Deck presets (Vi
 30 fps one) and a 30 fps option. Show FPS now also says whether the CPU or the GPU is the limit. The Linux version is
 still experimental, so reports of how it goes are very welcome.
 
-Also new: **updating no longer means setting up again.** A new version uses the game files, saves and settings you
-already have ([Updating](#updating)).
+Also new: **macOS.** PrimeRecomp now comes as a Mac app for Apple Silicon ([macOS](#macos-apple-silicon)), with the same
+Vulkan renderer on MoltenVK. And **updating no longer means setting up again.** A new version uses the game files, saves
+and settings you already have ([Updating](#updating)).
 
 ### Still to do
 
 - Fixing the remaining graphics bugs
 - More testing of the Linux version on real hardware (the Steam Deck's performance first)
-- A macOS release: the app builds and runs from source on Apple Silicon Macs ([docs/macos.md](docs/macos.md)), but
-  isn't a download yet
 - An Android version
 
 ### Bugs and feature requests
@@ -65,10 +64,10 @@ Please report bugs and request features on the [PrimeRecomp Discord][discord] ra
 easier to keep track of them there. For a bug, these help the most:
 
 - **Screenshots, a GIF or a short video** of the problem
-- **The details:** what happened, what you were doing and where in the game, and your system (Windows, Linux or Steam
-  Deck; CPU and GPU)
-- **A copy of your save file:** zip up the `save` folder (Windows: in the PrimeRecomp folder; Linux and Steam Deck:
-  `~/.local/share/primerecomp/save`)
+- **The details:** what happened, what you were doing and where in the game, and your system (Windows, macOS, Linux or
+  Steam Deck; CPU and GPU, or your Mac's model)
+- **A copy of your save file:** zip up the `save` folder (Windows: in the PrimeRecomp folder; macOS:
+  `~/Library/Application Support/io.github.primerecomp/save`; Linux and Steam Deck: `~/.local/share/primerecomp/save`)
 - `primerecomp.log`, if you can, from the folder that holds `save`. It always holds the latest run, and
   `primerecomp.previous.log` the run before.
 
@@ -82,8 +81,9 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 - **Windows:** Windows 10 or 11, 64-bit
 - **Linux:** a 64-bit x86 distribution with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, Arch, SteamOS
   on the Steam Deck, ...)
-- A CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Zen or newer)
-- A GPU with a Vulkan 1.3 driver (any current NVIDIA, AMD or Intel driver; on Linux, Mesa's RADV / ANV or NVIDIA's)
+- On Windows and Linux, a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Zen or newer) and a GPU with a Vulkan
+  1.3 driver (any current NVIDIA, AMD or Intel driver; on Linux, Mesa's RADV / ANV or NVIDIA's)
+- **macOS:** a Mac with Apple Silicon (M1 or newer) and macOS 15 or newer (Intel Macs aren't supported)
 - About 15 GB of free disk space (the game files are copied in, about 7 GB, plus the recompiled game)
 - Your own Metroid Prime Remastered v1.0.0 game files, **extracted**: a folder holding `exefs` and `romfs`
   (extract both from your own dump with your usual Switch tools)
@@ -102,6 +102,25 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 Everything PrimeRecomp writes - game files, saves, settings (`primerecomp.ini`), logs - stays in its own folder, apart
 from a short note of where that folder is (`%LOCALAPPDATA%\PrimeRecomp\copies.txt`) so that newer versions find it
 ([Updating](#updating)).
+
+### macOS (Apple Silicon)
+
+1. Download `PrimeRecomp-v0.0.3-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
+   it and drag **PrimeRecomp** onto **Applications**.
+2. PrimeRecomp isn't notarized by Apple, so macOS won't open it as downloaded. Open Terminal once and run:
+
+   ```
+   xattr -dr com.apple.quarantine /Applications/PrimeRecomp.app
+   ```
+
+   This clears the "downloaded from the internet" mark from the app and from the tools inside it that recompile
+   the game: without this, macOS stops them. Do it again after each update.
+3. Open PrimeRecomp. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs`,
+   **Set up**, then **Play**.
+
+Everything it writes goes to `~/Library/Application Support/io.github.primerecomp`. The first time each effect
+appears, MoltenVK compiles its shader for Metal, which can show as a brief hitch. More in
+[docs/macos.md](docs/macos.md).
 
 ### Linux
 
@@ -142,6 +161,9 @@ A new version doesn't need your game files again, and keeps your saves and setti
   folder afterwards. Extracting the new zip over your old PrimeRecomp folder (replacing the files) works too.
   **From v0.0.2 into a new folder:** on the start screen, choose your old PrimeRecomp folder as the game files
   folder; it's used the same way (your saves come along, your settings don't).
+- **macOS:** drag the new PrimeRecomp onto Applications (replace the old one) and run the `xattr` command from
+  [macOS](#macos-apple-silicon) again. Your game files, saves and settings stay in
+  `~/Library/Application Support/io.github.primerecomp`.
 - **Linux and Steam Deck:** replace the AppImage with the new one. Your game files, saves and settings stay in
   `~/.local/share/primerecomp`. On the Deck, give the new file the old one's name, or point the Steam shortcut at
   the new file (Properties -> Target).
@@ -201,7 +223,7 @@ tools; with your own extracted game files in `extracted/`, `make gen` recompiles
 `build/primerecomp.exe`. `make dist` packages a release. Linux: see [docs/linux.md](docs/linux.md) - `make appimage`
 builds the AppImage in an Ubuntu 22.04 container (from Windows, that works inside WSL2). macOS (Apple Silicon): see
 [docs/macos.md](docs/macos.md) - `make deps`, `make gen-helper` and `tools/fetch_zig.sh` once, then `make app` builds
-`build/PrimeRecomp.app`, the same Vulkan renderer on MoltenVK.
+`build/PrimeRecomp.app`, the same Vulkan renderer on MoltenVK, and `make dmg` the release disk image.
 
 Developer notes: [PROGRESS.md](PROGRESS.md) (history) and [HANDOFF.md](HANDOFF.md) (current state). Link's
 Awakening's game code (its patches, its memory hooks, the randomizer, cheats and cosmetics) has been removed; LAS
