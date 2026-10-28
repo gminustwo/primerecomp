@@ -727,6 +727,7 @@ static pthread_cond_t jobs_cond = PTHREAD_COND_INITIALIZER;
 
 static void *worker(void *a) {
     (void)a;
+    plat_thread_background();  // (the game's threads first: builds run beside them, draws skip what isn't ready)
     for (;;) {
         pthread_mutex_lock(&jobs_lock);
         while (!jobs_head) pthread_cond_wait(&jobs_cond, &jobs_lock);
@@ -754,6 +755,7 @@ static pthread_mutex_t tjobs_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t tjobs_cond = PTHREAD_COND_INITIALIZER;
 static void *translator(void *a) {
     (void)a;
+    plat_thread_background();
     for (;;) {
         pthread_mutex_lock(&tjobs_lock);
         while (!tjobs_head) pthread_cond_wait(&tjobs_cond, &tjobs_lock);
@@ -785,10 +787,12 @@ static void run_job(void (*fn)(void *), void *arg) {
     static bool started;
     if (!started) {
         started = true;
-        // first entry into an area builds dozens of pipelines at once: use most of the CPU (draws wait for them)
+        // first entry into an area builds dozens of pipelines at once: use most of the CPU (draws wait for them).
+        // LARECOMP_COMPILE_THREADS=<n>: that many (tests: a Steam Deck's 4 on a bigger CPU)
         int n = SDL_GetNumLogicalCPUCores() - 4;
         if (n < 4) n = 4;
         if (n > 16) n = 16;
+        if (getenv("LARECOMP_COMPILE_THREADS") && atoi(getenv("LARECOMP_COMPILE_THREADS")) > 0) n = atoi(getenv("LARECOMP_COMPILE_THREADS"));
         for (int i = 0; i < n; i++) { pthread_t t; pthread_create(&t, NULL, worker, NULL); }
     }
     Job *j = malloc(sizeof *j);

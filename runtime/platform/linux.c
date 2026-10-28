@@ -185,6 +185,10 @@ void plat_thread_realtime(uint64_t period_ns) {
     setpriority(PRIO_PROCESS, (id_t)gettid(), -10);  // (per thread on Linux; fails quietly without CAP_SYS_NICE)
 }
 
+// A lower priority (per thread on Linux; raising one's nice needs no privileges): shader builds after entering a room
+// shared a Steam Deck's 8 hardware threads with the game's at equal weight.
+void plat_thread_background(void) { setpriority(PRIO_PROCESS, (id_t)gettid(), 10); }
+
 // ---- process
 #if defined(__x86_64__)
 // The recompiled game code is built for x86-64-v3 (Makefile GENARCH: AVX2, FMA, BMI2): say so instead of crashing

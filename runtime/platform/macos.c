@@ -7,6 +7,7 @@
 #include <mach/mach_vm.h>
 #include <mach/thread_policy.h>
 #include <pthread.h>
+#include <pthread/qos.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,6 +81,8 @@ void plat_thread_realtime(uint64_t period_ns) {
     thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&pol,
                       THREAD_TIME_CONSTRAINT_POLICY_COUNT);
 }
+
+void plat_thread_background(void) { pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0); }
 
 bool plat_exe_path(char *buf, size_t size) {
     uint32_t len = (uint32_t)size;
