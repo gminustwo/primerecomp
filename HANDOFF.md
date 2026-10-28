@@ -1,9 +1,39 @@
-# Handoff: 2026-10-26
+# Handoff: 2026-10-27
 
 Where the work stopped, and what to do next. Read with PROGRESS.md (history) and the commit log.
 
 ## State (2026-10-25)
 
+- **PICK UP HERE (stopped 2026-10-27 late; the user: "create a handoff for now and well pick it up tomorrow").**
+  Open, in the user's order - details in the bullets below:
+  1. **Ultrawide (GitHub issue #1): fixed in local main only (07d6e85)** - not in the user's Steam copy, not in the
+     v0.0.4 draft, not pushed. Ask the user: put it into v0.0.4 (rebuild the zip / AppImage with
+     build/session_69905a54/dist_win.sh and appimage.sh, replace the draft's assets, add a line to its notes) and
+     their copy? The squish itself was never reproduced: the reporters offered photos / video - a capture of it, or
+     where exactly, would settle whether the fix covers it.
+  2. **Crates should be scannable** (the user, while playing): which room? Unknown, and whether plain crates are
+     scannable on the Switch is unconfirmed (a web search found nothing). Ask where; then compare the scan visor
+     there with the game's data for that actor.
+  3. **Magmoor's rising lava doesn't burn** (the user: "a room in magmoor caverns where you traverse in ball form and
+     the lava rises ... the lava on the ground level behaves correctly"): probably Pit Tunnel (Lava Lake <-> Triclops
+     Pit). No way there yet: the user's latest save is Phendrana Drifts' Save Station B
+     (private/playtest/PrimeRecomp-9584b5a/save/save_0, 2026-10-27 22:49); the older Magmoor one (Save Station Magmoor
+     A, next to Burning Trail) is in private/playtest/PrimeRecomp/save. Asked the user for a save near the room or an
+     F8 in it (teleports: LARECOMP_TELEPORT + LARECOMP_LOAD_AREAS, "How to work"). Likely shape: the lava's damage
+     volume not following the risen surface (water / trigger bounds), a script or recompilation bug.
+  4. Waiting on the user: the Deck (branch deck-test = 1abae74: doors, pause screen, no Uncapped), the v0.0.4 dmg on
+     their Mac, publishing v0.0.4 (then answer issues #1 and #2 - #2, "no option to disable vsync", is the v0.0.4
+     V-Sync option; post nothing on GitHub without the user).
+  - **Where things are:** local main e1dfe02 (+ this note) is ahead of every remote branch; origin/main 5e3f2db,
+    deck-test 1abae74, release-v0.0.4 9e0d513 (the v0.0.4 draft's target). The user's Steam shortcut runs
+    private/playtest/PrimeRecomp-9584b5a/, its exe 1abae74's release build (V-Sync option, door fixes, pause-screen
+    fix, no Uncapped; old exe *.bak-9584b5a). **Test runs are muted** (LARECOMP_NO_AUDIO=1: the user hears them).
+    This session's scripts (scratchpad 69905a54 may be gone) are in build/session_69905a54/: dist_win.sh (Windows zip
+    with v0.0.3's tested zig/), appimage*.sh (WSL container build and tests, run from PowerShell: Git Bash mangles
+    /mnt paths), release_v004_notes.md, vsemu/harness.cpp (a translated GLSL shader body compiled as C++ on a
+    LARECOMP_DUMP_DRAW dump), skin.py / proj.py (CPU skinning and projection of a dump), nanprobe.py (first NaN / inf
+    line of a fragment shader, written out as the colour; use with LARECOMP_GLSL_OVERRIDE), retarget.py (the Steam
+    shortcut's path in shortcuts.vdf).
 - **START HERE (2026-10-26).**
   - **Ultrawide fixes (07d6e85, 2026-10-27**, GitHub issue #1: two players at 32:9 5120x1440 and 3440x1440 - "the
     screen will force 16:9 and squish the picture at random points" (first: entering the frigate as the blue lights
