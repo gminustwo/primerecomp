@@ -273,7 +273,13 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
   - Also seen in the user's log: 120 fps around frames 6482-7198 with frame_rate = 60 (unexplained, check).
 - **Playable:** boot, menus, the whole frigate, onto Tallon IV (the user's own playthrough), 60 / 120 fps.
   Saving and loading work (a forced autosave reloads; frigate saves always restart at the landing site).
-- **The user's Steam copy is now the v0.0.3 release** (2026-10-26 night, the user: "extract it and retarget my steam
+- **The user's Steam shortcut now targets `private/playtest/PrimeRecomp-9584b5a/`** (2026-10-27, the user: "can
+  you update the steam shortcut for me?"): release exe from 9584b5a (V-Sync option, GPU ASTC, sparse volumes by page,
+  background shader builds) with v0.0.3's DLLs / zig / primegen; game files, game code, saves, settings via
+  LARECOMP_LAUNCHER_EXTRACT=auto from the v0.0.3 copy, which stays as the fallback, and its shader cache copied.
+  Checked there: the user's save (scratch copy) through the Magmoor door at 120 fps, worst frame 10 ms, load 82 ms.
+  shortcuts.vdf backup: shortcuts.vdf.bak-before-9584b5a. Not on the Deck yet (nothing pushed).
+- **The user's Steam copy was the v0.0.3 release** (2026-10-26 night, the user: "extract it and retarget my steam
   shortcut for me. keep my saves from the old test one"): `private/playtest/PrimeRecomp/` (the release zip,
   extracted; its save/ and primerecomp.ini copied from the old playtest folder, the 39 KB save_0; game files and
   game code hard-linked from build/dist/PrimeRecomp by LARECOMP_LAUNCHER_EXTRACT=auto: READY, no rebuild). The
