@@ -5,6 +5,18 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 ## State (2026-10-25)
 
 - **START HERE (2026-10-26).**
+  - **v0.0.4 is a DRAFT release** (2026-10-27, the user: "build a new zip release and app image for me and push those
+    to a new branch"; asked, they chose a draft release + a code branch over committing the binaries): branch
+    **release-v0.0.4** (the version bump 9d732e2 and this note), draft https://github.com/gminustwo/primerecomp/releases
+    (v0.0.4, target release-v0.0.4; notes: scratchpad release_v004_notes.md of session 69905a54).
+    PrimeRecomp-v0.0.4-windows.zip (sha256 b1ec708a...93dc): the dist recipe with v0.0.3's tested zig/ (scratchpad
+    dist_win.sh; same 144 files as v0.0.3, only exe / dll.a / README differ). PrimeRecomp-v0.0.4-linux-x86_64.AppImage
+    (sha256 cbe2feeb...8676): WSL container as before (scratchpad appimage.sh). v0.0.3's assets moved to
+    build/dist-v0.0.3/. Checked: the zip extracted fresh sets up from an earlier copy (READY, game code shared), loads
+    the user's save at 120 fps, pause screen clean; the AppImage in WSL (llvmpipe) on ~/prt/data2 loads its game code,
+    intro at ~26 fps, no faults, GPU ASTC selftest 0 texels differ. No macOS dmg yet (needs the user's Mac: make dmg);
+    the notes point Mac users at v0.0.3's until then - take that line out when the dmg is added. Publishing, when the
+    user says so: `gh release edit v0.0.4 --draft=false --latest` (creates the tag), and push main.
   - **No more Uncapped frame rate (2026-10-27**, the user: "its working pretty well right now. One thing, remove the
     uncapped FPS option"): the Video tab's Frame rate is 30 / 60 / 120; the mode is gone from the code too (game.c's
     per-frame tick and UNCAPPED_MAX_FPS, device.c's FIFO at Uncapped). V-Sync stays: on MAILBOX, off IMMEDIATE.
