@@ -3144,6 +3144,30 @@ static bool ui_boxed(Prog *pr, CmdRec *r) {
     if (!(fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor && st.rt.color[0] &&
           renderer_texture_presented(st.rt.color[0])))
         return false;
+    {   // (test) LARECOMP_FILL_FSHASH=<hash>,...: these draws fill the window, as the scene does
+        static uint64_t fill[16];
+        static int nfill = -1;
+        if (nfill < 0) {
+            nfill = 0;
+            for (const char *p = getenv("LARECOMP_FILL_FSHASH"); p && *p && nfill < 16;) {
+                fill[nfill++] = strtoull(p, (char **)&p, 16);
+                while (*p == ',') p++;
+            }
+        }
+        for (int i = 0; i < nfill; i++) if (g_cur_fs_hash == fill[i]) return false;
+    }
+    // Drawn through the game's own (widened) camera, not the HUD's 16:9 one: the scan visor's lens and its dimmed ring
+    // are models in front of the camera with its projection in the vertex shader's first constant buffer. Boxed, they
+    // came out half as wide at 32:9 (an oval lens); they fill the window as the scene does. Told apart by that
+    // projection's shape: |m11 / m00| is the widened aspect (the HUD's camera: 16:9).
+    if ((pr->vi->cbuf_mask >> 3) & 1) {
+        Range u = st.ubuf[0][0];
+        if (u.addr && u.size >= 64) {
+            const float *m = (const float *)(uintptr_t)u.addr;
+            float want = (16.0f / 9.0f) * (pass_sx / pass_sy);
+            if (m[0] != 0 && fabsf(fabsf(m[5] / m[0]) / want - 1) < 0.01f) return false;
+        }
+    }
     const NvnTexture *rt = st.rt.color[0];
     int ntex = pr->fi->ntex < 64 ? pr->fi->ntex : 64;
     bool reads_scene = false, tex0_scaled = false;
@@ -3177,16 +3201,62 @@ static bool ui_boxed(Prog *pr, CmdRec *r) {
     }
     bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_present_count());
     if (!composite) wide_frame = ~0ull;
+    // (test) LARECOMP_LOG_WIDE=1: full-screen draws boxed (the first few of each shader); =<from>:<to>: every boxed
+    // draw of those frames too
+    static int log_wide = -1;
+    static long lw_from, lw_to;
+    if (log_wide < 0) {
+        const char *e = getenv("LARECOMP_LOG_WIDE");
+        log_wide = e != NULL;
+        if (e && sscanf(e, "%ld:%ld", &lw_from, &lw_to) != 2) lw_from = lw_to = -1;
+    }
+    long fr = (long)renderer_present_count();
+    bool lw_all = log_wide && fr >= lw_from && fr <= lw_to;
+    if (log_wide && !composite && (fullscreen_quad || lw_all)) {
+        static uint64_t seen[256];
+        static uint8_t times[256];
+        int k = 0;
+        while (k < 256 && seen[k] && seen[k] != g_cur_fs_hash) k++;
+        if (lw_all || (k < 256 && (!seen[k] || times[k] < 3))) {
+            if (k < 256) seen[k] = g_cur_fs_hash, times[k]++;
+            LOG("[wide] frame %llu boxed %s: fs %016llx, %llu vertices, vp %.0f %.0f %.0f %.0f, %d textures:",
+                (unsigned long long)renderer_present_count(), fullscreen_quad ? "full-screen draw" : "draw",
+                (unsigned long long)g_cur_fs_hash, (unsigned long long)r->x[2], st.viewport[0][0], st.viewport[0][1],
+                st.viewport[0][2], st.viewport[0][3], ntex);
+            for (int i = 0; i < ntex; i++) {
+                NvnTexture *t = shader_texture_object(1, &pr->fi->tex[i]);
+                float sx = 1, sy = 1;
+                if (t) renderer_texture_scale(t, &sx, &sy);
+                if (t) LOG(" %ux%u f%#x%s", t->width, t->height, t->format, sx != 1 || sy != 1 ? " scaled" : "");
+                else LOG(" none");
+            }
+            LOG(" | target %ux%u\n", rt->width, rt->height);
+        }
+    }
     return !composite;
 }
 
 // Overlays that frame the whole 16:9 screen, by fragment shader hash (the draw path's): their outer edge goes to a
 // wider window's edges (draw_). LARECOMP_EDGE_FSHASH=<hash>,... adds some (finding more); LARECOMP_NO_EDGE_STRETCH=1:
 // none.
+// Also every small boxed draw (up to 24 vertices) over the whole viewport: the game's screen-wide effects are quads
+// or a few of them - camera filter fades and flashes (CGameCameraFilter: the intro's fades to white, the frigate's
+// explosion), visor steam, the visor powering on, the map screen's backdrop (22 vertices) - and so are UI images; the
+// stretch moves only the vertices on the box's sides, so an effect that covers the 16:9 screen covers the window and
+// anything narrower stays where it is. (Every boxed draw: HUD pieces drawn up to the box's side smear out to the
+// window's as the visor powers on.) LARECOMP_EDGE_QUADS=<vertices>: up to that many instead (0: none).
+static bool edge_quad(CmdRec *r) {
+    static long most = -1;
+    if (most < 0) most = getenv("LARECOMP_NO_EDGE_STRETCH") ? 0 : getenv("LARECOMP_EDGE_QUADS") ? atol(getenv("LARECOMP_EDGE_QUADS")) : 24;
+    return r->x[2] <= (uint64_t)most;
+}
+
 static bool edge_overlay(uint64_t fs_hash) {
     static const uint64_t known[] = {
-        0xc8eaf61ff0b2c969ull,  // scan visor: the dimmed ring around the lens (a 178-vertex strip)
+        0xc8eaf61ff0b2c969ull,  // scan visor: the dimmed ring around the lens (a 178-vertex strip; ui_boxed: drawn over
+                                // the window now, through the game camera - this if that test misses)
         0x405a073135796880ull,  // pause screens: the dimmed backdrop behind the inventory / log book / options
+        0xc4028b01cf7837acull,  // the visor powering on: scan lines over the screen (a full-screen quad, or bands of them)
     };
     static uint64_t extra[16];
     static int nextra = -1, off = -1;
@@ -3284,10 +3354,13 @@ static void draw_(CmdRec *r, bool indexed) {
     // with its lens still round. Not for everything boxed: the visor's corner brackets touch the box's edge too, and
     // smeared out to the window's (badly at 32:9). (Variant still compiling: plain boxing.)
     bool boxed = ui_boxed(pr, r), edge = false;
+    if (g_debug_frame && fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor && st.rt.color[0] &&
+        renderer_texture_presented(st.rt.color[0]))
+        LOG("[draw]   wide: %s\n", boxed ? "boxed (16:9 middle)" : "fills the window");
     float edge_k = 1;
     if (boxed && !pr->has_gs && !pr->gs_emul && pass_sx > pass_sy && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
         st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height &&
-        edge_overlay(g_cur_fs_hash)) {
+        (edge_overlay(g_cur_fs_hash) || edge_quad(r))) {
         ShaderKey vk2 = vkey;
         vk2.x_mode |= 2;
         Prog *p2 = get_program(st.program, &vk2, &fkey, cls0);
