@@ -5,6 +5,24 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 ## State (2026-10-25)
 
 - **START HERE (2026-10-26).**
+  - **Ultrawide fixes (07d6e85, 2026-10-27**, GitHub issue #1: two players at 32:9 5120x1440 and 3440x1440 - "the
+    screen will force 16:9 and squish the picture at random points" (first: entering the frigate as the blue lights
+    come on; fog-like visor effects; the escape sequence), "the scanning interface also squishes those elements",
+    "the fade-to-white ... only in the center 16:9"). Seen here at LARECOMP_WINDOW=2560x720: the intro's fades to
+    white and the explosion flash boxed (CGameCameraFilter quads, fs 6054ad08...), the visor power-on scan lines
+    boxed, the map's backdrop boxed, the scan lens an oval half as wide. Fixed: exec.c edge_quad (boxed draws of up to
+    24 vertices over the viewport get the edge stretch; all boxed draws smear HUD pieces at visor power-on), ui_boxed's
+    wide-camera test (vertex cbuf 3's |m11/m00| = the window's aspect: drawn through the game camera -> fills: the
+    scan lens and ring), c4028b01... (power-on scan lines) in edge_overlay. Checked at 32:9 and 21:9: title, save
+    slots, HUD, scan visor, map, pause screens; 16:9 is untouched by construction (ui_boxed returns at once).
+    **Not reproduced: the squish itself** (walked into the first frigate room and turned left toward the lights at
+    32:9 vs 16:9: the middle 16:9 matched every 25 frames). Most likely a visor effect (CVisorSteam / camera blur)
+    drawing a half-size copy of the scene as one full-screen quad - boxed before, edge-stretched now - but unseen.
+    Scan markers on objects (DrawScanObjectIndicators) use the HUD's 16:9 camera; whether they sit right at 32:9 is
+    unchecked (the lock-on targets differed between the 16:9 and 32:9 runs). Tools: LARECOMP_LOG_WIDE=1|<from>:<to>,
+    "[draw]   wide:" in the debug frame, LARECOMP_EDGE_QUADS, LARECOMP_FILL_FSHASH, LARECOMP_SKIP_COUNT /
+    LARECOMP_DUMP_DRAW. Not in the user's copy or a release yet. Next from the user: crates should be scannable;
+    Magmoor's rising lava (morph ball room) doesn't burn.
   - **v0.0.4 is a DRAFT release** (2026-10-27, the user: "build a new zip release and app image for me and push those
     to a new branch"; asked, they chose a draft release + a code branch over committing the binaries): branch
     **release-v0.0.4** (the version bump 9d732e2 and this note), draft https://github.com/gminustwo/primerecomp/releases
