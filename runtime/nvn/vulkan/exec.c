@@ -3285,9 +3285,9 @@ static float half_float(uint16_t h) {
     return f;
 }
 
-// Generic attribute i of vertex v (instance-rate streams: their first instance's) as the pipeline reads it; unbound:
-// (0, 0, 0, 1). False for a format not read here, or past the stream's end.
-static bool cpu_attr(int i, uint32_t v, uint32_t base_inst, float out[4]) {
+// Generic attribute i of vertex v, instance n (instance-rate streams: base_inst + n / divisor) as the pipeline reads
+// it; unbound: (0, 0, 0, 1). False for a format not read here, or past the stream's end.
+static bool cpu_attr(int i, uint32_t v, uint32_t base_inst, uint32_t n_inst, float out[4]) {
     out[0] = out[1] = out[2] = 0, out[3] = 1;
     uint32_t a = i < st.nattrib ? st.attrib[i] : 0;
     uint32_t fmt = a & 0xFF, stream = (a >> 8) & 0x1F, off = a >> 13;
@@ -3302,7 +3302,7 @@ static bool cpu_attr(int i, uint32_t v, uint32_t base_inst, float out[4]) {
     default: return false;
     }
     Range vb = st.vbuf[stream];
-    uint64_t o = (uint64_t)(div ? base_inst : v) * stride + off;
+    uint64_t o = (uint64_t)(div ? base_inst + n_inst / div : v) * stride + off;
     if (!vb.addr || o + (uint64_t)n * size > vb.size) return false;
     const uint8_t *p = (const uint8_t *)(uintptr_t)(vb.addr + o);
     for (int c = 0; c < n; c++) {
@@ -3318,14 +3318,15 @@ static bool cpu_attr(int i, uint32_t v, uint32_t base_inst, float out[4]) {
 typedef struct {
     Prog *pr;
     const uint8_t *cb[18];
-    uint32_t cbsz[18], attrs, base_inst;
+    uint32_t cbsz[18], attrs, base_inst, inst;
+    bool inst_step1;    // every instance-rate stream it reads steps once per instance (instances can be drawn apart)
     int32_t base_vertex;
     const uint8_t *ib;  // (NULL: not indexed - vertex first + i)
     uint32_t itype, first, restart;
 } CpuVs;
 
 static bool cpu_vs_init(CpuVs *c, Prog *pr, CmdRec *r, bool indexed) {
-    if (pr->has_gs || pr->gs_emul || (indexed ? r->x[6] : r->x[4]) > 1) return false;  // (one instance; no geometry shader)
+    if (pr->has_gs || pr->gs_emul) return false;  // (the vertex shader's position isn't the final one)
     if (!pr->vsim_state) {
         pr->vsim = maxwell_vsim_build((const uint8_t *)(uintptr_t)pr->code[0], pr->cmax[0]);
         pr->vsim_state = pr->vsim ? 1 : 2;
@@ -3350,8 +3351,14 @@ static bool cpu_vs_init(CpuVs *c, Prog *pr, CmdRec *r, bool indexed) {
     c->attrs = maxwell_vsim_attrs(pr->vsim);
     c->restart = st.prim_restart ? st.restart_index : 0xFFFFFFFFu;
     if (indexed) c->itype = (uint32_t)r->x[1], c->ib = (const uint8_t *)(uintptr_t)r->x[3], c->base_vertex = (int32_t)r->x[4],
-                 c->base_inst = (uint32_t)r->x[5];
-    else c->first = (uint32_t)r->x[1], c->base_inst = (uint32_t)r->x[3];
+                 c->base_inst = (uint32_t)r->x[5], c->inst = (uint32_t)r->x[6];
+    else c->first = (uint32_t)r->x[1], c->base_inst = (uint32_t)r->x[3], c->inst = (uint32_t)r->x[4];
+    if (!c->inst) c->inst = 1;
+    c->inst_step1 = true;
+    for (int i = 0; i < 32 && i < st.nattrib; i++) {
+        uint32_t s = (st.attrib[i] >> 8) & 0x1F;
+        if (((c->attrs >> i) & 1) && s < 16 && (int)s < st.nstream && st.stream[s][0] && st.stream[s][1] > 1) c->inst_step1 = false;
+    }
     return true;
 }
 
@@ -3361,12 +3368,12 @@ static uint32_t cpu_vs_index(const CpuVs *c, uint32_t j) {
     return c->itype == 0 ? c->ib[j] : c->itype == 1 ? ((const uint16_t *)c->ib)[j] : ((const uint32_t *)c->ib)[j];
 }
 
-// NDC x of vertex v (an index as drawn); false if it can't be run or is behind the camera
-static bool cpu_vs_x(const CpuVs *c, uint32_t v, float *x) {
+// NDC x of vertex v (an index as drawn) in instance n; false if it can't be run or is behind the camera
+static bool cpu_vs_x(const CpuVs *c, uint32_t v, uint32_t n, float *x) {
     float at[32][4], p[4];
     v += (uint32_t)c->base_vertex;
     for (int i = 0; i < 32; i++)
-        if (((c->attrs >> i) & 1) && !cpu_attr(i, v, c->base_inst, at[i])) return false;
+        if (((c->attrs >> i) & 1) && !cpu_attr(i, v, c->base_inst, n, at[i])) return false;
     if (!maxwell_vsim_run(c->pr->vsim, (const float (*)[4])at, c->cb, c->cbsz, p) || !(p[3] > 0)) return false;
     *x = p[0] / p[3];
     return true;
@@ -3375,20 +3382,23 @@ static bool cpu_vs_x(const CpuVs *c, uint32_t v, float *x) {
 // Ultrawide HUD (Video tab "HUD position"): in play, the HUD's pieces at the sides of its 16:9 box go out toward the
 // window's sides, each as a whole (shifted, not stretched); those in the middle - and wide ones: fades, frames, text
 // panels - stay in the box, as do menus (the game not in play: the pause screens, map, title). A piece: a connected
-// group of a triangle list's triangles (one mesh holds the frames of both sides and a bar in the middle), together
-// with any less than HUD_GAP from it across (a line of text: a quad per letter); or the whole draw, for other
-// topologies and long lists (up to 64 of its vertices looked at). Its side: its middle beyond HUD_SIDE of the box's
-// half-width, and narrower than the box's half. Drawn through a simple vertex shader only (CpuVs): anything else
-// stays in the middle. (World markers - lock-on, scan points - are drawn through the game's camera: not boxed.)
-// Returns the side the whole draw goes to (-1, 0, 1), or 2: in parts - *split holds its triangles' indices (as
-// drawn) grouped left / middle / right, n[] of each (malloc'd; the caller frees it).
+// group of a triangle list's triangles (one mesh holds the frames of both sides and a bar in the middle), or an
+// instance of an instanced draw (the radar's blips), together with any less than HUD_GAP from it across (a line of
+// text: a quad per letter); or the whole draw, for other topologies and long lists (up to 64 of its vertices looked
+// at). Its side: its middle beyond HUD_SIDE of the box's half-width, and narrower than the box's half. Drawn through
+// a simple vertex shader only (CpuVs): anything else stays in the middle. (World markers - lock-on, scan points - are
+// drawn through the game's camera: not boxed.)
+// Returns the side the whole draw goes to (-1, 0, 1), or in parts: 2 - *split holds its triangles' indices (as drawn)
+// grouped left / middle / right, n[] of each (malloc'd); 3 - split->inst_side[] the side of each instance (malloc'd).
+// The caller frees them.
 // LARECOMP_LOG_HUD=<from>:<to>: the boxed draws of those frames, with their pieces.
 // (HUD_SIDE: in the gap between the combat HUD's middle pieces, energy bar and its ends within 0.23, and its side
 // ones, 0.42 and out: the HUD's sway doesn't take a piece across)
 #define HUD_SIDE 0.33f
 #define HUD_PIECES_MAX 12288  // (indices: longer lists are taken as one piece)
+#define HUD_INST_MAX 64       // (instances: more are taken as one piece)
 #define HUD_GAP 0.05f
-typedef struct { uint32_t *idx, n[3]; } HudSplit;
+typedef struct { uint32_t *idx, n[3]; int8_t *inst_side; } HudSplit;
 
 static int hud_piece_side(float x0, float x1) {
     float c = (x0 + x1) * 0.5f;
@@ -3399,6 +3409,31 @@ static const float *hud_sort_lo;
 static int hud_by_lo(const void *a, const void *b) {
     float x = hud_sort_lo[*(const uint32_t *)a], y = hud_sort_lo[*(const uint32_t *)b];
     return x < y ? -1 : x > y;
+}
+
+// the sides of n pieces (x extents lo[i] .. hi[i]): those less than HUD_GAP apart together. Returns the sides present
+// (bit side + 1).
+static int hud_group(uint32_t n, const float *lo, const float *hi, int8_t *side, bool lg, CmdRec *r, Prog *pr) {
+    uint32_t *order = malloc(n * 4 + 4);
+    for (uint32_t i = 0; i < n; i++) order[i] = i;
+    hud_sort_lo = lo;
+    qsort(order, n, 4, hud_by_lo);  // (by left end)
+    int seen = 0;
+    for (uint32_t i = 0; i < n;) {
+        uint32_t j = i + 1;
+        float clo = lo[order[i]], chi = hi[order[i]];
+        while (j < n && lo[order[j]] < chi + HUD_GAP) chi = fmaxf(chi, hi[order[j]]), j++;
+        int8_t sd = (int8_t)hud_piece_side(clo, chi);
+        for (uint32_t k = i; k < j; k++) side[order[k]] = sd;
+        seen |= 1 << (sd + 1);
+        if (lg) LOG("[hud] frame %llu: fs %016llx vs %llx, %llu vertices: %u piece(s) x %.3f .. %.3f: %s\n",
+                    (unsigned long long)renderer_present_count(), (unsigned long long)g_cur_fs_hash,
+                    (unsigned long long)pr->code[0], (unsigned long long)r->x[2], j - i, clo, chi,
+                    sd < 0 ? "left" : sd > 0 ? "right" : "middle");
+        i = j;
+    }
+    free(order);
+    return seen;
 }
 
 static int hud_side(Prog *pr, CmdRec *r, bool indexed, HudSplit *split) {
@@ -3417,24 +3452,46 @@ static int hud_side(Prog *pr, CmdRec *r, bool indexed, HudSplit *split) {
                     (unsigned long long)g_cur_fs_hash, (unsigned long long)pr->code[0], count);
         return 0;
     }
-    if (r->x[0] != 4 || count < 6 || count > HUD_PIECES_MAX) {  // one piece: its extent from up to 64 vertices
-        float lo = 1e30f, hi = -1e30f, x;
-        for (uint32_t j = 0, step = count > 64 ? count / 64 : 1; j < count; j += step) {
-            uint32_t v = cpu_vs_index(&c, j);
-            if (c.ib && v == c.restart) continue;
-            if (!cpu_vs_x(&c, v, &x)) { lo = 1e30f; break; }
-            if (x < lo) lo = x;
-            if (x > hi) hi = x;
+    if (c.inst > 1 || r->x[0] != 4 || count < 6 || count > HUD_PIECES_MAX) {
+        // one piece per instance (all instances as one past HUD_INST_MAX): their extents from up to 64 vertices
+        uint32_t np = c.inst <= HUD_INST_MAX ? c.inst : 1, nrun = c.inst <= HUD_INST_MAX ? 1 : c.inst;
+        if (nrun > 4096) nrun = 4096;
+        float *lo = malloc(np * 4), *hi = malloc(np * 4), x;
+        int8_t *side = malloc(np);
+        bool ok = true;
+        for (uint32_t p = 0; p < np && ok; p++) {
+            lo[p] = 1e30f, hi[p] = -1e30f;
+            for (uint32_t q = 0; q < nrun && ok; q++)
+                for (uint32_t j = 0, step = count > 64 ? count / 64 : 1; j < count; j += step) {
+                    uint32_t v = cpu_vs_index(&c, j);
+                    if (c.ib && v == c.restart) continue;
+                    if (!cpu_vs_x(&c, v, np > 1 ? p : q, &x)) { ok = false; break; }
+                    if (x < lo[p]) lo[p] = x;
+                    if (x > hi[p]) hi[p] = x;
+                }
+            if (lo[p] > hi[p]) ok = false;
         }
-        int side = lo <= hi ? hud_piece_side(lo, hi) : 0;
-        if (lg) LOG("[hud] frame %ld: fs %016llx vs %llx, %u vertices, x %.3f .. %.3f: %s\n", fr, (unsigned long long)g_cur_fs_hash,
-                    (unsigned long long)pr->code[0], count, lo, hi, side < 0 ? "left" : side > 0 ? "right" : "middle");
-        return side;
+        int seen = ok ? hud_group(np, lo, hi, side, lg && np > 1, r, pr) : 0, res = 0;
+        if (seen == 1 || seen == 2 || seen == 4) res = seen == 1 ? -1 : seen == 4 ? 1 : 0;
+        else if (seen && c.inst_step1) res = 3, split->inst_side = side, side = NULL;  // (instances apart)
+        if (lg) {
+            if (!ok) LOG("[hud] frame %ld: fs %016llx vs %llx, %u vertices x %u: middle (not worked out)\n", fr,
+                         (unsigned long long)g_cur_fs_hash, (unsigned long long)pr->code[0], count, c.inst);
+            else {
+                float a = lo[0], b = hi[0];
+                for (uint32_t p = 1; p < np; p++) a = fminf(a, lo[p]), b = fmaxf(b, hi[p]);
+                LOG("[hud] frame %ld: fs %016llx vs %llx, %u vertices x %u, x %.3f .. %.3f: %s\n", fr,
+                    (unsigned long long)g_cur_fs_hash, (unsigned long long)pr->code[0], count, c.inst, a, b,
+                    res == 3 ? "instances in parts" : res < 0 ? "left" : res > 0 ? "right" : "middle");
+            }
+        }
+        free(lo), free(hi), free(side);
+        return res;
     }
     // pieces: the triangles' vertices in a hash table (index -> slot), joined by union-find over slots
     uint32_t cap = 64;
     while (cap < count * 2) cap <<= 1;
-    uint32_t *key = malloc(cap * 4), *par = malloc(cap * 4), ntri = count / 3;
+    uint32_t *key = malloc(cap * 4), *par = malloc(cap * 4), *piece = malloc(cap * 4), ntri = count / 3, npiece = 0;
     float *vx = malloc(cap * 4), *lo = malloc(cap * 4), *hi = malloc(cap * 4);
     uint32_t *tri_slot = malloc(ntri * 4);
     int8_t *side_of = malloc(cap);
@@ -3448,7 +3505,7 @@ static int hud_side(Prog *pr, CmdRec *r, bool indexed, HudSplit *split) {
             while (key[h] != 0xFFFFFFFFu && key[h] != v) h = (h + 1) & (cap - 1);
             if (key[h] == 0xFFFFFFFFu) {
                 key[h] = v, par[h] = h;
-                if ((c.ib && v == c.restart) || !cpu_vs_x(&c, v, &vx[h])) ok = false;
+                if ((c.ib && v == c.restart) || !cpu_vs_x(&c, v, 0, &vx[h])) ok = false;
             }
             sl[k] = h;
         }
@@ -3460,44 +3517,28 @@ static int hud_side(Prog *pr, CmdRec *r, bool indexed, HudSplit *split) {
     }
     int side = 0;
     if (ok) {
-        for (uint32_t h = 0; h < cap; h++) if (key[h] != 0xFFFFFFFFu) lo[h] = 1e30f, hi[h] = -1e30f;
+        // each piece's extent (pieces numbered by their root: piece[root]), then their sides
+        for (uint32_t h = 0; h < cap; h++)
+            if (key[h] != 0xFFFFFFFFu && par[h] == h) piece[h] = npiece, lo[npiece] = 1e30f, hi[npiece] = -1e30f, npiece++;
         for (uint32_t h = 0; h < cap; h++) {
             if (key[h] == 0xFFFFFFFFu) continue;
-            uint32_t root = FIND(h);
-            if (vx[h] < lo[root]) lo[root] = vx[h];
-            if (vx[h] > hi[root]) hi[root] = vx[h];
+            uint32_t p = piece[FIND(h)];
+            if (vx[h] < lo[p]) lo[p] = vx[h];
+            if (vx[h] > hi[p]) hi[p] = vx[h];
         }
-        // pieces less than HUD_GAP apart go together (a line of text: a quad per letter), by x
-        uint32_t nroot = 0, *roots = malloc(cap * 4);
-        for (uint32_t h = 0; h < cap; h++) if (key[h] != 0xFFFFFFFFu && par[h] == h) roots[nroot++] = h;
-        hud_sort_lo = lo;
-        qsort(roots, nroot, 4, hud_by_lo);  // (by left end)
-        int seen = 0;  // sides present (bit side + 1)
-        for (uint32_t i = 0; i < nroot;) {
-            uint32_t j = i + 1;
-            float clo = lo[roots[i]], chi = hi[roots[i]];
-            while (j < nroot && lo[roots[j]] < chi + HUD_GAP) chi = fmaxf(chi, hi[roots[j]]), j++;
-            int8_t sd = (int8_t)hud_piece_side(clo, chi);
-            for (uint32_t k = i; k < j; k++) side_of[roots[k]] = sd;
-            seen |= 1 << (sd + 1);
-            if (lg) LOG("[hud] frame %ld: fs %016llx vs %llx, %u vertices: %u piece(s) x %.3f .. %.3f: %s\n", fr,
-                        (unsigned long long)g_cur_fs_hash, (unsigned long long)pr->code[0], count, j - i, clo, chi,
-                        sd < 0 ? "left" : sd > 0 ? "right" : "middle");
-            i = j;
-        }
-        free(roots);
+        int seen = hud_group(npiece, lo, hi, side_of, lg, r, pr);
         if (seen == 1 || seen == 2 || seen == 4) {
             side = seen == 1 ? -1 : seen == 4 ? 1 : 0;
         } else {  // in parts
             side = 2;
             split->idx = malloc(ntri * 3 * 4);
             uint32_t at[3] = {0};
-            for (uint32_t t = 0; t < ntri; t++) split->n[side_of[FIND(tri_slot[t])] + 1] += 3;
+            for (uint32_t t = 0; t < ntri; t++) split->n[side_of[piece[FIND(tri_slot[t])]] + 1] += 3;
             at[1] = split->n[0], at[2] = split->n[0] + split->n[1];
             for (uint32_t t = 0; t < ntri; t++) {
-                uint32_t *o = &split->idx[at[side_of[FIND(tri_slot[t])] + 1]];
-                for (int k = 0; k < 3; k++) o[k] = cpu_vs_index(&c, t * 3 + k);
-                at[side_of[FIND(tri_slot[t])] + 1] += 3;
+                int s = side_of[piece[FIND(tri_slot[t])]] + 1;
+                for (int k = 0; k < 3; k++) split->idx[at[s] + k] = cpu_vs_index(&c, t * 3 + k);
+                at[s] += 3;
             }
         }
     }
@@ -3505,7 +3546,7 @@ static int hud_side(Prog *pr, CmdRec *r, bool indexed, HudSplit *split) {
     if (lg) LOG("[hud] frame %ld: fs %016llx vs %llx, %u vertices: %s\n", fr, (unsigned long long)g_cur_fs_hash,
                 (unsigned long long)pr->code[0], count, !ok ? "middle (not worked out)" : side == 2 ? "in parts" :
                 side < 0 ? "left" : side > 0 ? "right" : "middle");
-    free(key), free(par), free(vx), free(lo), free(hi), free(tri_slot), free(side_of);
+    free(key), free(par), free(piece), free(vx), free(lo), free(hi), free(tri_slot), free(side_of);
     return side;
 }
 
@@ -3590,7 +3631,7 @@ static void draw_(CmdRec *r, bool indexed) {
     // smeared out to the window's (badly at 32:9). (Variant still compiling: plain boxing.)
     bool boxed = ui_boxed(pr, r), edge = false;
     // HUD pieces at the box's sides go to the window's (hud_side): the whole draw (hud_dx: the box's shift), or its
-    // triangles in parts (hud_split)
+    // triangles or instances in parts (hud_split)
     HudSplit hud_split = {0};
     float hud_dx = 0, hud_far = 0;  // (hud_far: the shift to a side)
     int hud = 0;
@@ -3613,7 +3654,7 @@ static void draw_(CmdRec *r, bool indexed) {
     if (g_debug_frame && fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor && st.rt.color[0] &&
         renderer_texture_presented(st.rt.color[0]))
         LOG("[draw]   wide: %s\n", !boxed ? "fills the window" : hud == -1 ? "boxed, at the left side" :
-                                   hud == 1 ? "boxed, at the right side" : hud == 2 ? "boxed, in parts to the sides" :
+                                   hud == 1 ? "boxed, at the right side" : hud >= 2 ? "boxed, in parts to the sides" :
                                    "boxed (16:9 middle)");
     float edge_k = 1;
     if (boxed && !hud && !pr->has_gs && !pr->gs_emul && pass_sx > pass_sy && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
@@ -3694,6 +3735,7 @@ static void draw_(CmdRec *r, bool indexed) {
     }
     if (atomic_load(&pp->state) != 1) {
         free(hud_split.idx);
+        free(hud_split.inst_side);
         SKIP(SKIP_PIPE);
     }
     ss_enabled();
@@ -3933,22 +3975,28 @@ static void draw_(CmdRec *r, bool indexed) {
 
     if (prof) prof_vtx += SDL_GetTicksNS() - prof_t2_;
     // ---- draw
-    if (hud_split.idx) {  // in parts, each with the box at its side (fragments told where: rscale row 0)
+    if (hud_split.idx || hud_split.inst_side) {  // in parts, each with the box at its side (fragments told where: rscale row 0)
         float ox = vp_ox;
-        for (uint32_t s = 0, at = 0; s < 3; at += hud_split.n[s], s++) {
-            if (!hud_split.n[s]) continue;
-            vp_ox = ox + ((int)s - 1) * hud_far;
+        for (uint32_t s = 0, at = 0, n; hud_split.idx ? s < 3 : at < inst; at += n, s++) {
+            int side = hud_split.idx ? (int)s - 1 : hud_split.inst_side[at];
+            if (hud_split.idx) n = hud_split.n[s];
+            else for (n = 1; at + n < inst && hud_split.inst_side[at + n] == side; n++) {}  // (instances of one side)
+            if (!n) continue;
+            vp_ox = ox + side * hud_far;
             set_viewport(vp[0] * vp_sx + vp_ox, vp[1] * vp_sy + vp_oy, vp[2] * vp_sx, vp[3] * vp_sy, zn, zf);
             apply_scissor();
             if (pr->fi->uses_rscale) {
                 float prs0[4] = {vp_sx, vp_sy, vp_ox, vp_oy};
-                VkDescriptorSet ps = s == 1 ? fset : stage_set(pr, pr->set_layout[1], 1, 1, pr->fi, prs0, 0, 0, 0, fii);
+                VkDescriptorSet ps = !side ? fset : stage_set(pr, pr->set_layout[1], 1, 1, pr->fi, prs0, 0, 0, 0, fii);
                 vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pr->layout, 1, 1, &ps, 0, NULL);
             }
-            vkCmdDrawIndexed(cb, hud_split.n[s], inst, at, base_vertex, base_inst);
+            if (hud_split.idx) vkCmdDrawIndexed(cb, n, inst, at, base_vertex, base_inst);
+            else if (!use_index) vkCmdDraw(cb, count, n, first, base_inst + at);
+            else vkCmdDrawIndexed(cb, icount, n, 0, base_vertex, base_inst + at);
         }
         vp_ox = ox;
         free(hud_split.idx);
+        free(hud_split.inst_side);
     } else if (!use_index) vkCmdDraw(cb, count, inst, first, base_inst);
     else vkCmdDrawIndexed(cb, icount, inst, 0, base_vertex, base_inst);
     stat_draws++;
