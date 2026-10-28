@@ -111,6 +111,11 @@ typedef struct TexBackend {
     uint32_t sparse_gen; // the pool's mapping generation those bytes reflect
     uint64_t sparse_hot; // (no write tracking) looked at closely at every check until this frame: the mapping just changed
     uint64_t sparse_mhash, sparse_mapped;  // (no write tracking) the mapped pages' hash and size at the last gather
+    // sparse 3D textures, uploaded page by page (textures.c upload_sparse_pages): per page of the texture, the host
+    // address it was mapped to at the last upload (0: unmapped), its bytes' hash then (no write tracking), and whether
+    // it was written since (sparse_changed)
+    uint64_t *pg_addr, *pg_hash;
+    uint8_t *pg_dirty;
     // textures.c: NVN textures over the same storage with the same shape share this image
     int refs;
     bool shared;  // listed in the share table under key

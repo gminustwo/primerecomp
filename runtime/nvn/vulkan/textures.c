@@ -261,7 +261,35 @@ void vk_collect_dead(void) {
     ndead = k;
 }
 
-static void create_image(NvnTexture *t, TexBackend *b) {
+// Textures first used for sampling (loaded ones, not render targets) suballocate from VMA's memory blocks even where the
+// driver prefers a dedicated allocation (NVIDIA, for any image that could be a colour attachment): those dedicated
+// vkAllocateMemory calls took 14-42 ms each on the render thread while a room loaded (on a save's load, 91 ms of the
+// frame). The same memory type vmaCreateImage would take; an image that requires its own allocation still gets one.
+static VkResult create_sampled_image(const VkImageCreateInfo *ci, const VmaAllocationCreateInfo *ai, TexBackend *b) {
+    VkResult r = vkCreateImage(g_vk.dev, ci, NULL, &b->image);
+    if (r != VK_SUCCESS) return r;
+    VkImageMemoryRequirementsInfo2 ri = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2, .image = b->image};
+    VkMemoryDedicatedRequirements dr = {.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
+    VkMemoryRequirements2 mr = {.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, .pNext = &dr};
+    vkGetImageMemoryRequirements2(g_vk.dev, &ri, &mr);
+    uint32_t type;
+    if (dr.requiresDedicatedAllocation || vmaFindMemoryTypeIndexForImageInfo(g_vk.vma, ci, ai, &type) != VK_SUCCESS ||
+        !(mr.memoryRequirements.memoryTypeBits & 1u << type)) {
+        vkDestroyImage(g_vk.dev, b->image, NULL);
+        return VK_ERROR_UNKNOWN;
+    }
+    VmaAllocationCreateInfo one = {.memoryTypeBits = 1u << type};
+    r = vmaAllocateMemory(g_vk.vma, &mr.memoryRequirements, &one, &b->mem, NULL);
+    if (r == VK_SUCCESS) r = vmaBindImageMemory(g_vk.vma, b->mem, b->image);
+    if (r != VK_SUCCESS) {
+        if (b->mem) vmaFreeMemory(g_vk.vma, b->mem);
+        vkDestroyImage(g_vk.dev, b->image, NULL);
+        b->mem = NULL;
+    }
+    return r;
+}
+
+static void create_image(NvnTexture *t, TexBackend *b, bool render) {
     VkFmt mf = fmt_of(t->format);
     b->sx = b->scalable ? g_rs_x : 1;
     b->sy = b->scalable ? g_rs_y : 1;
@@ -321,7 +349,8 @@ static void create_image(NvnTexture *t, TexBackend *b) {
                             .samples = (VkSampleCountFlagBits)samples, .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = usage,
                             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
     VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
-    VkResult r = vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL);
+    VkResult r = render ? VK_ERROR_UNKNOWN : create_sampled_image(&ci, &ai, b);
+    if (r != VK_SUCCESS) r = vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL);
     if (r != VK_SUCCESS) {
         LOG("[vk] image creation failed (%d): nvn fmt %#x %ux%ux%u target %u\n", r, t->format, t->width, t->height, t->depth, t->target);
         ci.format = vf = VK_FORMAT_R8G8B8A8_UNORM;
@@ -468,7 +497,7 @@ static TexBackend *tex_backend_for(NvnTexture *t, bool gpu_write) {
     if (b) {
         if (b->scalable && (b->sx != g_rs_x || b->sy != g_rs_y)) {  // output resolution changed: reallocate
             destroy_image(b);
-            create_image(t, b);
+            create_image(t, b, true);
         }
         return b;
     }
@@ -486,7 +515,10 @@ static TexBackend *tex_backend_for(NvnTexture *t, bool gpu_write) {
     } else {
         b = calloc(1, sizeof *b);
         b->scalable = tex_scalable(t);
-        create_image(t, b);
+        extern uint64_t prof_up_ns, prof_img_ns;
+        uint64_t pt0 = prof_up_ns != ~0ull ? SDL_GetTicksNS() : 0;
+        create_image(t, b, gpu_write || b->scalable);
+        if (pt0) prof_img_ns += SDL_GetTicksNS() - pt0;
         b->refs = 1;
         g_nimages++;
         if (key.shared) {
@@ -515,6 +547,7 @@ void backend_texture_destroyed(NvnTexture *t) {
             destroy_image(b);
             free(b->pending_rgba);
             free(b->sparse);
+            free(b->pg_addr), free(b->pg_hash), free(b->pg_dirty);
             free(b);
         }
     }
@@ -595,6 +628,7 @@ static int sparse_changed(NvnTexture *t, TexBackend *b, uint64_t total, uint64_t
         int c = vk_pages_changed(a, NVN_SPARSE_PAGE, since, &now);
         if (c < 0 && ch == 0) ch = -1;
         if (c > 0) ch = 1;
+        if (c && b->pg_dirty) b->pg_dirty[(o - (t->pool_offset & ~(uint64_t)(NVN_SPARSE_PAGE - 1))) / NVN_SPARSE_PAGE] = 1;
     }
     b->wgen = now;
     return ch;
@@ -648,6 +682,110 @@ static const uint8_t *sparse_gather(NvnTexture *t, TexBackend *b, uint64_t total
         o += n;
     }
     return b->sparse;
+}
+
+// Sparse 3D textures (the lighting volumes: 512x192x784 BC1 / BC6H, 37 / 73 MB virtual with 1-2 MB mapped) go up page
+// by page. A 64 KB page holds whole blocks of one block row - a box of 32x16x16 compression blocks at 8 bytes - so a
+// page mapped, unmapped, remapped or written since the last upload is deswizzled and copied into its box alone (an
+// unmapped page's box: zero bytes, what the hardware reads there). (Boxes in compression blocks; texels for the copy.) The whole texture gathered, hashed, deswizzled and uploaded took 10-20 ms each at every mapping
+// change: a room's lighting at its door, half a dozen of them on loading a save.
+static bool sparse_by_page(NvnTexture *t, TexBackend *b, uint64_t total) {
+    const FormatInfo *fi = t->layout.fmt;
+    if (t->target != 2 || t->layout.levels != 1 || t->layout.layers > 1 || b->depth <= 1 || b->astc_bw) return false;
+    if ((t->pool_offset | total) & (NVN_SPARSE_PAGE - 1)) return false;
+    VkFmt mf = fmt_of(t->format);
+    if (b->format != mf.vf || mf.expand_rgb) return false;
+    LevelLayout l = tegra_level(&t->layout, 0);
+    uint64_t block = 512ull << (l.block_height_log2 + l.block_depth_log2);
+    uint32_t width_gobs = (l.wb * fi->bpb + 63) / 64;
+    if (NVN_SPARSE_PAGE % block) return false;
+    uint32_t per_page = (uint32_t)(NVN_SPARSE_PAGE / block);
+    return width_gobs % per_page == 0 && (per_page * 64) % fi->bpb == 0;
+}
+
+static void upload_sparse_pages(NvnTexture *t, TexBackend *b, uint64_t total) {
+    NvnPool *p = t->pool;
+    const FormatInfo *fi = t->layout.fmt;
+    LevelLayout l = tegra_level(&t->layout, 0);
+    uint32_t bpb = fi->bpb, bh = l.block_height_log2, bd = l.block_depth_log2;
+    uint64_t first = t->pool_offset / NVN_SPARSE_PAGE, npg = total / NVN_SPARSE_PAGE;
+    uint32_t width_gobs = (l.wb * bpb + 63) / 64, gob_rows = 8u << bh, slab = 1u << bd;
+    uint32_t blocks_y = (l.hb + gob_rows - 1) / gob_rows, per_page = (uint32_t)(NVN_SPARSE_PAGE / (512ull << (bh + bd)));
+    uint32_t box_w = per_page * 64 / bpb;
+    VkCommandBuffer cb = vk_upload_cmd();
+    bool fresh = !b->pg_addr;
+    if (fresh) {
+        b->pg_addr = calloc(npg, sizeof *b->pg_addr);
+        b->pg_hash = calloc(npg, sizeof *b->pg_hash);
+        b->pg_dirty = calloc(npg, 1);
+    }
+    // unmapped pages' boxes: zero bytes (compressed images can't be cleared), one span read by one copy of them all
+    VkSpan zero = {0};
+    VkBufferImageCopy *zr = NULL;
+    uint32_t nz = 0;
+    for (uint64_t i = 0; i < npg; i++) {
+        uint64_t a = p->pages ? p->pages[first + i] : 0, h = 0;
+        bool up = fresh || a != b->pg_addr[i] || (a && b->pg_dirty[i]);
+        b->pg_dirty[i] = 0;
+        if (up && a) {
+            h = hash_full((const uint8_t *)(uintptr_t)a, NVN_SPARSE_PAGE);
+            if (!fresh && a == b->pg_addr[i] && h == b->pg_hash[i]) up = false;  // (written, but the same bytes)
+        }
+        b->pg_addr[i] = a, b->pg_hash[i] = h;
+        if (!up) continue;
+        uint64_t b0 = i * per_page;  // the page's first block: its box
+        uint32_t x0 = (uint32_t)(b0 % width_gobs) * 64 / bpb, y0 = (uint32_t)(b0 / width_gobs % blocks_y) * gob_rows;
+        uint32_t z0 = (uint32_t)(b0 / width_gobs / blocks_y) * slab;
+        if (x0 >= l.wb || y0 >= l.hb || z0 >= l.d) continue;  // (the level's padding)
+        uint32_t w = l.wb - x0 < box_w ? l.wb - x0 : box_w, hh = l.hb - y0 < gob_rows ? l.hb - y0 : gob_rows;
+        uint32_t d = l.d - z0 < slab ? l.d - z0 : slab;
+        VkSpan s = {0};
+        if (a) {
+            s = vk_transient((uint64_t)w * hh * d * bpb, 16);
+            tegra_deswizzle_box((const uint8_t *)(uintptr_t)a, i * NVN_SPARSE_PAGE, s.ptr, x0, y0, z0, w, hh, d, l.wb, l.hb,
+                                bpb, bh, bd);
+        } else if (!zero.buf) {
+            zero = vk_transient(NVN_SPARSE_PAGE, 16);
+            memset(zero.ptr, 0, NVN_SPARSE_PAGE);
+            zr = malloc(npg * sizeof *zr);
+        }
+        uint32_t tx = x0 * fi->bw, ty = y0 * fi->bh, tw = w * fi->bw, th = hh * fi->bh;  // (texels)
+        VkBufferImageCopy rg = {.bufferOffset = a ? s.off : zero.off, .bufferRowLength = tw, .bufferImageHeight = th,
+                                .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                .imageOffset = {(int32_t)tx, (int32_t)ty, (int32_t)z0},
+                                .imageExtent = {tw < l.w - tx ? tw : l.w - tx, th < l.h - ty ? th : l.h - ty, d}};
+        if (a) vkCmdCopyBufferToImage(cb, s.buf, b->image, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
+        else zr[nz++] = rg;
+    }
+    if (nz) vkCmdCopyBufferToImage(cb, zero.buf, b->image, VK_IMAGE_LAYOUT_GENERAL, nz, zr);
+    free(zr);
+    static int check = -1;  // (test) LARECOMP_SPARSE_CHECK=1: the volume put together from its pages' boxes, as against
+    if (check < 0) check = getenv("LARECOMP_SPARSE_CHECK") != NULL;  // the whole texture gathered and deswizzled
+    if (!check) return;
+    uint64_t lin_sz = (uint64_t)l.wb * l.hb * l.d * bpb;
+    uint8_t *whole = malloc(lin_sz), *boxes = calloc(1, lin_sz), *tmp = malloc(NVN_SPARSE_PAGE * 4);
+    tegra_deswizzle(sparse_gather(t, b, total), whole, l.wb, l.hb, l.d, bpb, bh, bd);
+    for (uint64_t i = 0; i < npg; i++) {
+        uint64_t a = p->pages ? p->pages[first + i] : 0, b0 = i * per_page;
+        uint32_t x0 = (uint32_t)(b0 % width_gobs) * 64 / bpb, y0 = (uint32_t)(b0 / width_gobs % blocks_y) * gob_rows;
+        uint32_t z0 = (uint32_t)(b0 / width_gobs / blocks_y) * slab;
+        if (!a || x0 >= l.wb || y0 >= l.hb || z0 >= l.d) continue;
+        uint32_t w = l.wb - x0 < box_w ? l.wb - x0 : box_w, hh = l.hb - y0 < gob_rows ? l.hb - y0 : gob_rows;
+        uint32_t d = l.d - z0 < slab ? l.d - z0 : slab;
+        tegra_deswizzle_box((const uint8_t *)(uintptr_t)a, i * NVN_SPARSE_PAGE, tmp, x0, y0, z0, w, hh, d, l.wb, l.hb,
+                            bpb, bh, bd);
+        for (uint32_t z = 0; z < d; z++)
+            for (uint32_t y = 0; y < hh; y++)
+                memcpy(boxes + (((uint64_t)(z0 + z) * l.hb + y0 + y) * l.wb + x0) * bpb, tmp + ((uint64_t)z * hh + y) * w * bpb,
+                       (uint64_t)w * bpb);
+    }
+    uint64_t diff = 0, mapped = 0;
+    for (uint64_t i = 0; i < lin_sz; i++) diff += whole[i] != boxes[i];
+    for (uint64_t i = 0; i < npg; i++) mapped += p->pages && p->pages[first + i];
+    LOG("[sparse] check %ux%ux%u fmt %#x: %llu of %llu pages mapped, %llu of %llu bytes differ\n", l.w, l.h, l.d,
+        t->format, (unsigned long long)mapped, (unsigned long long)npg, (unsigned long long)diff,
+        (unsigned long long)lin_sz);
+    free(whole), free(boxes), free(tmp);
 }
 
 uint64_t prof_tex_checks, prof_tex_samples, prof_tex_full, prof_tex_full_bytes, prof_tex_dyn, prof_tex_watch_skips;
@@ -803,6 +941,14 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
             b->full_frame = frame;
             b->sample_hash = sparse_sample(t, total);
             if (mh == b->sparse_mhash) return;
+        }
+        if (sparse_by_page(t, b, total)) {
+            b->full_frame = frame;
+            b->sample_hash = sparse_sample(t, total);
+            if (!tracked) b->sparse_mhash = sparse_mapped_hash(t, total, &b->sparse_mapped);
+            upload_sparse_pages(t, b, total);
+            b->uploaded = true;
+            return;
         }
         base = sparse_gather(t, b, total);
         uint64_t sh = hash_full(base, total);
@@ -1002,7 +1148,11 @@ VkImageView vk_image_view(TexBackend *b, VkImageViewType type, VkFormat fmt, uin
     VkImageViewCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = b->image, .viewType = type,
                                 .format = fmt, .components = sw, .subresourceRange = {aspect, lv0, nlv, ly0, nly}};
     VkImageView v;
-    if (vkCreateImageView(g_vk.dev, &vi, NULL, &v) != VK_SUCCESS) {
+    extern uint64_t prof_up_ns, prof_view_ns;
+    uint64_t pt0 = prof_up_ns != ~0ull ? SDL_GetTicksNS() : 0;
+    VkResult vr = vkCreateImageView(g_vk.dev, &vi, NULL, &v);
+    if (pt0) prof_view_ns += SDL_GetTicksNS() - pt0;
+    if (vr != VK_SUCCESS) {
         static int nfail;
         if (nfail++ < 20) LOG("[vk] view failed: type %d fmt %d (image fmt %d) levels %u+%u layers %u+%u\n", type, fmt, b->format, lv0, nlv, ly0, nly);
         return VK_NULL_HANDLE;

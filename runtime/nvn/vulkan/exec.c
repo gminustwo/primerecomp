@@ -35,6 +35,7 @@ static uint64_t gpu_busy_ns;  // those submissions' GPU time, summed
 static uint64_t cum_exec, cum_wait, cum_draws, cum_submits;  // (profiling) never reset: hitch log
 static uint32_t prof_end_line[4096];  // passes ended, by the exec.c line that ended them (0: submit / present)
 uint64_t prof_views_created;  // textures.c vk_image_view cache misses
+uint64_t prof_img_ns, prof_view_ns;  // (never reset: the hitch log) textures.c image creation / view creation time
 uint64_t prof_up_ns = ~0ull;  // textures.c upload checks (~0: profiling off)
 #define PROF_T0() uint64_t prof_t0_ = prof ? SDL_GetTicksNS() : 0
 #define PROF_ADD(v) do { if (prof) v += SDL_GetTicksNS() - prof_t0_; } while (0)
@@ -842,20 +843,32 @@ uint32_t nvn_window_origin(void);
 uint32_t nvn_depth_mode(void);
 bool renderer_origin_lower_left(void) { return nvn_window_origin() == 0; }
 
-// (LARECOMP_VK_PROF) called once per presented frame: frames over 50 ms are logged with where their time went.
-// present_ns: time in backend_present's acquire/blit/present.
+// (LARECOMP_VK_PROF) called once per presented frame: frames over 50 ms (LARECOMP_HITCH_MS) are logged with where their
+// time went - the render thread's draw() categories as in the stats line (the counters it resets: a frame across that
+// reset shows less). present_ns: time in backend_present's acquire/blit/present.
 void vk_prof_frame(uint64_t frame, uint64_t present_ns) {
     if (!prof) return;
-    static uint64_t last_t, l_exec, l_wait, l_draws, l_subs;
+    static uint64_t last_t, l_exec, l_wait, l_draws, l_subs, l_draw, l_pre, l_key, l_dyn, l_sets, l_tex, l_up, l_vtx, l_views,
+        l_img, l_view;
+    static double hitch_ms = -1;
+    if (hitch_ms < 0) hitch_ms = getenv("LARECOMP_HITCH_MS") ? atof(getenv("LARECOMP_HITCH_MS")) : 50;
     uint64_t now = SDL_GetTicksNS();
-    if (last_t && now - last_t > 50000000) {
+    if (last_t && now - last_t > hitch_ms * 1e6) {
         uint64_t dt = now - last_t, ex = cum_exec - l_exec, wt = cum_wait - l_wait;
+#define D(v, l) ((v) >= (l) ? (double)((v) - (l)) / 1e6 : (double)(v) / 1e6)
         LOG("[hitch] frame %llu: %.0f ms = backend exec %.1f (of which GPU waits %.1f) + present %.1f + other %.1f; %llu draws, "
-            "%llu submits, compiles %d pending\n", (unsigned long long)frame, dt / 1e6, ex / 1e6, wt / 1e6, present_ns / 1e6,
+            "%llu submits, compiles %d pending | draw %.1f (pre %.1f key %.1f dyn %.1f sets %.1f tex %.1f upload %.1f vtx %.1f) "
+            "views %llu (%.1f) images %.1f\n", (unsigned long long)frame, dt / 1e6, ex / 1e6, wt / 1e6, present_ns / 1e6,
             ((double)dt - ex - present_ns) / 1e6, (unsigned long long)(cum_draws - l_draws), (unsigned long long)(cum_submits - l_subs),
-            atomic_load(&stat_compiles));
+            atomic_load(&stat_compiles), D(prof_draw, l_draw), D(prof_pre, l_pre), D(prof_key, l_key), D(prof_dyn, l_dyn),
+            D(prof_sets, l_sets), D(prof_tex, l_tex), D(prof_up_ns, l_up), D(prof_vtx, l_vtx),
+            (unsigned long long)(prof_views_created >= l_views ? prof_views_created - l_views : prof_views_created),
+            D(prof_view_ns, l_view), D(prof_img_ns, l_img));
+#undef D
     }
     last_t = now; l_exec = cum_exec; l_wait = cum_wait; l_draws = cum_draws; l_subs = cum_submits;
+    l_draw = prof_draw, l_pre = prof_pre, l_key = prof_key, l_dyn = prof_dyn, l_sets = prof_sets, l_tex = prof_tex;
+    l_up = prof_up_ns, l_vtx = prof_vtx, l_views = prof_views_created, l_img = prof_img_ns, l_view = prof_view_ns;
 }
 
 const char *renderer_stats(void) {

@@ -140,6 +140,23 @@ void tegra_deswizzle(const uint8_t *src, uint8_t *dst, uint32_t wb, uint32_t hb,
     copy_surface(src, dst, wb, hb, d, bpb, bh_log2, bd_log2, true);
 }
 
+void tegra_deswizzle_box(const uint8_t *src, uint64_t src_off, uint8_t *dst, uint32_t x0, uint32_t y0, uint32_t z0,
+                         uint32_t w, uint32_t h, uint32_t d, uint32_t wb, uint32_t hb, uint32_t bpb, uint32_t bh_log2,
+                         uint32_t bd_log2) {
+    uint32_t row_bytes = w * bpb, width_gobs = (wb * bpb + 63) / 64, gob_rows = 8u << bh_log2;
+    uint64_t blocks_rows = (hb + gob_rows - 1) / gob_rows;
+    for (uint32_t z = 0; z < d; z++) {
+        for (uint32_t y = 0; y < h; y++) {
+            uint8_t *lin = dst + ((uint64_t)z * h + y) * row_bytes;
+            for (uint32_t x = 0; x < row_bytes; x += 16) {
+                uint32_t n = row_bytes - x < 16 ? row_bytes - x : 16;
+                uint64_t o = gob_offset(x0 * bpb + x, y0 + y, z0 + z, width_gobs, bh_log2, bd_log2, blocks_rows);
+                memcpy(lin + x, src + (o - src_off), n);
+            }
+        }
+    }
+}
+
 void tegra_swizzle(const uint8_t *src, uint8_t *dst, uint32_t wb, uint32_t hb, uint32_t d, uint32_t bpb,
                    uint32_t bh_log2, uint32_t bd_log2) {
     copy_surface(src, dst, wb, hb, d, bpb, bh_log2, bd_log2, false);

@@ -41,3 +41,8 @@ void tegra_deswizzle(const uint8_t *src, uint8_t *dst, uint32_t wb, uint32_t hb,
                      uint32_t block_height_log2, uint32_t block_depth_log2);
 void tegra_swizzle(const uint8_t *src, uint8_t *dst, uint32_t wb, uint32_t hb, uint32_t d, uint32_t bpb,
                    uint32_t block_height_log2, uint32_t block_depth_log2);
+// One box of a level (texels x0.., w x h x d; wb x hb the level's size in blocks) into a linear buffer (row pitch
+// w * bpb), from src: the level's bytes from offset src_off on - a sparse page holding the blocks the box is in.
+void tegra_deswizzle_box(const uint8_t *src, uint64_t src_off, uint8_t *dst, uint32_t x0, uint32_t y0, uint32_t z0,
+                         uint32_t w, uint32_t h, uint32_t d, uint32_t wb, uint32_t hb, uint32_t bpb,
+                         uint32_t block_height_log2, uint32_t block_depth_log2);
