@@ -1005,6 +1005,7 @@ static int debug_pass_no;
 static char debug_dir[96] = "build";  // where the debug frame's passes go: F9 gives each capture its own folder
 void vk_debug_capture_dir(const char *dir) {
     snprintf(debug_dir, sizeof debug_dir, "%s", dir);
+    mkdir("build", 0755);  // (a release copy has no build/ folder until something makes one: F9 saved nothing there)
     mkdir(debug_dir, 0755);
     debug_pass_no = 0;
 }
