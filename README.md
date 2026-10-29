@@ -25,19 +25,31 @@ PC, with Vulkan for the graphics. No emulator runs.
 
 ![Samus at the Landing Site on Tallon IV](docs/landing_site.jpg)
 
-## Status: v0.0.4 (early beta)
+## Status: v0.0.4
 
-The game boots, the Frigate Orpheon plays through, and Tallon IV is playable (the Landing Site, Chozo Ruins and
-Magmoor Caverns have been played so far), with saving and loading. Areas nobody has reached yet may still crash or
-freeze.
+## Features
+
+- Mouse aim that turns and aims directly, as in a PC shooter; full keyboard, mouse and controller rebinding
+- Any resolution up to 8K, AMD FSR 1 upscaling, SMAA anti-aliasing, anisotropic texture filtering
+- Ultrawide and any aspect ratio, the HUD out at the screen's sides (or a 21:9 frame's, or the 16:9 middle);
+  adjustable field of view
+- 30, 60 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
+- Steam Deck presets
+- Gyro aiming with controllers that have one, rumble
+- Any cutscene skippable
+
+## Future work
+
+- Adding Wiimote support
+- Adding VR support
+- Adding a cheats option (unlimited health, missiles, etc).
 
 > [!WARNING]
-> **Known issues.** Each one is crossed out here once it's fixed.
+> **Known issues.** 
 >
-> - Steam Deck performance still isn't great, with major slowdowns when going through doors
 > - Numerous graphics and rendering issues
 > - Lighting issues persist
-> - ~~Samus' character model doesn't render correctly on the pause screen~~
+> - Lava rising animation appears in Transport Tunnel A in magmoor when it shouldn't
 >
 > Found something else? See [Bugs and feature requests](#bugs-and-feature-requests).
 
@@ -203,23 +215,6 @@ In the game's menus Enter / Space confirm, Esc goes back and Q / E switch pages.
 
 **PrimeRecomp's own menu** (graphics, controls, audio, quitting): **F1**, or on a controller both sticks pressed in
 (or Back + Start). Fullscreen: F11 or Alt+Enter.
-
-## Features
-
-- Mouse aim that turns and aims directly, as in a PC shooter; full keyboard, mouse and controller rebinding
-- Any resolution up to 8K, AMD FSR 1 upscaling, SMAA anti-aliasing, anisotropic texture filtering
-- Ultrawide and any aspect ratio, the HUD out at the screen's sides (or a 21:9 frame's, or the 16:9 middle);
-  adjustable field of view
-- 30, 60 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
-- Steam Deck presets
-- Gyro aiming with controllers that have one, rumble
-- Any cutscene skippable
-
-## Support PrimeRecomp
-
-If you enjoy PrimeRecomp, you can support its development by
-[buying me a coffee](https://buymeacoffee.com/rengar). Bug reports and a star for this repository and for
-[LAS Recomp](https://github.com/peiikai/LASRecomp) help too.
 
 ## Building from source
 
