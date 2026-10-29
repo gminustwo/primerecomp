@@ -3291,6 +3291,13 @@ static bool edge_overlay(uint64_t fs_hash) {
     return false;
 }
 
+// The helmet's frame in play (draw_ hud_k): a 3D model through the HUD's camera, drawn with the pause backdrop's
+// fragment shader (edge_overlay), the screen's width (7314 vertices: by count, not run through hud_side - 0.24 ms a
+// frame - as the backdrop is a few quads)
+static bool helmet_frame(CmdRec *r) {
+    return g_cur_fs_hash == 0x405a073135796880ull && r->x[2] > 100;
+}
+
 static float half_float(uint16_t h) {
     uint32_t s = (uint32_t)(h & 0x8000) << 16, e = (h >> 10) & 0x1F, m = h & 0x3FF, u;
     if (e == 0) { float d = m * 5.9604644775390625e-8f; return s ? -d : d; }
@@ -3396,7 +3403,8 @@ static bool cpu_vs_x(const CpuVs *c, uint32_t v, uint32_t n, float *x) {
 
 // Ultrawide HUD (Video tab "HUD position"): in play, the HUD's pieces at the sides of its 16:9 box go out toward the
 // window's sides, each as a whole (shifted, not stretched); those in the middle - and wide ones: fades, frames, text
-// panels - stay in the box, as do menus (the game not in play: the pause screens, map, title). A piece: a connected
+// panels - stay in the box, as do menus (the game not in play: the title; the pause screens fill the window,
+// pause_fill), except draws wider than the box itself (the helmet's frame: draw_ hud_k). A piece: a connected
 // group of a triangle list's triangles (one mesh holds the frames of both sides and a bar in the middle), or an
 // instance of an instanced draw (the radar's blips), together with any less than HUD_GAP from it across (a line of
 // text: a quad per letter); or the whole draw, for other topologies and long lists (up to 64 of its vertices looked
@@ -3413,7 +3421,7 @@ static bool cpu_vs_x(const CpuVs *c, uint32_t v, uint32_t n, float *x) {
 #define HUD_PIECES_MAX 12288  // (indices: longer lists are taken as one piece)
 #define HUD_INST_MAX 64       // (instances: more are taken as one piece)
 #define HUD_GAP 0.05f
-typedef struct { uint32_t *idx, n[3]; int8_t *inst_side; } HudSplit;
+typedef struct { uint32_t *idx, n[3]; int8_t *inst_side; float lo, hi; /* the draw's x extent (box NDC) */ } HudSplit;
 
 static int hud_piece_side(float x0, float x1) {
     float c = (x0 + x1) * 0.5f;
@@ -3487,14 +3495,17 @@ static int hud_side(Prog *pr, CmdRec *r, bool indexed, HudSplit *split) {
             if (lo[p] > hi[p]) ok = false;
         }
         int seen = ok ? hud_group(np, lo, hi, side, lg && np > 1, r, pr) : 0, res = 0;
+        if (ok) {
+            split->lo = lo[0], split->hi = hi[0];
+            for (uint32_t p = 1; p < np; p++) split->lo = fminf(split->lo, lo[p]), split->hi = fmaxf(split->hi, hi[p]);
+        }
         if (seen == 1 || seen == 2 || seen == 4) res = seen == 1 ? -1 : seen == 4 ? 1 : 0;
         else if (seen && c.inst_step1) res = 3, split->inst_side = side, side = NULL;  // (instances apart)
         if (lg) {
             if (!ok) LOG("[hud] frame %ld: fs %016llx vs %llx, %u vertices x %u: middle (not worked out)\n", fr,
                          (unsigned long long)g_cur_fs_hash, (unsigned long long)pr->code[0], count, c.inst);
             else {
-                float a = lo[0], b = hi[0];
-                for (uint32_t p = 1; p < np; p++) a = fminf(a, lo[p]), b = fmaxf(b, hi[p]);
+                float a = split->lo, b = split->hi;
                 LOG("[hud] frame %ld: fs %016llx vs %llx, %u vertices x %u, x %.3f .. %.3f: %s\n", fr,
                     (unsigned long long)g_cur_fs_hash, (unsigned long long)pr->code[0], count, c.inst, a, b,
                     res == 3 ? "instances in parts" : res < 0 ? "left" : res > 0 ? "right" : "middle");
@@ -3531,6 +3542,8 @@ static int hud_side(Prog *pr, CmdRec *r, bool indexed, HudSplit *split) {
         tri_slot[t] = sl[0];
     }
     int side = 0;
+    if (!ok && lg) LOG("[hud] frame %ld: fs %016llx vs %llx, %u vertices: middle (not worked out)\n", fr,
+                       (unsigned long long)g_cur_fs_hash, (unsigned long long)pr->code[0], count);
     if (ok) {
         // each piece's extent (pieces numbered by their root: piece[root]), then their sides
         for (uint32_t h = 0; h < cap; h++)
@@ -3542,6 +3555,8 @@ static int hud_side(Prog *pr, CmdRec *r, bool indexed, HudSplit *split) {
             if (vx[h] > hi[p]) hi[p] = vx[h];
         }
         int seen = hud_group(npiece, lo, hi, side_of, lg, r, pr);
+        split->lo = 1e30f, split->hi = -1e30f;
+        for (uint32_t p = 0; p < npiece; p++) split->lo = fminf(split->lo, lo[p]), split->hi = fmaxf(split->hi, hi[p]);
         if (seen == 1 || seen == 2 || seen == 4) {
             side = seen == 1 ? -1 : seen == 4 ? 1 : 0;
         } else {  // in parts
@@ -3646,11 +3661,15 @@ static void draw_(CmdRec *r, bool indexed) {
     // smeared out to the window's (badly at 32:9). (Variant still compiling: plain boxing.)
     bool boxed = ui_boxed(pr, r), edge = false;
     // HUD pieces at the box's sides go to the window's (hud_side): the whole draw (hud_dx: the box's shift), or its
-    // triangles or instances in parts (hud_split)
+    // triangles or instances in parts (hud_split). The helmet's frame is stretched sideways across the HUD's span
+    // instead (hud_k): the visor's rim, the bar across the top and the curves at the bottom - a 7314-vertex model the
+    // screen's width (helmet_frame), and its dark outline, a mesh 1.29 times the screen's width whose ends stay off a
+    // 16:9 screen as the HUD sways (+-0.11): any draw wider than the box. Stretched, their ends stay off screen too,
+    // and the pause screens (pause_fill) open without the frame changing width.
     HudSplit hud_split = {0};
-    float hud_dx = 0, hud_far = 0;  // (hud_far: the shift to a side)
+    float hud_dx = 0, hud_far = 0, hud_k = 1;  // (hud_far: the shift to a side)
     int hud = 0;
-    if (boxed && pass_sx > pass_sy * 1.01f && !edge_overlay(g_cur_fs_hash)) {
+    if (boxed && pass_sx > pass_sy * 1.01f) {
         extern bool game_in_play(void);  // runtime/hle/game.c
         static int env = -2;  // (test) LARECOMP_HUD=edges|21:9|middle: instead of the setting
         if (env == -2) {
@@ -3663,16 +3682,22 @@ static void draw_(CmdRec *r, bool indexed) {
         float u = fminf(pass_sx, pass_sy), bw = st.rt.color[0]->width * u, bh = st.rt.color[0]->height * u;
         float tw = place == HUD_21_9 ? fminf((float)pw, bh * 21 / 9) : (float)pw;  // (the width the HUD spans)
         hud_far = floorf((tw - bw) * 0.5f);
-        if (place != HUD_MIDDLE && hud_far >= 1 && game_in_play()) hud = hud_side(pr, r, indexed, &hud_split);
-        if (hud == -1 || hud == 1) hud_dx = hud * hud_far;
+        if (place != HUD_MIDDLE && hud_far >= 1 && game_in_play()) {
+            if (helmet_frame(r)) hud_k = tw / bw;
+            else if (!edge_overlay(g_cur_fs_hash)) {
+                hud = hud_side(pr, r, indexed, &hud_split);
+                if (hud == -1 || hud == 1) hud_dx = hud * hud_far;
+                if (hud == 0 && hud_split.hi - hud_split.lo > 2.2f) hud_k = tw / bw;
+            }
+        }
     }
     if (g_debug_frame && fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor && st.rt.color[0] &&
         renderer_texture_presented(st.rt.color[0]))
         LOG("[draw]   wide: %s\n", !boxed ? "fills the window" : hud == -1 ? "boxed, at the left side" :
                                    hud == 1 ? "boxed, at the right side" : hud >= 2 ? "boxed, in parts to the sides" :
-                                   "boxed (16:9 middle)");
+                                   hud_k != 1 ? "boxed, stretched across the HUD's span" : "boxed (16:9 middle)");
     float edge_k = 1;
-    if (boxed && !hud && !pr->has_gs && !pr->gs_emul && pass_sx > pass_sy && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
+    if (boxed && !hud && hud_k == 1 && !pr->has_gs && !pr->gs_emul && pass_sx > pass_sy && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
         st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height &&
         (edge_overlay(g_cur_fs_hash) || edge_quad(r))) {
         ShaderKey vk2 = vkey;
@@ -3855,8 +3880,8 @@ static void draw_(CmdRec *r, bool indexed) {
         int pw, ph;
         pass_size(&pw, &ph);
         float u = fminf(pass_sx, pass_sy);
-        vp_sx = vp_sy = u;
-        vp_ox = (pw - st.rt.color[0]->width * u) * 0.5f + hud_dx;
+        vp_sx = u * hud_k, vp_sy = u;
+        vp_ox = (pw - st.rt.color[0]->width * vp_sx) * 0.5f + hud_dx;
         vp_oy = (ph - st.rt.color[0]->height * u) * 0.5f;
     }
     {
