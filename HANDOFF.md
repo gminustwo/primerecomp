@@ -4,6 +4,28 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 
 ## State (2026-10-25)
 
+- **Ultrawide pause screens and helmet frame (21b2ca5, 098e530, 2026-10-28; local main only - not in the v0.0.4
+  draft or the user's Steam copy yet**). The user: "maybe stretch the pause screen to fit the whole window?", then
+  "yes try the helmet frame", after trying both at 32:9: "this looks good". (1) The map and the pause menu
+  (inventory, log book, options) fill a wider window, stretched sideways (2x at 32:9), also during their quarter-
+  second fades: exec.c pause_fill makes ui_boxed false while game_gui_screen is 2 / 3. Video tab "Pause screen":
+  Fill the screen (default) / Middle 16:9 (`pause = fill|middle`; LARECOMP_PAUSE for tests). Samus' model keeps her
+  shape (drawn through the game camera); the 3D area map stretches. (2) game.c game_gui_screen: the in-game GUI
+  manager's screen (CInGameGuiManagerMP1 +0x2e4, before it +0x2e0: 1 play, 2 map, 3 pause menu, 5 save station
+  prompt, 6 a message pause), the manager from CGameIOWinMP1 +0x48 as CGameIOWinMP1::FrameBegin runs - an
+  hle_override at dispatch (FrameBegin is only called virtually), so no patch and no regenerated game code; [gui]
+  log lines on each change. (3) In play, the helmet frame (top bar, bottom curves) is stretched across the HUD's
+  span (hud_k: the window, or 21:9 with HUD position 21:9), the same width as on the pause screens: a 7314-vertex
+  model with the pause backdrop's fragment shader 405a0731... (exec.c helmet_frame; it had been edge-stretched as an
+  edge overlay, smearing the curves' tips) and its dark outline (519 vertices, 1.29x the screen's width; any draw
+  wider than the box, from hud_side's new HudSplit lo / hi). The mesh sways +-0.11 with its ends off screen; they
+  stay off screen stretched. Checked at 2560x720 and 1680x720: combat and scan visor, walking / turning edges, map
+  fade in, all three pause tabs, both Pause screen choices, title untouched; the user played windows of both builds
+  (screens 1, 2, 3, 5, 6 seen, clean exits). Not done: screens 5 / 6 aren't game_in_play, so the HUD likely drops
+  back to 16:9 (and the helmet to its old look) for them - unconfirmed, offered to the user. Not tried: thermal /
+  X-ray visors. Showing the user a dev build while it's open: rename the running build/primerecomp.exe to rebuild,
+  and launch tests with a copy of tools/run_game.ps1 that leaves the already running PIDs alone (it stops every
+  process of that path).
 - **Ultrawide is in the v0.0.4 draft and the user's Steam copy (2026-10-28**, the user: "yes put it in v0.0.4 and
   my steam copy"). release-v0.0.4 fast-forwarded to main (pushed: origin/release-v0.0.4 = local main; main itself
   still not pushed). Draft assets replaced: PrimeRecomp-v0.0.4-windows.zip (sha256 babbd759...80cc, from 9a53ce1;
