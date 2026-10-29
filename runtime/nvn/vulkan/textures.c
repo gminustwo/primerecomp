@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 
 #include "vk.h"
+#include "../../glyphs.h"
 #include "../astc.h"
 #include "../renderer.h"
 #include "../../settings.h"
@@ -906,6 +907,24 @@ static bool upload_astc_gpu(NvnTexture *t, TexBackend *b, const uint8_t *base, u
     return true;
 }
 
+// (debug) LARECOMP_DUMP_SMALL_TEX=<n>: level 0 of every texture up to n x n the first time its contents are seen,
+// as linear blocks (ASTC: decoded RGBA8), to build/texdump/small/<hash>_<w>x<h>_f<format>.bin - for finding the
+// game's own textures by content (runtime/hle/glyphs.c's button icons were found so; decoded offline)
+static int dump_small = -1;
+static void dump_small_tex(uint64_t hash, uint32_t w, uint32_t h, uint32_t format, const void *data, uint64_t size) {
+    static uint64_t seen[4096];
+    static int nseen;
+    for (int i = 0; i < nseen; i++) if (seen[i] == hash) return;
+    if (nseen == 4096) return;
+    seen[nseen++] = hash;
+    mkdir("build/texdump", 0755);
+    mkdir("build/texdump/small", 0755);
+    char path[256];
+    snprintf(path, sizeof path, "build/texdump/small/%016llx_%ux%u_f%x.bin", (unsigned long long)hash, w, h, format);
+    FILE *f = fopen(path, "wb");
+    if (f) { fwrite(data, 1, size, f); fclose(f); }
+}
+
 static void upload_texture_(NvnTexture *t, TexBackend *b);
 static void upload_texture(NvnTexture *t, TexBackend *b) {
     if (slow_ms < 0) slow_ms = getenv("LARECOMP_LOG_SLOW_UPLOADS") ? atol(getenv("LARECOMP_LOG_SLOW_UPLOADS")) : 0;
@@ -923,6 +942,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
 static void upload_texture_(NvnTexture *t, TexBackend *b) {
     bool sparse = t->pool && (t->pool->flags & NVN_POOL_VIRTUAL);
     if ((!t->addr && !sparse) || t->target == 10) return;
+    if (b->glyph && b->glyph_gen != glyph_generation()) b->uploaded = false;  // (a button icon to draw another way)
     const uint8_t *base = (const uint8_t *)(uintptr_t)t->addr;
     uint64_t frame = vk_frame_counter();
     if (b->uploaded && b->checked_frame == frame) return;
@@ -1025,7 +1045,9 @@ upload:
     uint64_t layer_size = tegra_layer_size(&t->layout);
     bool linear = (t->flags & 0x10) != 0;
     uint32_t levels = t->layout.levels < b->levels ? t->layout.levels : b->levels;
-    if (b->astc_bw && upload_astc_gpu(t, b, base, layers, levels, layer_size, linear)) return;
+    if (dump_small < 0) dump_small = getenv("LARECOMP_DUMP_SMALL_TEX") ? atoi(getenv("LARECOMP_DUMP_SMALL_TEX")) : 0;
+    bool dumping = dump_small && (int)t->width <= dump_small && (int)t->height <= dump_small;
+    if (b->astc_bw && !dumping && upload_astc_gpu(t, b, base, layers, levels, layer_size, linear)) return;
     for (uint32_t layer = 0; layer < layers; layer++) {
         for (uint32_t lv = 0; lv < levels; lv++) {
             LevelLayout l = tegra_level(&t->layout, lv);
@@ -1039,6 +1061,7 @@ upload:
                 uint64_t q1 = slow_ms ? SDL_GetTicksNS() : 0;
                 VkSpan s = vk_transient((uint64_t)l.w * l.h * 4, 16);
                 astc_decode_ldr(blocks, l.w, l.h, b->astc_bw, b->astc_bh, b->astc_srgb, s.ptr);
+                if (dumping && lv == 0 && layer == 0) dump_small_tex(b->data_hash, l.w, l.h, t->format, s.ptr, (uint64_t)l.w * l.h * 4);
                 if (slow_ms) ut_swz += q1 - q0, ut_astc += SDL_GetTicksNS() - q1;
                 free(blocks);
                 VkBufferImageCopy rg = {.bufferOffset = s.off, .bufferRowLength = l.w, .bufferImageHeight = l.h,
@@ -1062,6 +1085,12 @@ upload:
                 tegra_deswizzle(src, lin, l.wb, l.hb, l.d, fi->bpb, l.block_height_log2, l.block_depth_log2);
             }
             if (slow_ms) ut_swz += SDL_GetTicksNS() - q0;
+            if (dumping && lv == 0 && layer == 0) dump_small_tex(b->data_hash, l.w, l.h, t->format, lin, sz);
+            // the game's button prompt icons, drawn for the controller in use (runtime/hle/glyphs.c)
+            if (lv == 0 && layer == 0 && !expand) {
+                b->glyph = (int16_t)(glyph_match(l.w, l.h, t->format, t->layout.levels, lin, sz) + 1);
+                if (b->glyph) glyph_redraw(b->glyph - 1, lin, l.w, l.h), b->glyph_gen = glyph_generation();
+            }
             {   // (debug) LARECOMP_DUMP_TEX=<w>x<h>: level 0 of uploads that size, as stored and as decoded
                 static int dw = -1, dh;
                 if (dw < 0 && !(getenv("LARECOMP_DUMP_TEX") && sscanf(getenv("LARECOMP_DUMP_TEX"), "%dx%d", &dw, &dh) == 2)) dw = 0;

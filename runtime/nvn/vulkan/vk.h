@@ -121,6 +121,8 @@ typedef struct TexBackend {
     bool shared;  // listed in the share table under key
     struct { uint64_t addr, stride; uint32_t target, scalable, width, height, depth, levels, format, samples; } key;
     struct TexBackend *share_next;
+    int16_t glyph;        // one of the game's button prompt icons (runtime/hle/glyphs.c): its id + 1, else 0
+    uint32_t glyph_gen;   // the icons' generation it was drawn for (a newer one: uploaded again)
 } TexBackend;
 
 TexBackend *vk_tex(NvnTexture *t, bool for_render);  // backend image (uploads CPU contents unless for_render)
