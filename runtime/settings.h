@@ -23,6 +23,7 @@ enum { AA_OFF = 0, AA_SMAA = 1 };
 // back buttons.
 enum { FACE_NINTENDO = 0, FACE_XBOX = 1 };
 enum { FOV_GAME = 55, FOV_MIN = 45, FOV_MAX = 90 };
+enum { HINT_MINUTES_MAX = 30 };  // (Cheats tab "Hint timer": 0 = the game's own timing, else 1..30 minutes)
 #define MOUSE_SENS_MIN 0.1f  // (mouse aim sensitivity range: Controls tab)
 #define MOUSE_SENS_MAX 10.0f
 // System language served to the game (runtime/services/am.c GetDesiredLanguage, services/hid_set.c GetLanguageCode):
@@ -53,6 +54,11 @@ typedef struct {
     bool vsync;          // no tearing (runtime/nvn/vulkan/device.c present_mode)
     int fov;             // first-person vertical field of view in degrees, FOV_MIN..FOV_MAX (55: the game's): game.c
     bool skippable_cutscenes;  // every cutscene can be skipped, seen before or not (runtime/hle/game.c)
+    int hint_minutes;    // Cheats: the game waits at most this many minutes before a hint shows, and before it shows
+                         // again (0: the game's own waits; runtime/hle/cheats.c)
+    bool inf_energy;     // Cheats: damage takes no energy, and the energy stays full
+    bool inf_missiles;   // Cheats: missiles stay full
+    bool inf_power_bombs;  // Cheats: power bombs stay full
     bool gyro;           // the controller's gyro / accelerometer reach the game's motion controls (runtime/hle/motion.c)
     bool mouse_aim;      // the mouse turns and tilts the view itself (runtime/hle/game.c), captured while playing
     float mouse_sens;    // mouse aim: 1 = 0.044 degrees per mouse count (MOUSE_SENS_MIN..MAX)

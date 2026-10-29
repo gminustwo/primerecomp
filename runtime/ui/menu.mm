@@ -553,6 +553,27 @@ static void tab_gameplay(void) {
     opt_end();
 }
 
+// Cheats (runtime/hle/cheats.c), live
+static void tab_cheats(void) {
+    opt_begin("##cheats", ImGui::GetFontSize() / 34);
+    opt_section("Hints");
+    opt_int("Hint timer", &g_settings.hint_minutes, 0, HINT_MINUTES_MAX, 1, 0, "%d min",
+            "The longest the game waits before a hint shows where to go next, and before it shows it again if you're "
+            "still on your way. On its own it waits 15 to 40 minutes for most hints, and 30 before showing one "
+            "again. Hints the game shows right away still do.\n\nNeeds the game's own Hint System option on (pause "
+            "menu, Options).", "Game's own");
+    opt_section("Samus");
+    opt_toggle("Infinite energy", &g_settings.inf_energy, false,
+               "Hits still land (the flash, the knockback) but take no energy, however hard they hit, and the energy "
+               "stays full.");
+    opt_toggle("Infinite missiles", &g_settings.inf_missiles, false,
+               "Missiles stay full, the beam combos' too. Needs the Missile Launcher (and holds as many as you've "
+               "found room for).");
+    opt_toggle("Infinite power bombs", &g_settings.inf_power_bombs, false,
+               "Power bombs stay full once you have them.");
+    opt_end();
+}
+
 static void tab_audio(void) {
     opt_begin("##audio", ImGui::GetFontSize() / 34);
     opt_section("Sound");
@@ -725,11 +746,11 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     Tab tabs[11];
     int ntabs = 0;
     if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
-    // (ids 2-5 were LAS Recomp's Save Editor, Randomizer, Warp and Cheats, 6 its Gameplay - now Metroid Prime's; ids
-    // stay: test hooks)
+    // (ids 2-4 were LAS Recomp's Save Editor, Randomizer and Warp, 5 and 6 its Cheats and Gameplay - now Metroid
+    // Prime's; ids stay: test hooks)
     // (Cosmetics, id 7: LAS Recomp's tunic / heart colours - nothing to recolour in Metroid Prime, so not shown)
-    static const char *names[] = {"Video", "Audio", "", "", "", "", "Gameplay", "", "Controls", "Quit"};
-    static const int order[] = {6, 8, 0, 1, 9};  // Gameplay, Controls, Video, Audio, Quit
+    static const char *names[] = {"Video", "Audio", "", "", "", "Cheats", "Gameplay", "", "Controls", "Quit"};
+    static const int order[] = {6, 8, 0, 1, 5, 9};  // Gameplay, Controls, Video, Audio, Cheats, Quit
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT)
         if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
@@ -815,6 +836,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case -1: prelaunch(scale); break;
                 case 0: tab_display(); break;
                 case 1: tab_audio(); break;
+                case 5: tab_cheats(); break;
                 case 6: tab_gameplay(); break;
                 case 8: tab_about(); break;
                 case 9: tab_quit(scale, in_game); break;
