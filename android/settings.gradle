@@ -1,0 +1,9 @@
+// PrimeRecomp for Android (arm64-v8a): the APK around the runtime (libmain.so) - tools/android/apk.sh builds it
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositories { google(); mavenCentral() }
+}
+rootProject.name = 'PrimeRecomp'
+include ':app'

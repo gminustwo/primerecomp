@@ -1,8 +1,13 @@
-// Linux host layer (runtime/platform.h). x86-64 and aarch64.
+// Linux host layer (runtime/platform.h). x86-64 and aarch64; Android (aarch64) too, where noted.
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#ifdef __ANDROID__
+#include <SDL3/SDL_system.h>  // (the app's folders)
+#include <unwind.h>           // (bionic's backtrace() is API 33+)
+#else
 #include <execinfo.h>
+#endif
 #include <fcntl.h>
 #include <pthread.h>
 #include <sched.h>
@@ -205,6 +210,18 @@ static void require_cpu(void) {}
 #endif
 
 void plat_init(void) {
+#ifdef __ANDROID__
+    // The data root: the app's folder on the shared storage (Android/data/<package>/files) - game files, saves,
+    // settings, the log - which adb and file managers reach over USB, where the app's private folder isn't. (runtime/
+    // paths.c takes it from LARECOMP_DATA_ROOT; the game code library is loaded from a copy in the private folder:
+    // runtime/gamelib.c.)
+    const char *ext = SDL_GetAndroidExternalStoragePath();
+    if (ext && *ext) {
+        setenv("LARECOMP_DATA_ROOT", ext, 0);
+        posix_log_to_file(getenv("LARECOMP_DATA_ROOT"));
+    }
+    return;
+#endif
     // (the AppImage is read-only): $XDG_DATA_HOME/primerecomp, ~/.local/share/primerecomp by default (runtime/paths.c)
     const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
     char dir[900];
@@ -216,6 +233,12 @@ void plat_init(void) {
 
 // (inside an AppImage: the binary in its mount, which stays mounted while this process lives - re-exec included)
 bool plat_exe_path(char *buf, size_t size) {
+#ifdef __ANDROID__
+    // (the process is the system's app_process: the "program folder", where shipped resources are looked for
+    // (rt_resource), is the data root, which the app fills from the APK's assets - runtime/paths.c)
+    const char *root = getenv("LARECOMP_DATA_ROOT");
+    return root && (size_t)snprintf(buf, size, "%s/primerecomp", root) < size;
+#endif
     ssize_t n = readlink("/proc/self/exe", buf, size - 1);
     if (n <= 0) return false;
     buf[n] = 0;
@@ -239,6 +262,10 @@ static char **self_argv(void) {
 }
 
 void plat_exec(char *const argv[]) {
+#ifdef __ANDROID__
+    (void)argv;  // (an app's process is forked from the zygote: there is no command line to start again)
+    return;
+#endif
     if (argv) { execv(argv[0], argv); return; }
     char path[4096];
     char **av = self_argv();
@@ -251,6 +278,21 @@ const char *rt_host_fn_name(uint64_t pc, uint64_t *offset);  // runtime/dispatch
 
 // Static runtime functions come out as the nearest guest function (plat_symbol knows exported ones only: the Makefile
 // links with -rdynamic), so backtrace lines also give the offset in the executable (addr2line -fe primerecomp <offset>).
+#ifdef __ANDROID__
+typedef struct { void **bt; int n, max; } UnwindState;
+static _Unwind_Reason_Code unwind_one(struct _Unwind_Context *ctx, void *arg) {
+    UnwindState *s = arg;
+    uintptr_t pc = _Unwind_GetIP(ctx);
+    if (pc && s->n < s->max) s->bt[s->n++] = (void *)pc;
+    return s->n < s->max ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
+static int backtrace(void **bt, int max) {
+    UnwindState s = {bt, 0, max};
+    _Unwind_Backtrace(unwind_one, &s);
+    return s.n;
+}
+#endif
+
 void plat_print_backtrace(void) {
     void *bt[64];
     int n = backtrace(bt, 64);
