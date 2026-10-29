@@ -3581,6 +3581,32 @@ static int hud_side(Prog *pr, CmdRec *r, bool indexed, HudSplit *split) {
     return side;
 }
 
+// A draw into small targets only (256x256 texels or fewer) waits for its program and pipeline instead of being skipped
+// while they build. Those are the game's simulations, lookup tables and bakes, which a skipped draw breaks for good -
+// the Ruined Courtyard's water is a lattice-Boltzmann simulation in 156x180 targets, set going by one draw
+// (CFluidSurfaceDynamicsSim::InitializeSurfaceDynamics): skipped while its shader built, even from a warm cache, the
+// water never filled the room - where a skipped scene draw is redrawn next frame. Waits are first-use builds only.
+// LARECOMP_NO_SMALL_WAIT=1: skipped like the rest.
+static bool small_targets(void) {
+    static int off = -1;
+    if (off < 0) off = getenv("LARECOMP_NO_SMALL_WAIT") != NULL;
+    bool any = false;
+    for (int i = 0; i < st.rt.ncolor && !off; i++) {
+        if (!st.rt.color[i]) continue;
+        if ((uint64_t)st.rt.color[i]->width * st.rt.color[i]->height > 256 * 256) return false;
+        any = true;
+    }
+    return any;
+}
+
+static bool wait_built(_Atomic int *state) {  // (true: ready; a build that fails or takes over 5 s: skipped after all)
+    uint64_t t0 = plat_now_ns();
+    while (atomic_load(state) == 0 && plat_now_ns() - t0 < 5000000000ull) plat_sleep_until_ns(plat_now_ns() + 250000);
+    extern __thread uint64_t g_blocked_ns;
+    g_blocked_ns += plat_now_ns() - t0;
+    return atomic_load(state) == 1;
+}
+
 static void draw_(CmdRec *r, bool indexed);
 static void draw(CmdRec *r, bool indexed) {
     PROF_T0();
@@ -3605,6 +3631,7 @@ static void draw_(CmdRec *r, bool indexed) {
     uint8_t cls0;
     topology((uint32_t)r->x[0], &topo0, &cls0);
     Prog *pr = get_program(st.program, &vkey, &fkey, cls0);
+    if (pr && atomic_load(&pr->state) == 0 && small_targets()) wait_built(&pr->state);
     if (!pr || atomic_load(&pr->state) != 1) {
         if (g_debug_frame)
             LOG("[draw] SKIPPED (program %s) mode %llu count %llu prog vs=%llx fs=%llx | rt %d %p\n",
@@ -3645,6 +3672,19 @@ static void draw_(CmdRec *r, bool indexed) {
         g_cur_fs_hash = last_hash, g_cur_fs_addr = fs;
     }
     if (g_debug_frame) debug_draw(pr, r, indexed);
+    else {  // (debug) LARECOMP_LOG_RT=<w>x<h>: every draw into a target that size, every frame (the water simulation's)
+        static int lw = -1, lh;
+        if (lw < 0 && !(getenv("LARECOMP_LOG_RT") && sscanf(getenv("LARECOMP_LOG_RT"), "%dx%d", &lw, &lh) == 2)) lw = 0;
+        for (int i = 0; lw && i < st.rt.ncolor; i++)
+            if (st.rt.color[i] && (int)st.rt.color[i]->width == lw && (int)st.rt.color[i]->height == lh) {
+                LOG("[rt] frame %llu draw fs=%llx count %llu targets", (unsigned long long)renderer_present_count(),
+                    (unsigned long long)st.program->stages[1].code_addr, (unsigned long long)r->x[2]);
+                for (int k = 0; k < st.rt.ncolor; k++)
+                    if (st.rt.color[k]) LOG(" @%llx/f%#x", (unsigned long long)st.rt.color[k]->addr, st.rt.color[k]->format);
+                LOG("\n");
+                break;
+            }
+    }
     if (ct_on()) ct_draw(pr, "draw");
     alias_draw_check();
     resolve_feedback(pr);
@@ -3774,6 +3814,7 @@ static void draw_(CmdRec *r, bool indexed) {
         pipe_tab[pslot].pipe = pp;
         run_job(build_pipeline, pp);
     }
+    if (atomic_load(&pp->state) == 0 && small_targets()) wait_built(&pp->state);
     if (atomic_load(&pp->state) != 1) {
         free(hud_split.idx);
         free(hud_split.inst_side);
@@ -4937,6 +4978,10 @@ static void exec_list(uint64_t handle, int depth) {
             const struct { uint64_t tex; NvnTextureView view; uint8_t has_view; int32_t region[6]; float color[4]; } *ct = x;
             NvnTexture *t = (NvnTexture *)(uintptr_t)ct->tex;
             if (!t) break;
+            if (getenv("LARECOMP_LOG_CLEARS"))
+                LOG("[cclear] frame %llu texture @%llx %ux%u f%#x target %u mask %#x: %g %g %g %g\n",
+                    (unsigned long long)renderer_present_count(), (unsigned long long)t->addr, t->width, t->height, t->format,
+                    t->target, (uint32_t)r->x[4], ct->color[0], ct->color[1], ct->color[2], ct->color[3]);
             snap_reason = "clear-texture"; snapshots_invalidate(NULL);
             alias_before_write(t, 0, "clear");
             RtState saved = st.rt;

@@ -222,11 +222,45 @@ static void rt_frame_begin(Cpu *c) {
     g_frame_begin(c);
 }
 
+static float *player_transform(uint64_t player);
+
+// (debug) LARECOMP_LOG_FLUID=1: CPlayerMP1::FluidFXThink (a virtual call: hle_override) - Samus entering, in or leaving
+// water - with the water's box (CScriptTriggerMP1::GetTriggerBoundsWR: its top is the surface the physics use) and
+// her position, as the state changes ("[fluid]")
+static GuestFn g_fluid_fx;
+static void rt_fluid_fx(Cpu *c) {
+    static uint32_t was = ~0u;
+    static float *box;
+    uint32_t state = (uint32_t)c->x[1];
+    uint64_t water = c->x[2];
+    if (state != was) {
+        was = state;
+        if (!box) box = hle_alloc(32);
+        Cpu *saved = malloc(sizeof *saved);
+        *saved = *c;
+        c->x[0] = water;
+        c->x[8] = (uint64_t)(uintptr_t)box;
+        guest_call(c, guest_sym("_ZNK17CScriptTriggerMP118GetTriggerBoundsWREv"));
+        *c = *saved;
+        free(saved);
+        float *m = player_transform(c->x[0]);
+        LOG("[fluid] state %u water %llx box %.2f %.2f %.2f .. %.2f %.2f %.2f, Samus at %.2f %.2f %.2f\n", state,
+            (unsigned long long)water, box[0], box[1], box[2], box[3], box[4], box[5], m ? m[3] : 0, m ? m[7] : 0, m ? m[11] : 0);
+    }
+    g_fluid_fx(c);
+}
+
 void game_hooks_init(void) {  // (each boot, after dispatch_init)
     uint64_t a = guest_sym("_ZN13CGameIOWinMP110FrameBeginER18CArchitectureQueue");
     static bool hooked;
     g_frame_begin = dispatch_lookup(a);
     if (g_frame_begin && !hooked) hle_override(a, rt_frame_begin, "CGameIOWinMP1::FrameBegin"), hooked = true;
+    if (getenv("LARECOMP_LOG_FLUID")) {
+        uint64_t f = guest_sym("_ZN10CPlayerMP112FluidFXThinkEN9CActorMP111EFluidStateER15CScriptWaterMP1R13CStateManager");
+        static bool fhooked;
+        g_fluid_fx = dispatch_lookup(f);
+        if (g_fluid_fx && !fhooked) hle_override(f, rt_fluid_fx, "CPlayerMP1::FluidFXThink"), fhooked = true;
+    }
     extern void cheats_hooks_init(void);  // runtime/hle/cheats.c
     cheats_hooks_init();
 }
