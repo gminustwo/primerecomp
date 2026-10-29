@@ -9,6 +9,7 @@
 #include "theme.h"
 
 extern "C" {
+#include "../glyphs.h"
 #include "../input_bind.h"
 #include "../settings.h"
 }
@@ -64,7 +65,31 @@ extern "C" void controls_bindings_draw(float scale) {
             if (cur) ImGui::PopStyleColor();
         }
     }
+    {   // button icons: the game's prompts drawn as this controller's (runtime/hle/glyphs.c)
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Button icons");
+        static const char *const set[ICONS_COUNT] = {"Auto", "Switch", "Xbox", "PlayStation", "Keyboard & mouse", "Wii Remote"};
+        for (int i = 0; i < ICONS_COUNT; i++) {
+            ImGui::SameLine();
+            bool cur = g_settings.button_icons == i;
+            if (cur) ImGui::PushStyleColor(ImGuiCol_Button, theme::frame_on);
+            char lbl[64];
+            snprintf(lbl, sizeof lbl, "%s##icons%d", set[i], i);
+            if (ImGui::Button(lbl) && !cur) {
+                g_settings.button_icons = i;
+                settings_save();
+            }
+            if (cur) ImGui::PopStyleColor();
+        }
+    }
     ImGui::PushTextWrapPos(0);
+    if (g_settings.button_icons == ICONS_AUTO) {
+        static const char *const now[ICONS_COUNT] = {"", "Switch", "Xbox", "PlayStation", "keyboard & mouse", "Wii Remote"};
+        ImGui::TextDisabled("Button icons: the game's prompts show the buttons of whatever you used last (now: %s), "
+                            "as you've bound them.", now[glyphs_current() % ICONS_COUNT]);
+    } else {
+        ImGui::TextDisabled("Button icons: the game's prompts show these buttons, as you've bound them.");
+    }
     ImGui::TextDisabled("Face buttons: which button is A (and confirms in menus) - the Switch's layout, where A is "
                         "the right button and B the bottom one, or an Xbox controller's, A at the bottom and B on the "
                         "right. Select a binding, then press the new button or key. Esc (or 5 seconds) cancels. A "

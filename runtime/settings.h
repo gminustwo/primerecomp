@@ -71,6 +71,8 @@ typedef struct {
                                    // Steam Input (the window code sets SDL_HINT_JOYSTICK_HIDAPI_STEAM)
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language
     int face_layout;     // FACE_*: which face button is A (set through bind_set_face_layout: it swaps the bindings)
+    int button_icons;    // ICONS_* (runtime/glyphs.h): the game's button prompts drawn as this controller's, or Auto:
+                         // whichever was used last (runtime/hle/glyphs.c)
     bool menu_tip_seen;  // the start screen's one-time "how to open the menu" note was shown (first PLAY ever)
 } Settings;
 

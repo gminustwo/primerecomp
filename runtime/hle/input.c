@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../glyphs.h"
 #include "../hle.h"
 #include "../nvn/nvn.h"
 #include "../nvn/renderer.h"
@@ -232,6 +233,14 @@ static void log_pad(void) {
     LOG("[input] gamepad: %s (rumble %s)\n", SDL_GetGamepadName(pad),
         SDL_GetBooleanProperty(p, SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false) ? "yes" : "no");
 }
+// The open controller's SDL_GamepadType, -1 for none (runtime/hle/glyphs.c: which button icons Auto shows);
+// LARECOMP_PAD_TYPE pretends as for input_pad_family
+int input_pad_type(void) {
+    const char *e = getenv("LARECOMP_PAD_TYPE");
+    if (e) return !strcmp(e, "xbox") ? SDL_GAMEPAD_TYPE_XBOXONE : !strcmp(e, "playstation") || !strcmp(e, "ps") ? SDL_GAMEPAD_TYPE_PS5 :
+                  !strcmp(e, "nintendo") ? SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO : SDL_GAMEPAD_TYPE_STANDARD;
+    return pad ? (int)SDL_GetGamepadType(pad) : -1;
+}
 int input_pad_family(void) {
     static int env = -2;
     if (env == -2) {
@@ -254,6 +263,8 @@ void input_handle_event(const SDL_Event *e) {
     case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP:
         if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_F9 && !e->key.repeat) g_debug_frame_request = 1;
         if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_F8 && !e->key.repeat) g_pos_save_request = 1;
+        if (e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat && !(e->key.scancode >= SDL_SCANCODE_F1 && e->key.scancode <= SDL_SCANCODE_F12))
+            glyphs_note_device(GLYPH_DEV_KEYS);  // (the button icons, on Auto: the runtime's own F keys don't count)
         if (e->key.scancode < SDL_SCANCODE_COUNT) {
             keys_down[e->key.scancode] = e->type == SDL_EVENT_KEY_DOWN;
             if (e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat) key_menu[e->key.scancode] = !game_in_play();
@@ -267,6 +278,7 @@ void input_handle_event(const SDL_Event *e) {
         }
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP:
+        if (e->type == SDL_EVENT_MOUSE_BUTTON_DOWN) glyphs_note_device(GLYPH_DEV_KEYS);
         if (e->button.button >= 1 && e->button.button <= 5 && (e->type == SDL_EVENT_MOUSE_BUTTON_UP || game_in_play())) {
             keys_down[BIND_MOUSE_LEFT + e->button.button - 1] = e->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
             recompute_keyboard();
@@ -287,6 +299,8 @@ void input_handle_event(const SDL_Event *e) {
         recompute_pad();
         break;
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP:
+        if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e->type == SDL_EVENT_GAMEPAD_AXIS_MOTION && abs(e->gaxis.value) > 20000))
+            glyphs_note_device(GLYPH_DEV_PAD);
         recompute_pad();
         break;
     case SDL_EVENT_GAMEPAD_SENSOR_UPDATE:
@@ -571,6 +585,8 @@ static void fill_state(Cpu *c) {
     bool menu = menu_input_captured();  // the overlay menu / name entry has the controls (typing there isn't for the game)
     int32_t wm_lx, wm_ly, wm_rx, wm_ry;
     uint64_t wm_b = wiimote_buttons(&wm_lx, &wm_ly, &wm_rx, &wm_ry);
+    if (wm_b) glyphs_note_device(GLYPH_DEV_WII);
+    glyphs_frame();  // (the button icons: what they should show now)
     uint64_t b = menu ? script_buttons : key_buttons | pad_buttons | wm_b | script_buttons;
     int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx + wm_lx) + script_lx);
     int32_t ly = clamp_axis((menu ? 0 : key_ly + pad_ly + wm_ly) + script_ly);

@@ -36,6 +36,9 @@ PC, with Vulkan for the graphics. No emulator runs.
 - 30, 60 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
 - Steam Deck presets
 - Gyro aiming with controllers that have one, rumble
+- The game's button prompts drawn for your controller - Xbox, PlayStation, Switch, keyboard and mouse or Wii Remote,
+  following your bindings - in the game's own style (F1 menu, Controls tab: Button icons; Auto follows what you used
+  last)
 - Any cutscene skippable
 - Cheats (F1 menu, Cheats tab): infinite energy, missiles and power bombs, and a hint timer that cuts the game's
   15-40 minute wait for a hint down to as little as a minute
@@ -282,8 +285,10 @@ screen.
 - [SDL 3](https://libsdl.org) - windowing, input, audio (zlib license)
 - [FFmpeg](https://ffmpeg.org) - movie playback (LGPL)
 - [Dear ImGui](https://github.com/ocornut/imgui) - the in-game menu and start screen (MIT)
-- [Baloo 2](https://github.com/EkType/Baloo2) by Ek Type - the start screen's font (SIL Open Font License 1.1,
-  `third_party/fonts/Baloo2/OFL.txt`)
+- [Baloo 2](https://github.com/EkType/Baloo2) by Ek Type - the start screen's font, and the button prompts' labels
+  (SIL Open Font License 1.1, `third_party/fonts/Baloo2/OFL.txt`)
+- [bcdec](https://github.com/iOrange/bcdec) by Sergii Kudlai - decodes the game's button prompt icons to redraw them
+  (MIT or Unlicense, `third_party/bcdec/bcdec.h`)
 - [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) - the renderer (MIT)
 - [SMAA](https://github.com/iryoku/smaa) by Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro and
   Diego Gutierrez - the anti-aliasing option (MIT, `third_party/smaa/LICENSE.txt`)
@@ -309,7 +314,7 @@ not in this repository and not in release builds. You must provide your own lega
 PrimeRecomp's code - LAS Recomp's code and the changes made for Metroid Prime Remastered - is open source under the
 [MIT License](LICENSE) (copyright Peiikai, and the PrimeRecomp contributors for their changes). Third-party
 components keep their own licenses: Dear ImGui (MIT), Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT),
-code ported from Ryujinx (MIT), the Baloo 2 font (SIL OFL 1.1), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked
+bcdec (MIT), code ported from Ryujinx (MIT), the Baloo 2 font (SIL OFL 1.1), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked
 dynamically), shaderc (Apache 2.0), the Zig compiler (MIT; its LLVM / Clang / LLD: Apache 2.0 with LLVM exceptions;
 its C library headers keep their own licenses) and the game code generator helper's bundled libraries listed above
 (Unicorn is under the GPL: the helper is a separate program the setup runs, and its sources are this repository plus

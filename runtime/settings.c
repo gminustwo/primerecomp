@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "glyphs.h"
 #include "hle.h"
 #include "input_bind.h"
 
@@ -193,6 +194,11 @@ void settings_load(void) {
         else if (!strcmp(key, "antialias")) g_settings.antialias = !strcmp(val, "off") ? AA_OFF : AA_SMAA;  // ("fxaa": SMAA now)
         // (before the bind_pad_* lines, which settings_save writes last: they're the differences from its defaults)
         else if (!strcmp(key, "face_layout")) bind_load_face_layout(!strcmp(val, "xbox") ? FACE_XBOX : FACE_NINTENDO);
+        else if (!strcmp(key, "button_icons")) {  // (anything else: auto)
+            g_settings.button_icons = ICONS_AUTO;
+            for (int i = 0; i < ICONS_COUNT; i++)
+                if (!strcmp(val, g_icons_names[i])) g_settings.button_icons = i;
+        }
         else if (!strcmp(key, "language")) {  // ("auto" or one of the game's codes; anything else: auto)
             g_settings.language = LANG_AUTO;
             for (int i = 1; i < N_LANGUAGES; i++)
@@ -249,6 +255,8 @@ void settings_save(void) {
     else if (g_settings.res_mode == RES_FIXED) fprintf(f, "resolution = %dp\n", g_settings.res_lines);
     else fprintf(f, "resolution = match\n");
     fprintf(f, "face_layout = %s\n", g_settings.face_layout == FACE_XBOX ? "xbox" : "nintendo");
+    fprintf(f, "button_icons = %s\n", g_icons_names[g_settings.button_icons >= 0 && g_settings.button_icons < ICONS_COUNT
+                                                         ? g_settings.button_icons : ICONS_AUTO]);
     fprintf(f, "language = %s\n", g_language_codes[g_settings.language > LANG_AUTO && g_settings.language < N_LANGUAGES
                                                      ? g_settings.language : LANG_AUTO]);
     fprintf(f, "menu_tip_seen = %d\n", g_settings.menu_tip_seen);
