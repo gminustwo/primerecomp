@@ -10,10 +10,10 @@ A=$PWD/build/android
 NDK=${NDK:-$(ls -d "$A"/sdk/ndk/* | sort -V | tail -1)}
 case "$(uname -s)" in MINGW*|MSYS*) HOST=windows-x86_64 ;; Darwin) HOST=darwin-x86_64 ;; *) HOST=linux-x86_64 ;; esac
 TC=$NDK/toolchains/llvm/prebuilt/$HOST/bin
-VERSION=$(sed -n 's/.*versionName \x27\(.*\)\x27/\1/p' android/app/build.gradle)
+VERSION=$(grep versionName android/app/build.gradle | cut -d"'" -f2)
 
 [ -f "$A/deps/lib/libSDL3.so" ] || tools/android/build_deps.sh
-make PLATFORM=android -j"$(nproc)" build/android/build/libmain.so
+make PLATFORM=android -j"$(getconf _NPROCESSORS_ONLN)" build/android/build/libmain.so
 
 # native libraries (stripped: libmain.so carries 100+ MB of debug info - the unstripped one stays in build/android/build
 # for ndk-stack / addr2line on a crash's offsets)
