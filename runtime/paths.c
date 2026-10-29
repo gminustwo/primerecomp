@@ -116,6 +116,20 @@ void rt_paths_init(void) {
     }
     if (!getcwd(g_root, sizeof g_root)) snprintf(g_root, sizeof g_root, "%s", root);
     fprintf(stderr, "[paths] data: %s\n", g_root);
+#ifdef __ANDROID__
+    // the APK's assets (tools/android/apk.sh), where rt_resource looks for what ships next to the program: the data
+    // root (runtime/platform/linux.c plat_exe_path). SDL opens a relative path from the APK's assets on Android.
+    static const char *const assets[] = {"Baloo2-SemiBold.ttf", "OFL.txt", "icon.png"};
+    for (size_t i = 0; i < sizeof assets / sizeof *assets; i++) {
+        if (exists(assets[i])) continue;
+        size_t n = 0;
+        void *data = SDL_LoadFile(assets[i], &n);
+        FILE *f = data ? fopen(assets[i], "wb") : NULL;
+        if (f) { fwrite(data, 1, n, f); fclose(f); }
+        SDL_free(data);
+        fprintf(stderr, "[paths] asset %s: %s\n", assets[i], f ? "copied" : "not in the APK");
+    }
+#endif
 }
 
 const char *rt_data_root(void) { return g_root; }
