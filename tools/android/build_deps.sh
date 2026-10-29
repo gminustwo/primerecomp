@@ -11,14 +11,14 @@ API=${API:-29}
 P=$A/deps
 S=$A/src
 mkdir -p "$P/lib" "$P/include" "$S"
-JOBS=$(nproc)
+JOBS=$(getconf _NPROCESSORS_ONLN)
 case "$(uname -s)" in MINGW*|MSYS*) HOST=windows-x86_64; NDKBUILD() { "$(cygpath -u "${SYSTEMROOT:-C:\Windows}")/System32/cmd.exe" //c "$(cygpath -w "$NDK/ndk-build.cmd")" "$@" || exit 1; } ;;
     Darwin) HOST=darwin-x86_64; NDKBUILD() { "$NDK/ndk-build" "$@"; } ;; *) HOST=linux-x86_64; NDKBUILD() { "$NDK/ndk-build" "$@"; } ;; esac
 TC=$NDK/toolchains/llvm/prebuilt/$HOST/bin
 
 fetch() {  # url sha256 file
     [ -f "$S/$3" ] || curl -fsSL -o "$S/$3.part" "$1" && { [ -f "$S/$3" ] || mv "$S/$3.part" "$S/$3"; }
-    echo "$2  $S/$3" | sha256sum -c --quiet
+    echo "$2  $S/$3" | { command -v sha256sum >/dev/null && sha256sum -c --quiet || shasum -a 256 -c --quiet; }
 }
 
 # ---- SDL3 (3.4.18, as the Windows build's MSYS2 package): libSDL3.so, and its Java glue for the APK
