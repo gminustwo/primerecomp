@@ -371,6 +371,12 @@ static void builder_layout(uint64_t b, TexLayout *t) {
         static int n;
         if (n++ < 4000) LOG("[nvn] packaged layout %016llx fmt %#x %ux%u lv %u -> default bh %u\n", pl, G(uint32_t, b, 0x20), t->width, t->height, t->levels, t->block_height_log2);
     }
+    if (!packaged && getenv("LARECOMP_LOG_BH")) {  // (debug) default block heights: size, format, flags
+        static int n;
+        uint32_t hb = (t->height + t->fmt->bh - 1) / t->fmt->bh;
+        if (n++ < 4000) LOG("[nvn] layout fmt %#x %ux%u (%u rows) target %u flags %#x lv %u -> bh %u\n", G(uint32_t, b, 0x20),
+                            t->width, t->height, hb, target, G(uint32_t, b, 8), t->levels, t->block_height_log2);
+    }
 }
 
 static bool is_linear(uint64_t b) { return (G(uint32_t, b, 8) & 0x10) || G(uint32_t, b, 0xC) == 10; }

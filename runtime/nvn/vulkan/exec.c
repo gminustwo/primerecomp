@@ -4230,6 +4230,22 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
             LOG("[draw]     dumped %s (%llu bytes, bh %u bd %u)\n", path, (unsigned long long)tegra_total_size(&t->layout),
                 t->layout.block_height_log2, t->layout.block_depth_log2);
         }
+        {   // (debug) LARECOMP_DUMP_TEX=<w>x<h> (textures.c dumps their uploads): a sampled texture that size, its guest
+            // memory now and the GPU's copy - set against the upload, a texture the GPU holds stale
+            static int dw = -1, dh;
+            if (dw < 0 && !(getenv("LARECOMP_DUMP_TEX") && sscanf(getenv("LARECOMP_DUMP_TEX"), "%dx%d", &dw, &dh) == 2)) dw = 0;
+            if (dw && b && t->addr && (int)t->width == dw && (int)t->height == dh) {
+                mkdir("build/texdump", 0755);
+                char path[160];
+                snprintf(path, sizeof path, "build/texdump/draw_%llx_f%x.raw", (unsigned long long)t->addr, t->format);
+                FILE *f = fopen(path, "wb");
+                if (f) { fwrite((const void *)(uintptr_t)t->addr, 1, (size_t)tegra_total_size(&t->layout), f); fclose(f); }
+                snprintf(path, sizeof path, "build/texdump/draw_%llx_f%x_gpu.png", (unsigned long long)t->addr, t->format);
+                renderer_save_texture_tex((TexBackend *)b, path);
+                LOG("[draw]     dumped build/texdump/draw_%llx_f%x.raw (%llu bytes) and its GPU copy\n",
+                    (unsigned long long)t->addr, t->format, (unsigned long long)tegra_total_size(&t->layout));
+            }
+        }
         if (b && getenv("LARECOMP_DEBUG_SAMPLED")) {  // (debug) each sampled texture as the draw sees it
             static int nsaved;
             char path[128];

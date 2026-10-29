@@ -803,8 +803,8 @@ static void bh_probe(const uint8_t *src, const LevelLayout *l, uint32_t bpb, uin
     static int nseen;
     for (int i = 0; i < nseen; i++) if (seen[i] == src) return;
     if (nseen < 4096) seen[nseen++] = src;
-    bool astc = abw != 0, bc = !astc && bpb == 16 && fmt >= 0x41 && fmt <= 0x50;
-    if (bc || (bpb != 1 && bpb != 2 && bpb != 4 && bpb != 8 && !astc)) return;
+    bool astc = abw != 0, bc = !astc && (bpb == 8 || bpb == 16) && fmt >= 0x41 && fmt <= 0x50;
+    if (!bc && bpb != 1 && bpb != 2 && bpb != 4 && bpb != 8 && !astc) return;
     uint32_t row = l->wb * bpb;
     uint8_t *lin = malloc((uint64_t)row * l->hb);
     uint8_t *rgba = astc ? malloc((uint64_t)l->w * l->h * 4) : NULL;
@@ -812,10 +812,27 @@ static void bh_probe(const uint8_t *src, const LevelLayout *l, uint32_t bpb, uin
     int n = snprintf(line, sizeof line, "[bh] %ux%u f%#x rows %u in use %u:", l->w, l->h, fmt, l->hb, l->block_height_log2);
     double best = 1e30;
     int besti = -1;
-    for (uint32_t bh = 0; bh <= l->block_height_log2; bh++) {
+    // BC: every block height that fits the level's storage, scored by the all-zero blocks inside the image (a wrong
+    // layout brings the padding's zeroes in; the right one leaves none - the Ruined Courtyard's 156x180 BC7 water mask)
+    uint64_t width_gobs = ((uint64_t)row + 63) / 64, have = width_gobs * (512ull << l->block_height_log2) *
+                          ((l->hb + (8u << l->block_height_log2) - 1) / (8u << l->block_height_log2));
+    for (uint32_t bh = 0; bh <= (bc ? 4u : l->block_height_log2); bh++) {
+        if (bc && width_gobs * (512ull << bh) * ((l->hb + (8u << bh) - 1) / (8u << bh)) > have) {
+            n += snprintf(line + n, sizeof line - n, " -");
+            continue;
+        }
         tegra_deswizzle(src, lin, l->wb, l->hb, 1, bpb, bh, 0);
         double score = 0;
-        if (astc) {
+        if (bc) {
+            uint64_t zero = 0, nb = (uint64_t)l->wb * l->hb;
+            for (uint64_t i = 0; i < nb; i++) {
+                const uint8_t *p = lin + i * bpb;
+                bool z = true;
+                for (uint32_t k = 0; k < bpb && z; k++) z = p[k] == 0;
+                zero += z;
+            }
+            score = (double)zero / (double)nb;
+        } else if (astc) {
             astc_decode_ldr(lin, l->w, l->h, abw, abh, false, rgba);
             uint64_t bad = 0;
             for (uint64_t i = 0; i < (uint64_t)l->w * l->h; i++)

@@ -7,13 +7,15 @@
 static uint32_t div_up(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 static uint64_t align_up(uint64_t a, uint64_t b) { return (a + b - 1) / b * b; }
 
-// The default block height: the power of two GOBs nearest the height in GOBs (1 to 16; rounded at the geometric
-// midpoint). Metroid Prime Remastered's assets are tiled that way (LARECOMP_BH_PROBE, decoding them every way):
-// 9 block rows take 1 GOB (the HUD's 36x36 BC7 button glyphs: rounding up gave 2 and they showed as fragments),
-// 13 take 2, 26 take 4, 52 take 8 (ASTC; rounding down left error blocks), 103 and more 16.
+// The default block height: 1.5 times the height, in whole GOBs (rounded down), rounded down to a power of two (1 to
+// 16) - the official rule as deko3d has it (dk_image.cpp), but with its GOBs rounded down, not up. Metroid Prime
+// Remastered's textures are tiled that way (LARECOMP_BH_PROBE, decoding them every way): 9 block rows take 1 GOB (the
+// HUD's 36x36 BC7 button glyphs), 13 and 20 take 2, 23-26 take 4, 45 (the Ruined Courtyard's 156x180 BC7 water
+// mask: with 4 its padding came into the image and the water sank under the floor), 52-75 take 8, 103 and more 16.
+// (Until 2026-10-29: the power of two nearest the height at the geometric midpoint - right for all of those but 45.)
 uint32_t tegra_default_block_height_log2(uint32_t height_in_blocks) {
-    uint32_t log2 = 0;  // (rows >= 8 * 2^log2 * sqrt(2): rows^2 >= 128 * 4^log2)
-    while (log2 < 4 && (uint64_t)height_in_blocks * height_in_blocks >= 128ull << (2 * log2)) log2++;
+    uint32_t gobs = (height_in_blocks + height_in_blocks / 2) / 8, log2 = 0;
+    while (log2 < 4 && (2u << log2) <= gobs) log2++;
     return log2;
 }
 
