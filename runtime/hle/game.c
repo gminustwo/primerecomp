@@ -198,6 +198,45 @@ bool game_in_play(void) {
 
 #define GUEST_PTR_OK(p) ((p) >= 0x7000000000ull && (p) < 0x7f00000000ull && !((p) & 7))
 
+// The in-game GUI's screen (NInGameGuiStatesMP1::EInGameGuiState; 0: no game running). CInGameGuiManagerMP1 keeps the
+// screen it's on or going to at +0x2e4 and the one before at +0x2e0 (BeginStateTransition; IsGamePaused: either
+// above 1, in play). The manager is CGameIOWinMP1's +0x48, noted as CGameIOWinMP1::FrameBegin runs each frame: a
+// virtual call, so the runtime steps in at dispatch (hle_override) - no patch, the game code players built stays.
+static uint64_t g_gui_mgr, g_gui_seen;
+static GuestFn g_frame_begin;
+
+RT_ON_RESET(gui_reset) { g_gui_mgr = g_gui_seen = 0; }
+
+static void rt_frame_begin(Cpu *c) {
+    extern uint64_t vk_frame_counter(void);
+    uint64_t m = LD64(c->x[0] + 0x48);
+    g_gui_mgr = GUEST_PTR_OK(m) ? m : 0;
+    g_gui_seen = vk_frame_counter();
+    if (g_gui_mgr) {
+        static uint32_t was[2] = {~0u, ~0u};
+        uint32_t s[2] = {LD32(g_gui_mgr + 0x2e0), LD32(g_gui_mgr + 0x2e4)};
+        if (s[0] != was[0] || s[1] != was[1])
+            LOG("[gui] frame %llu: screen %u (from %u)\n", (unsigned long long)g_gui_seen, s[1], s[0]);
+        was[0] = s[0], was[1] = s[1];
+    }
+    g_frame_begin(c);
+}
+
+void game_hooks_init(void) {  // (each boot, after dispatch_init)
+    uint64_t a = guest_sym("_ZN13CGameIOWinMP110FrameBeginER18CArchitectureQueue");
+    static bool hooked;
+    g_frame_begin = dispatch_lookup(a);
+    if (g_frame_begin && !hooked) hle_override(a, rt_frame_begin, "CGameIOWinMP1::FrameBegin"), hooked = true;
+}
+
+// The screen now and the one before (0 0: no game)
+void game_gui_screen(int *now, int *before) {
+    extern uint64_t vk_frame_counter(void);
+    *now = *before = 0;
+    if (!g_gui_mgr || vk_frame_counter() > g_gui_seen + 2) return;
+    *now = (int)LD32(g_gui_mgr + 0x2e4), *before = (int)LD32(g_gui_mgr + 0x2e0);
+}
+
 // The first-person camera when it's the current camera (not a cutscene's, the morph ball's...), else 0. Only in play
 // (at boot the state manager has no cameras yet, and looking one up crashed), found as the game does: the camera
 // manager, its current camera's id (the top of its two override stacks, else its own),

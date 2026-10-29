@@ -18,6 +18,7 @@ static const char *settings_file(void) {
 Settings g_settings = {
     .aspect = ASPECT_UNLOCKED,
     .hud = HUD_EDGES,
+    .pause = PAUSE_FILL,
     .fullscreen = false,
     .volume = 1.0f,
     .reverb = true,
@@ -146,6 +147,7 @@ void settings_load(void) {
         // (keys only Link's Awakening had - cheats, randomizer, cosmetics... - fall through to the bindings, unread)
         if (!strcmp(key, "aspect")) g_settings.aspect = !strcmp(val, "original") ? ASPECT_ORIGINAL : ASPECT_UNLOCKED;
         else if (!strcmp(key, "hud")) g_settings.hud = !strcmp(val, "middle") ? HUD_MIDDLE : !strcmp(val, "21:9") ? HUD_21_9 : HUD_EDGES;
+        else if (!strcmp(key, "pause")) g_settings.pause = !strcmp(val, "middle") ? PAUSE_MIDDLE : PAUSE_FILL;
         else if (!strcmp(key, "fullscreen")) g_settings.fullscreen = atoi(val) != 0;
         else if (!strcmp(key, "volume")) g_settings.volume = (float)atof(val);
         else if (!strcmp(key, "reverb")) g_settings.reverb = atoi(val) != 0;
@@ -203,6 +205,7 @@ void settings_save(void) {
     fprintf(f, "# PrimeRecomp settings (edited from the in-game menu: F1, or L3+R3 on a controller)\n");
     fprintf(f, "aspect = %s\n", g_settings.aspect == ASPECT_ORIGINAL ? "original" : "unlocked");
     fprintf(f, "hud = %s\n", g_settings.hud == HUD_MIDDLE ? "middle" : g_settings.hud == HUD_21_9 ? "21:9" : "edges");
+    fprintf(f, "pause = %s\n", g_settings.pause == PAUSE_MIDDLE ? "middle" : "fill");
     fprintf(f, "fullscreen = %d\n", g_settings.fullscreen);
     fprintf(f, "volume = %.2f\n", g_settings.volume);
     fprintf(f, "reverb = %d\n", g_settings.reverb);

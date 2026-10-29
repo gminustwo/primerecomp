@@ -3132,6 +3132,20 @@ static bool topology(uint32_t mode, VkPrimitiveTopology *t, uint8_t *cls) {
     }
 }
 
+// The pause screens - the map, the pause menu (inventory, log book, options) - fill a wider window, stretched sideways,
+// instead of sitting in its 16:9 middle (runtime/hle/game.c game_gui_screen: 2, 3). Also while they fade in and out
+// (a quarter second, the HUD fading the other way): the screen doesn't jump between boxed and stretched, and the HUD's
+// side pieces stretched stay near the sides, where they were in play (hud_side). Video tab "Pause screen".
+static bool pause_fill(void) {
+    static int env = -2;  // (test) LARECOMP_PAUSE=fill|middle: instead of the setting
+    if (env == -2) env = !getenv("LARECOMP_PAUSE") ? -1 : !strcmp(getenv("LARECOMP_PAUSE"), "middle") ? PAUSE_MIDDLE : PAUSE_FILL;
+    if ((env >= 0 ? env : g_settings.pause) != PAUSE_FILL) return false;
+    extern void game_gui_screen(int *now, int *before);
+    int now, before;
+    game_gui_screen(&now, &before);
+    return now == 2 || now == 3 || ((before == 2 || before == 3) && now == 1);
+}
+
 // Draws into a presented image when the window's shape differs from the game's: composites fill the
 // window, UI goes in a centred 16:9 box (true: boxed). Composites: draws reading the scene (a scaled texture the
 // target's size), full-screen fades (black / white fills), and plain fills in a frame that composited. Called after
@@ -3146,6 +3160,7 @@ static bool ui_boxed(Prog *pr, CmdRec *r) {
     if (!(fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor && st.rt.color[0] &&
           renderer_texture_presented(st.rt.color[0])))
         return false;
+    if (pause_fill()) return false;
     {   // (test) LARECOMP_FILL_FSHASH=<hash>,...: these draws fill the window, as the scene does
         static uint64_t fill[16];
         static int nfill = -1;
