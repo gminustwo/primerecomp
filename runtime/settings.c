@@ -161,6 +161,11 @@ void settings_load(void) {
         else if (!strcmp(key, "vsync")) g_settings.vsync = atoi(val) != 0;
         else if (!strcmp(key, "fov")) g_settings.fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
         else if (!strcmp(key, "skippable_cutscenes")) g_settings.skippable_cutscenes = atoi(val) != 0;
+        else if (!strcmp(key, "hint_minutes"))
+            g_settings.hint_minutes = atoi(val) < 0 ? 0 : atoi(val) > HINT_MINUTES_MAX ? HINT_MINUTES_MAX : atoi(val);
+        else if (!strcmp(key, "infinite_energy")) g_settings.inf_energy = atoi(val) != 0;
+        else if (!strcmp(key, "infinite_missiles")) g_settings.inf_missiles = atoi(val) != 0;
+        else if (!strcmp(key, "infinite_power_bombs")) g_settings.inf_power_bombs = atoi(val) != 0;
         else if (!strcmp(key, "gyro")) g_settings.gyro = atoi(val) != 0;
         else if (!strcmp(key, "mouse_aim")) g_settings.mouse_aim = atoi(val) != 0;
         else if (!strcmp(key, "mouse_sens")) g_settings.mouse_sens = (float)atof(val);
@@ -218,6 +223,8 @@ void settings_save(void) {
             g_settings.gyro);
     fprintf(f, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
             g_settings.mouse_invert);
+    fprintf(f, "hint_minutes = %d\ninfinite_energy = %d\ninfinite_missiles = %d\ninfinite_power_bombs = %d\n",
+            g_settings.hint_minutes, g_settings.inf_energy, g_settings.inf_missiles, g_settings.inf_power_bombs);
     if (g_settings.steam_controller_direct) fprintf(f, "steam_controller_direct = 1\n");  // (written only when set)
     fprintf(f, "upscaler = %s\n", g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
     fprintf(f, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");

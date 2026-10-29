@@ -37,12 +37,13 @@ PC, with Vulkan for the graphics. No emulator runs.
 - Steam Deck presets
 - Gyro aiming with controllers that have one, rumble
 - Any cutscene skippable
+- Cheats (F1 menu, Cheats tab): infinite energy, missiles and power bombs, and a hint timer that cuts the game's
+  15-40 minute wait for a hint down to as little as a minute
 
 ## Future work
 
 - Adding Wiimote support
 - Adding VR support
-- Adding a cheats option (unlimited health, missiles, etc).
 
 > [!WARNING]
 > **Known issues.** 

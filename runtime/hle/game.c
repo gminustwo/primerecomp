@@ -227,6 +227,8 @@ void game_hooks_init(void) {  // (each boot, after dispatch_init)
     static bool hooked;
     g_frame_begin = dispatch_lookup(a);
     if (g_frame_begin && !hooked) hle_override(a, rt_frame_begin, "CGameIOWinMP1::FrameBegin"), hooked = true;
+    extern void cheats_hooks_init(void);  // runtime/hle/cheats.c
+    cheats_hooks_init();
 }
 
 // The screen now and the one before (0 0: no game)
@@ -291,6 +293,8 @@ void rt_debug_autosave(Cpu *c) {
     debug_teleport(c);
     fov_frame(c);
     wide_frame(c);
+    extern void cheats_frame(Cpu *c);  // runtime/hle/cheats.c
+    cheats_frame(c);
     // Every cutscene skippable, as on a second playthrough (CGameState::mCinematicForceSkippableOverride, which
     // IsCinematicSkippable checks first): the Gameplay tab's "Skip any cutscene", or (debug) LARECOMP_SKIP_CINEMATICS=1,
     // which also skips them (rt_skip_cinematics) - the intro replay reaches the landing site at frame ~5000 instead of
@@ -358,6 +362,7 @@ void rt_area_load(Cpu *c) {
 // (below) and a later frame.
 // With LARECOMP_SKIP_CINEMATICS, a new game's first gameplay frame is ~5600.
 static uint64_t g_player, g_player_mgr;
+uint64_t game_player(void) { return g_player; }  // (the latest CPlayerMP1: runtime/hle/cheats.c's debug hits)
 
 // The actor's world transform: 3x4 rows, the translation in column 3 (CActorMP1::SetTranslation's layout)
 static float *player_transform(uint64_t player) {
