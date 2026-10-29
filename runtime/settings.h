@@ -59,6 +59,10 @@ typedef struct {
     bool inf_energy;     // Cheats: damage takes no energy, and the energy stays full
     bool inf_missiles;   // Cheats: missiles stay full
     bool inf_power_bombs;  // Cheats: power bombs stay full
+    bool wiimote;        // a Wii Remote (+ Nunchuk) is used when one is found (runtime/hle/wiimote.c)
+    float wiimote_mid[2];  // the pointer's middle: where the remote reads the screen's middle (calibrated)
+    float wiimote_area;  // how much of the IR camera's view is the screen (0.2..1; smaller: less movement)
+    float wiimote_smooth;  // pointer smoothing, 0 (none) .. 0.9
     bool gyro;           // the controller's gyro / accelerometer reach the game's motion controls (runtime/hle/motion.c)
     bool mouse_aim;      // the mouse turns and tilts the view itself (runtime/hle/game.c), captured while playing
     float mouse_sens;    // mouse aim: 1 = 0.044 degrees per mouse count (MOUSE_SENS_MIN..MAX)

@@ -24,6 +24,7 @@
 
 #include "../hle.h"
 #include "../settings.h"
+#include "wiimote.h"
 
 typedef struct {        // nn::hid::SixAxisSensorState
     int64_t delta_time;  // ns between the last two samples
@@ -168,7 +169,18 @@ void motion_event(const SDL_Event *e) {
 }
 
 static bool g_sdl_test;  // LARECOMP_GYRO_SDL_TEST drives sensor_sample
-bool motion_available(void) { return m.pad != NULL || m.test || g_sdl_test; }
+// A Wii Remote that points (runtime/hle/wiimote.c), or its stand-in (LARECOMP_WIIMOTE_TEST)
+static bool wiimote_drives(void) {
+    static int test = -1;
+    if (test < 0) test = getenv("LARECOMP_WIIMOTE_TEST") != NULL;
+    if (test) return true;
+    if (!g_settings.wiimote) return false;
+    WiimoteState s;
+    wiimote_state(&s);
+    return s.connected;
+}
+
+bool motion_available(void) { return m.pad != NULL || m.test || g_sdl_test || wiimote_drives(); }
 
 // LARECOMP_GYRO_SDL_TEST="frame:x:y:z:frames,...": raw SDL samples instead (rad / s in SDL's frame, 4 per frame at
 // 240 Hz, the accelerometer at rest), with LARECOMP_GYRO_BIAS="x:y:z" (rad / s) added and LARECOMP_GYRO_NOISE=<rad / s>
@@ -227,6 +239,94 @@ void motion_frame(uint64_t frame) {
     pthread_mutex_unlock(&g_lock);
 }
 
+
+// ---- the Wii Remote as the controller's motion (runtime/hle/wiimote.c)
+// Its pointer (where it points on the screen, -1..1) becomes the controller's orientation: turned WM_YAW_EDGE to the
+// side at the screen's edge, tilted WM_PITCH_EDGE up or down - what the game's Pointer scheme turns into its cursor
+// (CNXSixAxisAnalysis::UpdateCursor: the forward axis' heading and pitch from a reference, 2 / pi of a radian per
+// unit). The reference is kept straight ahead (wiimote_pin_cursor) so the cursor goes where the remote points
+// whenever the game recentres. Its accelerometer is the controller's (the game's shake / flick gestures); the turning
+// rate comes from the pointer's motion. The sensor bar out of sight: the last orientation stays.
+// (measured at the game's default aim sensitivity: 0.35 put the reticle 1.33 times as far out as the pointer, both ways)
+#define WM_YAW_EDGE 0.26f    // radians at the screen's edge (LARECOMP_WIIMOTE_EDGE=<x>:<y> for measuring)
+#define WM_PITCH_EDGE 0.26f
+static struct { float p[2], yaw, pitch, still_s, last_accel[3]; uint64_t last_ns; int64_t sampling; bool have; } wm;
+
+static void wiimote_motion(SixAxisState *s, uint64_t frame) {
+    static float edge[2] = {-1, -1};
+    if (edge[0] < 0) {
+        edge[0] = WM_YAW_EDGE, edge[1] = WM_PITCH_EDGE;
+        if (getenv("LARECOMP_WIIMOTE_EDGE")) sscanf(getenv("LARECOMP_WIIMOTE_EDGE"), "%f:%f", &edge[0], &edge[1]);
+    }
+    WiimoteState r;
+    wiimote_state(&r);
+    float px = 0, py = 0;
+    bool seen = r.pointer_valid;
+    if (seen) px = r.pointer[0], py = r.pointer[1];
+    if (wiimote_test_pointer(frame, &px, &py)) seen = px > -9, r.accel[2] = 1, r.connected = true;  // (-9: not seen)
+    uint64_t now = SDL_GetTicksNS();
+    float dt = wm.last_ns ? (float)((now - wm.last_ns) * 1e-9) : 1.0f / 60;
+    if (dt <= 0 || dt > 0.1f) dt = 1.0f / 60;
+    wm.last_ns = now;
+    if (seen) {  // smoothed (the setting: how much of the old position stays each 60th of a second)
+        float k = wm.have ? 1 - powf(fminf(fmaxf(g_settings.wiimote_smooth, 0), 0.9f), dt * 60) : 1;
+        px = fmaxf(-1.5f, fminf(1.5f, px)), py = fmaxf(-1.5f, fminf(1.5f, py));
+        wm.p[0] += (px - wm.p[0]) * k, wm.p[1] += (py - wm.p[1]) * k;
+        wm.have = true;
+    }
+    float yaw = wm.p[0] * edge[0], pitch = wm.p[1] * edge[1];
+    float wz = -(yaw - wm.yaw) / dt, wx = (pitch - wm.pitch) / dt;  // (rad / s: turning right is clockwise about z)
+    wm.yaw = yaw, wm.pitch = pitch;
+    float sy = sinf(yaw), cy = cosf(yaw), sp = sinf(pitch), cp = cosf(pitch);
+    float rows[9] = {cy, -sy, 0, sy * cp, cy * cp, sp, -sy * sp, -cy * sp, cp};  // the controller's x, y, z in the world
+    memcpy(s->dir, rows, sizeof rows);
+    // the remote's accelerometer (its x left, y toward the camera, z up; it reads the push against gravity, +1 on z
+    // lying flat) as the Switch's (x right, y forward, z up; gravity itself, -1 on z)
+    s->accel[0] = r.accel[0], s->accel[1] = -r.accel[1], s->accel[2] = -r.accel[2];
+    s->gyro[0] = wx / (2 * (float)M_PI), s->gyro[2] = wz / (2 * (float)M_PI);
+    s->angle[0] = pitch / (2 * (float)M_PI), s->angle[2] = -yaw / (2 * (float)M_PI);
+    s->delta_time = (int64_t)(dt * 1e9f);
+    s->sampling = ++wm.sampling;
+    s->attributes = 1;
+    // at rest: lying still (the accelerometer steady at 1 G for 1.5 s) and not pointing at the screen - the game's
+    // "put down" (its calibration waits for it; picked up again, it recentres, which the pinned reference makes
+    // harmless). A remote that sees the sensor bar is in a hand.
+    float an = sqrtf(r.accel[0] * r.accel[0] + r.accel[1] * r.accel[1] + r.accel[2] * r.accel[2]), j = 0;
+    for (int i = 0; i < 3; i++) j = fmaxf(j, fabsf(r.accel[i] - wm.last_accel[i]));
+    memcpy(wm.last_accel, r.accel, sizeof wm.last_accel);
+    wm.still_s = !seen && fabsf(an - 1) < 0.06f && j < 0.03f ? wm.still_s + dt : 0;
+}
+
+// Before the game reads its controller each frame (CNXJoyCon_NPad::Poll, a virtual call: hle_override): player 1's
+// six-axis analysis (pad + 0x2908 + slot * 0xE0, the slot at pad + 0x1C: CNXJoyCon_NPad::ResetRightCursor) gets its
+// cursors' reference set straight ahead - heading (0, 0, 1) at +0xC0 / +0xCC in its x' = -x, z' = y frame, pitch
+// acos(0) at +0xD8 / +0xDC - and its recentre requests (+0x9C / +0x9D) dropped, while the Wii Remote points.
+static GuestFn g_npad_poll;
+static void rt_npad_poll(Cpu *c) {
+    uint64_t pad = c->x[0];
+    if (wiimote_drives() && g_settings.gyro) {
+        int32_t slot = (int32_t)LD32(pad + 0x1c);
+        if (slot >= 0 && slot < 9) {
+            uint8_t *a = (uint8_t *)(uintptr_t)(pad + 0x2908 + (uint64_t)slot * 0xE0);
+            const float fwd[3] = {0, 0, 1}, pitch = (float)M_PI / 2;
+            memcpy(a + 0xc0, fwd, 12), memcpy(a + 0xcc, fwd, 12);
+            memcpy(a + 0xd8, &pitch, 4), memcpy(a + 0xdc, &pitch, 4);
+            a[0x9c] = a[0x9d] = 0;
+            static int logged;
+            if (!logged++) LOG("[wiimote] pointer: the game's cursor reference kept ahead (pad %llx, slot %d)\n",
+                               (unsigned long long)pad, slot);
+        }
+    }
+    g_npad_poll(c);
+}
+
+void motion_hooks_init(void) {  // (each boot: runtime/hle/game.c game_hooks_init)
+    uint64_t a = guest_sym("_ZN14CNXJoyCon_NPad4PollEf");
+    static bool hooked;
+    g_npad_poll = dispatch_lookup(a);
+    if (g_npad_poll && !hooked) hle_override(a, rt_npad_poll, "CNXJoyCon_NPad::Poll"), hooked = true;
+}
+
 static bool sensor_on(void) { return g_settings.gyro && motion_available(); }
 
 // GetSixAxisSensorHandles(handles*, count, const NpadId&, NpadStyleSet): FullKey / Handheld / JoyDual give one
@@ -258,6 +358,11 @@ HLE_FUNC("_ZN2nn3hid21GetSixAxisSensorStateEPNS0_18SixAxisSensorStateERKNS0_19Si
     memset(s, 0, sizeof *s);
     s->dir[0] = s->dir[4] = s->dir[8] = 1;
     if (!sensor_on()) return;  // (disconnected: attributes 0)
+    if (wiimote_drives()) {
+        extern uint64_t vk_frame_counter(void);
+        wiimote_motion(s, vk_frame_counter());
+        return;
+    }
     pthread_mutex_lock(&g_lock);
     s->delta_time = m.dt_ns ? m.dt_ns : 5000000;
     s->sampling = m.sampling;
@@ -274,7 +379,7 @@ HLE_FUNC("_ZN2nn3hid21IsSixAxisSensorAtRestERKNS0_19SixAxisSensorHandleE", hid_s
     static int env = -2;  // (LARECOMP_GYRO_REST=0/1: forced, tests; LARECOMP_GYRO_TEST's motion is never at rest)
     if (env == -2) env = getenv("LARECOMP_GYRO_REST") ? atoi(getenv("LARECOMP_GYRO_REST")) : -1;
     pthread_mutex_lock(&g_lock);
-    bool rest = m.still_s > 1.5f;
+    bool rest = wiimote_drives() ? wm.still_s > 1.5f : m.still_s > 1.5f;
     pthread_mutex_unlock(&g_lock);
     c->x[0] = env >= 0 ? env : !sensor_on() || rest;
 }

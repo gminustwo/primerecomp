@@ -19,6 +19,7 @@ extern "C" bool vk_imgui_backend_init(void);  // runtime/nvn/vulkan/imgui_glue.c
 extern "C" {
 #include "../hle.h"
 #include "../settings.h"
+#include "../hle/wiimote.h"
 #include "menu.h"
 void input_reset(void);
 void controls_bindings_draw(float scale);  // controls_ui.mm
@@ -628,6 +629,72 @@ static void tab_quit(float scale, bool in_game) {
 
 // (LAS Recomp's Movement - "D-pad moves Link" would take Metroid Prime's visor / beam d-pad - and Button prompts -
 // its glyph sheets - aren't shown)
+// Controls tab, "Wii Remote" (runtime/hle/wiimote.c): status, the IR camera's view, the pointer's calibration
+static void wiimote_section(void) {
+    float k = ImGui::GetFontSize() / 34;
+    WiimoteState w;
+    wiimote_state(&w);
+    bool on = g_settings.wiimote;
+    if (ImGui::Checkbox("Use a Wii Remote", &on)) { g_settings.wiimote = on; settings_save(); }
+    ImGui::SameLine(0, 30 * k);
+    if (!on) ImGui::TextDisabled("off");
+    else if (!w.connected) ImGui::TextColored(theme::text_dim, "Looking for one...");
+    else ImGui::TextColored(theme::accent, "%s: battery %.0f%%%s", w.name, w.battery, w.nunchuk ? ", Nunchuk" : ", no Nunchuk");
+    if (!on || !w.connected) {
+        hint("Mayflash DolphinBar: set it to mode 4 (its mode button until light 4), plug it in, press its sync button "
+             "and the remote's red sync button (under the battery cover). A remote paired with the PC's own Bluetooth "
+             "works too. The game finds it within a few seconds.");
+        return;
+    }
+    // the camera's view (1024 x 768) with its dots, the screen as the pointer's area sees it, and the pointer
+    float bw = fminf(ImGui::GetContentRegionAvail().x * 0.55f, 480 * k), bh = bw * 0.75f;
+    ImVec2 o = ImGui::GetCursorScreenPos();
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(o, ImVec2(o.x + bw, o.y + bh), IM_COL32(8, 12, 20, 255), 6 * k);
+    dl->AddRect(o, ImVec2(o.x + bw, o.y + bh), theme::u32(theme::text_dim), 6 * k);
+    for (int i = 0; i < 4; i++)  // (the camera's image turned to match where it points: both ways mirrored)
+        if (w.dots[i].valid)
+            dl->AddCircleFilled(ImVec2(o.x + bw * (1 - w.dots[i].x / 1024.0f), o.y + bh * (1 - w.dots[i].y / 768.0f)),
+                                6 * k, IM_COL32(255, 255, 255, 255));
+    float area = g_settings.wiimote_area, mx = g_settings.wiimote_mid[0], my = g_settings.wiimote_mid[1];
+    ImVec2 c(o.x + bw * 0.5f, o.y + bh * 0.5f);
+    ImVec2 sa(c.x + (mx - area) * bw * 0.5f, c.y - (my + area) * bh * 0.5f), sb(c.x + (mx + area) * bw * 0.5f, c.y - (my - area) * bh * 0.5f);
+    dl->AddRect(sa, sb, theme::u32(theme::heading), 0, 0, 2 * k);  // (the screen within the camera's view)
+    if (w.pointer_valid) {
+        ImVec2 p(c.x + (mx + w.pointer[0] * area) * bw * 0.5f, c.y - (my + w.pointer[1] * area) * bh * 0.5f);
+        dl->AddLine(ImVec2(p.x - 10 * k, p.y), ImVec2(p.x + 10 * k, p.y), theme::u32(theme::accent), 3 * k);
+        dl->AddLine(ImVec2(p.x, p.y - 10 * k), ImVec2(p.x, p.y + 10 * k), theme::u32(theme::accent), 3 * k);
+    }
+    ImGui::Dummy(ImVec2(bw, bh));
+    ImGui::SameLine(0, 24 * k);
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted(w.pointer_valid ? "Sensor bar: seen" : "Sensor bar: not seen");
+    if (w.pointer_valid) ImGui::Text("Pointer: %+.2f, %+.2f", w.pointer[0], w.pointer[1]);
+    static uint64_t calibrate_at;  // (a countdown: click, then point at the screen's middle)
+    uint64_t now = SDL_GetTicks();
+    if (calibrate_at && now >= calibrate_at) {
+        calibrate_at = 0;
+        if (wiimote_calibrate_middle()) settings_save();
+    }
+    if (calibrate_at) ImGui::Text("Point at the middle of the screen... %llu", (unsigned long long)((calibrate_at - now) / 1000 + 1));
+    else if (ImGui::Button("Centre the pointer")) calibrate_at = now + 3000;
+    float a = g_settings.wiimote_area;
+    ImGui::SetNextItemWidth(220 * k);
+    if (ImGui::SliderFloat("Pointer area", &a, 0.2f, 1.0f, "%.2f")) g_settings.wiimote_area = a;
+    if (ImGui::IsItemDeactivatedAfterEdit()) settings_save();
+    float sm = g_settings.wiimote_smooth;
+    ImGui::SetNextItemWidth(220 * k);
+    if (ImGui::SliderFloat("Smoothing", &sm, 0.0f, 0.9f, "%.2f")) g_settings.wiimote_smooth = sm;
+    if (ImGui::IsItemDeactivatedAfterEdit()) settings_save();
+    ImGui::EndGroup();
+    hint("Aiming uses the game's own Pointer controls: pause, Options -> Controls -> Control Scheme -> Pointer (it "
+         "asks to calibrate: lay the remote down for a moment). Laid out like Metroid Prime: Trilogy: A shoots, B "
+         "jumps, Z locks on, C morphs, 1 fires a missile, the d-pad picks visors, 2 + d-pad picks beams, + the map, "
+         "- the pause menu, the Nunchuk's stick moves. Centre the pointer once (it remembers): click the button, then "
+         "point at the middle of your screen. A smaller area needs less movement to reach the screen's edges; the "
+         "game's own Aim Sensitivity sets how fast the view turns.");
+}
+
 static void tab_about(void) {
     header("System language");
     {
@@ -662,6 +729,9 @@ static void tab_about(void) {
     hint("The mouse turns Samus and aims up and down directly, as in a PC shooter (the game's Dual Stick control "
          "scheme). It's captured while you play and let go in menus. In the Morph Ball and while locked on it works "
          "the camera stick instead. Sensitivity 1: 0.044 degrees per mouse count.");
+    ImGui::Spacing();
+    header("Wii Remote");
+    wiimote_section();
     ImGui::Spacing();
     header("Controls");
     controls_bindings_draw(ImGui::GetFontSize() / 34);

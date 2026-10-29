@@ -15,6 +15,7 @@
 #include "../nvn/renderer.h"
 #include "../settings.h"
 #include "../input_bind.h"
+#include "wiimote.h"
 
 // runtime/hle/motion.c
 void motion_pad(SDL_Gamepad *pad);
@@ -163,6 +164,7 @@ void input_rumble_pump(void) {
     if (l == sent[0] && r == sent[1] && (!(l | r) || now - sent_ns < 100000000ull)) return;  // (refreshed every 100 ms)
     if (verbose && (l != sent[0] || r != sent[1])) LOG("[rumble] %u %u%s\n", l, r, pad && !off ? "" : " (not sent)");
     if (pad && !off) SDL_RumbleGamepad(pad, (Uint16)l, (Uint16)r, 200);
+    wiimote_rumble(!off && (l > 16000 || r > 16000));  // (the remote's motor is on / off)
     sent[0] = l, sent[1] = r, sent_ns = now;
 }
 
@@ -445,6 +447,7 @@ static void host_test_frame(uint64_t frame) {
 static uint64_t g_pad_obj;
 RT_ON_RESET(input_reboot_reset) { g_pad_obj = 0; }  // (reboot: the controller object was guest memory)
 void input_frame(uint64_t frame) {
+    wiimote_start();  // (once: the Wii Remote's reader thread, runtime/hle/wiimote.c)
     if (g_pad_obj && getenv("LARECOMP_DUMP_PAD") && frame % 600 == 0) {
         const uint8_t *m = (const uint8_t *)(uintptr_t)(g_pad_obj - 0x98);
         LOG("[pad] mgr %llx 4e0=%u 4e4=%u 4e8=%u 548=%#x 54c..=%02x %02x %02x 56c=%02x\n", g_pad_obj - 0x98,
@@ -513,6 +516,39 @@ extern bool menu_input_captured(void);  // runtime/ui/menu.mm: overlay menu or n
 
 static int32_t clamp_axis(int32_t v) { return v > 32767 ? 32767 : v < -32767 ? -32767 : v; }
 
+// The Wii Remote + Nunchuk (runtime/hle/wiimote.c) as the Switch controller, laid out like Metroid Prime: Trilogy's
+// controls on the game's Pointer scheme (its View Controls: A shoots, B jumps, ZL locks on, Y morphs, X fires a
+// missile, the d-pad picks visors, the right stick beams, Plus the map, Minus the pause menu): A = A, B (the
+// trigger) = B, Z = ZL, C = Y, 1 = X, the d-pad = the d-pad, - / + = Minus / Plus, the Nunchuk's stick = the left
+// stick; 2 held turns the d-pad into the right stick (the beams). (ZR / R, the Pointer scheme's "reset gyro", aren't
+// needed: the IR pointer doesn't drift. Home: unused - the overlay menu is F1 / the controller's own chord.)
+static uint64_t wiimote_buttons(int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
+    WiimoteState w;
+    wiimote_state(&w);
+    *lx = *ly = *rx = *ry = 0;
+    if (!w.connected || !g_settings.wiimote) return 0;
+    bool beams = (w.buttons & WM_TWO) != 0;
+    static const struct { uint16_t wm; int bit; } map[] = {
+        {WM_A, 0}, {WM_B, 1}, {WM_ONE, 2}, {WM_MINUS, 11}, {WM_PLUS, 10},
+        {WM_LEFT, 12}, {WM_UP, 13}, {WM_RIGHT, 14}, {WM_DOWN, 15}};
+    uint64_t b = 0;
+    for (size_t i = 0; i < sizeof map / sizeof *map; i++)
+        if ((w.buttons & map[i].wm) && !(beams && map[i].bit >= 12)) b |= 1ull << map[i].bit;
+    if (beams) {  // (the d-pad as the right stick, full tilt)
+        if (w.buttons & WM_LEFT) *rx = -32767;
+        if (w.buttons & WM_RIGHT) *rx = 32767;
+        if (w.buttons & WM_UP) *ry = 32767;
+        if (w.buttons & WM_DOWN) *ry = -32767;
+    }
+    if (w.nunchuk_z) b |= 1ull << 8;  // ZL
+    if (w.nunchuk_c) b |= 1ull << 3;  // Y
+    float sx = w.stick[0], sy = w.stick[1];
+    if (fabsf(sx) < 0.08f) sx = 0;  // (a dead zone: the Nunchuk's stick rests a little off)
+    if (fabsf(sy) < 0.08f) sy = 0;
+    *lx = (int32_t)(sx * 32767), *ly = (int32_t)(sy * 32767);
+    return b;
+}
+
 // NpadFullKeyState / NpadHandheldState / NpadJoy*State share this layout (0x28 bytes):
 // {int64 sampling, u64 buttons, AnalogStick L {x,y}, AnalogStick R {x,y}, u32 attributes}
 static void fill_state(Cpu *c) {
@@ -533,10 +569,13 @@ static void fill_state(Cpu *c) {
         LOG("[input] watching controller object %llx\n", c->x[1] - 8);
     }
     bool menu = menu_input_captured();  // the overlay menu / name entry has the controls (typing there isn't for the game)
-    uint64_t b = menu ? script_buttons : key_buttons | pad_buttons | script_buttons;
-    int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx) + script_lx), ly = clamp_axis((menu ? 0 : key_ly + pad_ly) + script_ly);
-    int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx + mouse_rx) + script_rx);
-    int32_t ry = clamp_axis((menu ? 0 : key_ry + pad_ry + mouse_ry) + script_ry);
+    int32_t wm_lx, wm_ly, wm_rx, wm_ry;
+    uint64_t wm_b = wiimote_buttons(&wm_lx, &wm_ly, &wm_rx, &wm_ry);
+    uint64_t b = menu ? script_buttons : key_buttons | pad_buttons | wm_b | script_buttons;
+    int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx + wm_lx) + script_lx);
+    int32_t ly = clamp_axis((menu ? 0 : key_ly + pad_ly + wm_ly) + script_ly);
+    int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx + mouse_rx + wm_rx) + script_rx);
+    int32_t ry = clamp_axis((menu ? 0 : key_ry + pad_ry + mouse_ry + wm_ry) + script_ry);
     // stick directions also appear as buttons (bits 16-23)
     if (lx < -16000) b |= 1ull << 16;
     if (ly > 16000) b |= 1ull << 17;
