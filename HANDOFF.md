@@ -4,8 +4,19 @@ Where the work stopped, and what to do next. Read with PROGRESS.md (history) and
 
 ## State (2026-10-25)
 
-- **Ultrawide pause screens and helmet frame (21b2ca5, 098e530, 2026-10-28; local main only - not in the v0.0.4
-  draft or the user's Steam copy yet**). The user: "maybe stretch the pause screen to fit the whole window?", then
+- **The v0.0.4 draft is rebuilt from main 8283c52 (2026-10-28**, the user: "commit where the game is now to main" ->
+  pushed main, then "get a release ready that I can add a mac version to later"). origin/main and
+  origin/release-v0.0.4 = main. Draft assets replaced: PrimeRecomp-v0.0.4-windows.zip (sha256 b995ad83...7675; same
+  144 files as the 9a53ce1 zip, only exe / dll.a differ) and PrimeRecomp-v0.0.4-linux-x86_64.AppImage (sha256
+  5a798a45...2af3); notes (build/session_69905a54/release_v004_notes.md, the previous ones *_9a53ce1.md) gained the
+  pause screen and helmet frame. The 9a53ce1 build is in build/dist-v0.0.4-9a53ce1/. Checked: the zip's exe on
+  build/disttest_v004's setup at 2560x720 on the Phendrana save (play, map, inventory: all as in the dev build); the
+  AppImage in WSL boots to the intro (0 faults, 0 skipped). Still a draft. **The Mac dmg:** on the user's Mac, `make
+  dmg` from release-v0.0.4, `gh release upload v0.0.4 PrimeRecomp-v0.0.4-macOS.dmg`, and take the notes' "The Mac
+  download for v0.0.4 will be added" line out. The user's Steam copy still has the 9a53ce1 exe (no pause fill /
+  helmet stretch).
+- **Ultrawide pause screens and helmet frame (21b2ca5, 098e530, 2026-10-28; in the v0.0.4 draft since the bullet
+  above, not in the user's Steam copy**). The user: "maybe stretch the pause screen to fit the whole window?", then
   "yes try the helmet frame", after trying both at 32:9: "this looks good". (1) The map and the pause menu
   (inventory, log book, options) fill a wider window, stretched sideways (2x at 32:9), also during their quarter-
   second fades: exec.c pause_fill makes ui_boxed false while game_gui_screen is 2 / 3. Video tab "Pause screen":
