@@ -34,6 +34,9 @@ Settings g_settings = {
     .aniso = 16,
     .mouse_aim = true,
     .mouse_sens = 1.0f,
+    .wiimote = true,
+    .wiimote_area = 0.5f,
+    .wiimote_smooth = 0.3f,
 };
 
 const int g_res_lines[N_RES_LINES] = {900, 1080, 1440, 2160, 4320};
@@ -166,6 +169,10 @@ void settings_load(void) {
         else if (!strcmp(key, "infinite_energy")) g_settings.inf_energy = atoi(val) != 0;
         else if (!strcmp(key, "infinite_missiles")) g_settings.inf_missiles = atoi(val) != 0;
         else if (!strcmp(key, "infinite_power_bombs")) g_settings.inf_power_bombs = atoi(val) != 0;
+        else if (!strcmp(key, "wiimote")) g_settings.wiimote = atoi(val) != 0;
+        else if (!strcmp(key, "wiimote_mid")) sscanf(val, "%f %f", &g_settings.wiimote_mid[0], &g_settings.wiimote_mid[1]);
+        else if (!strcmp(key, "wiimote_area")) g_settings.wiimote_area = (float)atof(val);
+        else if (!strcmp(key, "wiimote_smooth")) g_settings.wiimote_smooth = (float)atof(val);
         else if (!strcmp(key, "gyro")) g_settings.gyro = atoi(val) != 0;
         else if (!strcmp(key, "mouse_aim")) g_settings.mouse_aim = atoi(val) != 0;
         else if (!strcmp(key, "mouse_sens")) g_settings.mouse_sens = (float)atof(val);
@@ -200,6 +207,10 @@ void settings_load(void) {
     if (g_settings.volume > 2) g_settings.volume = 2;
     if (!(g_settings.mouse_sens >= MOUSE_SENS_MIN)) g_settings.mouse_sens = MOUSE_SENS_MIN;  // (NaN too)
     if (g_settings.mouse_sens > MOUSE_SENS_MAX) g_settings.mouse_sens = MOUSE_SENS_MAX;
+    if (!(g_settings.wiimote_area >= 0.2f)) g_settings.wiimote_area = 0.2f;  // (NaN too)
+    if (g_settings.wiimote_area > 1) g_settings.wiimote_area = 1;
+    if (!(g_settings.wiimote_smooth >= 0)) g_settings.wiimote_smooth = 0;
+    if (g_settings.wiimote_smooth > 0.9f) g_settings.wiimote_smooth = 0.9f;
     LOG("[settings] loaded %s\n", SETTINGS_FILE);
     if (migrated) settings_save();
 }
@@ -225,6 +236,8 @@ void settings_save(void) {
             g_settings.mouse_invert);
     fprintf(f, "hint_minutes = %d\ninfinite_energy = %d\ninfinite_missiles = %d\ninfinite_power_bombs = %d\n",
             g_settings.hint_minutes, g_settings.inf_energy, g_settings.inf_missiles, g_settings.inf_power_bombs);
+    fprintf(f, "wiimote = %d\nwiimote_mid = %.4f %.4f\nwiimote_area = %.2f\nwiimote_smooth = %.2f\n", g_settings.wiimote,
+            g_settings.wiimote_mid[0], g_settings.wiimote_mid[1], g_settings.wiimote_area, g_settings.wiimote_smooth);
     if (g_settings.steam_controller_direct) fprintf(f, "steam_controller_direct = 1\n");  // (written only when set)
     fprintf(f, "upscaler = %s\n", g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
     fprintf(f, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");
