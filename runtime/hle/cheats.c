@@ -79,8 +79,8 @@ void cheats_hooks_init(void) {  // (each boot, from game_hooks_init)
 //    room marked on the map) while it's under the text's time. The player reaching that room, or the text done (the
 //    second timer, 20 s), sets the time to the hint's +0x1c: it counts down again and the hint shows again.
 // The game's waits are long: 15 to 40 minutes before most hints first show (a few right away: 0 or 9 s), 30 minutes
-// before one shows again (the artifacts' 60). The hint timer (g_settings.hint_minutes, 0 = the game's own) cuts both
-// waits down to its minutes, those already under way too; shorter ones stay as they are.
+// before one shows again (the artifacts' 60). The hint timer (g_settings.hint_seconds, 0 = the game's own) cuts both
+// waits down to it, those already under way too; shorter ones stay as they are.
 // LARECOMP_LOG_HINTS=1: the hints and their times, once, and each hint's changes ("[hint]").
 static uint64_t hint_set(void) {
     uint64_t ui = LD64(guest_sym("gpUniverseInfo")), tok = GUEST_PTR_OK(ui) ? LD64(ui) : 0;
@@ -121,7 +121,7 @@ static void hint_frame(uint64_t gs) {
     static uint64_t was_states;
     bool fresh = was_states != states;  // (another game state or a loaded save)
     was_states = states;
-    float wait = g_settings.hint_minutes * 60.0f;
+    float wait = (float)g_settings.hint_seconds;
     for (int i = 0; i < n; i++) {
         uint32_t st = LD32(states + 12ull * i);
         float *t = (float *)(uintptr_t)(states + 12ull * i + 4);
@@ -195,13 +195,13 @@ void cheats_frame(Cpu *c) {
     {   // (the log: the cheats in play, as they change)
         static int was = -1;
         int now = g_settings.inf_energy | g_settings.inf_missiles << 1 | g_settings.inf_power_bombs << 2 |
-                  g_settings.hint_minutes << 3;
+                  g_settings.hint_seconds << 3;
         if (now != was) {
             const int32_t *it = (const int32_t *)(uintptr_t)(ps + 0x2c);
-            LOG("[cheat] energy %s, missiles %s, power bombs %s, hint timer %d min (energy %.0f of %.0f, missiles %d "
+            LOG("[cheat] energy %s, missiles %s, power bombs %s, hint timer %d s (energy %.0f of %.0f, missiles %d "
                 "of %d, power bombs %d of %d)\n", g_settings.inf_energy ? "on" : "off",
                 g_settings.inf_missiles ? "on" : "off", g_settings.inf_power_bombs ? "on" : "off",
-                g_settings.hint_minutes, *(const float *)(uintptr_t)(ps + 0xc), full_energy(ps),
+                g_settings.hint_seconds, *(const float *)(uintptr_t)(ps + 0xc), full_energy(ps),
                 it[2 * ITEM_MISSILES], it[2 * ITEM_MISSILES + 1], it[2 * ITEM_POWER_BOMBS], it[2 * ITEM_POWER_BOMBS + 1]);
             was = now;
         }

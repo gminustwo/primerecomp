@@ -42,6 +42,15 @@ Settings g_settings = {
     .wiimote_smooth = 0.3f,
 };
 
+const int g_hint_waits[N_HINT_WAITS] = {0, 1, 30, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600, 660, 720, 780, 840, 900,
+                                        960, 1020, 1080, 1140, 1200, 1260, 1320, 1380, 1440, 1500, 1560, 1620, 1680, 1740, 1800};
+int settings_hint_wait_index(int seconds) {
+    int best = 0;
+    for (int i = 1; i < N_HINT_WAITS; i++)
+        if (abs(g_hint_waits[i] - seconds) < abs(g_hint_waits[best] - seconds)) best = i;
+    return best;
+}
+
 const int g_res_lines[N_RES_LINES] = {900, 1080, 1440, 2160, 4320};
 const char *const g_res_names[N_RES_LINES] = {"900p (Switch)", "1080p", "1440p", "4K", "8K"};
 
@@ -170,8 +179,9 @@ void settings_load(void) {
         else if (!strcmp(key, "hdr_paper_white_nits")) g_settings.hdr_paper = atoi(val);
         else if (!strcmp(key, "fov")) g_settings.fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
         else if (!strcmp(key, "skippable_cutscenes")) g_settings.skippable_cutscenes = atoi(val) != 0;
-        else if (!strcmp(key, "hint_minutes"))
-            g_settings.hint_minutes = atoi(val) < 0 ? 0 : atoi(val) > HINT_MINUTES_MAX ? HINT_MINUTES_MAX : atoi(val);
+        else if (!strcmp(key, "hint_seconds")) g_settings.hint_seconds = g_hint_waits[settings_hint_wait_index(atoi(val))];
+        else if (!strcmp(key, "hint_minutes"))  // (before 2026-10-29: whole minutes)
+            g_settings.hint_seconds = g_hint_waits[settings_hint_wait_index(atoi(val) * 60)];
         else if (!strcmp(key, "infinite_energy")) g_settings.inf_energy = atoi(val) != 0;
         else if (!strcmp(key, "infinite_missiles")) g_settings.inf_missiles = atoi(val) != 0;
         else if (!strcmp(key, "infinite_power_bombs")) g_settings.inf_power_bombs = atoi(val) != 0;
@@ -251,8 +261,8 @@ void settings_save(void) {
             g_settings.gyro);
     fprintf(f, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
             g_settings.mouse_invert);
-    fprintf(f, "hint_minutes = %d\ninfinite_energy = %d\ninfinite_missiles = %d\ninfinite_power_bombs = %d\n",
-            g_settings.hint_minutes, g_settings.inf_energy, g_settings.inf_missiles, g_settings.inf_power_bombs);
+    fprintf(f, "hint_seconds = %d\ninfinite_energy = %d\ninfinite_missiles = %d\ninfinite_power_bombs = %d\n",
+            g_settings.hint_seconds, g_settings.inf_energy, g_settings.inf_missiles, g_settings.inf_power_bombs);
     fprintf(f, "wiimote = %d\nwiimote_mid = %.4f %.4f\nwiimote_area = %.2f\nwiimote_smooth = %.2f\n", g_settings.wiimote,
             g_settings.wiimote_mid[0], g_settings.wiimote_mid[1], g_settings.wiimote_area, g_settings.wiimote_smooth);
     if (g_settings.steam_controller_direct) fprintf(f, "steam_controller_direct = 1\n");  // (written only when set)
