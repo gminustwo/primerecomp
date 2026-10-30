@@ -535,9 +535,10 @@ static int32_t clamp_axis(int32_t v) { return v > 32767 ? 32767 : v < -32767 ? -
 // The Wii Remote + Nunchuk (runtime/hle/wiimote.c) as the Switch controller, laid out like Metroid Prime: Trilogy's
 // controls on the game's Pointer scheme (its View Controls: A shoots, B jumps, ZL locks on, Y morphs, X fires a
 // missile, the d-pad picks visors, the right stick beams, Plus the map, Minus the pause menu): A = A, B (the
-// trigger) = B, Z = ZL, C = Y, 1 = X, the d-pad = the d-pad, - / + = Minus / Plus, the Nunchuk's stick = the left
-// stick; 2 held turns the d-pad into the right stick (the beams). (ZR / R, the Pointer scheme's "reset gyro", aren't
-// needed: the IR pointer doesn't drift.) Home: the pointer centred where the remote points now (the Controls tab's
+// trigger) = B, Z = ZL, C = Y, 2 = X (missile), 1 = Minus (the pause menu), + = Plus, the d-pad = the d-pad, the
+// Nunchuk's stick = the left stick; - held turns the stick into the right stick (the beams: a push snaps to its
+// direction, Samus stands still meanwhile; the user's layout, 2026-10-29). (ZR / R, the Pointer scheme's "reset
+// gyro", aren't needed: the IR pointer doesn't drift.) Home: the pointer centred where the remote points now (the Controls tab's
 // "Centre the pointer" from the couch: with the sensor bar above or below the screen, an uncentred pointer reads
 // off the middle - seen with the real remote, the view kept turning down).
 static uint64_t wiimote_buttons(int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
@@ -549,22 +550,22 @@ static uint64_t wiimote_buttons(int32_t *lx, int32_t *ly, int32_t *rx, int32_t *
     bool home = (w.buttons & WM_HOME) != 0;
     if (home && !home_was && wiimote_calibrate_middle()) settings_save();
     home_was = home;
-    bool beams = (w.buttons & WM_TWO) != 0;
     static const struct { uint16_t wm; int bit; } map[] = {
-        {WM_A, 0}, {WM_B, 1}, {WM_ONE, 2}, {WM_MINUS, 11}, {WM_PLUS, 10},
+        {WM_A, 0}, {WM_B, 1}, {WM_TWO, 2}, {WM_ONE, 11}, {WM_PLUS, 10},
         {WM_LEFT, 12}, {WM_UP, 13}, {WM_RIGHT, 14}, {WM_DOWN, 15}};
     uint64_t b = 0;
     for (size_t i = 0; i < sizeof map / sizeof *map; i++)
-        if ((w.buttons & map[i].wm) && !(beams && map[i].bit >= 12)) b |= 1ull << map[i].bit;
-    if (beams) {  // (the d-pad as the right stick, full tilt)
-        if (w.buttons & WM_LEFT) *rx = -32767;
-        if (w.buttons & WM_RIGHT) *rx = 32767;
-        if (w.buttons & WM_UP) *ry = 32767;
-        if (w.buttons & WM_DOWN) *ry = -32767;
-    }
+        if (w.buttons & map[i].wm) b |= 1ull << map[i].bit;
     if (w.nunchuk_z) b |= 1ull << 8;  // ZL
     if (w.nunchuk_c) b |= 1ull << 3;  // Y
     float sx = w.stick[0], sy = w.stick[1];
+    if (w.buttons & WM_MINUS) {  // - held: the stick picks a beam - its direction, once pushed well over, at full tilt
+        if (fabsf(sx) > 0.6f || fabsf(sy) > 0.6f) {
+            if (fabsf(sx) > fabsf(sy)) *rx = sx > 0 ? 32767 : -32767;
+            else *ry = sy > 0 ? 32767 : -32767;
+        }
+        return b;
+    }
     if (fabsf(sx) < 0.08f) sx = 0;  // (a dead zone: the Nunchuk's stick rests a little off)
     if (fabsf(sy) < 0.08f) sy = 0;
     *lx = (int32_t)(sx * 32767), *ly = (int32_t)(sy * 32767);
