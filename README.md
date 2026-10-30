@@ -135,7 +135,7 @@ from a short note of where that folder is (`%LOCALAPPDATA%\PrimeRecomp\copies.tx
 
 ### macOS (Apple Silicon)
 
-1. Download `PrimeRecomp-v0.0.3-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
+1. Download `PrimeRecomp-v0.0.5-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
    it and drag **PrimeRecomp** onto **Applications**.
 2. PrimeRecomp isn't notarized by Apple, so macOS won't open it as downloaded. Open Terminal once and run:
 
