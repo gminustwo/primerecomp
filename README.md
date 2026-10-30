@@ -25,7 +25,7 @@ PC, with Vulkan for the graphics. No emulator runs.
 
 ![Samus at the Landing Site on Tallon IV](docs/landing_site.jpg)
 
-## Status: v0.0.4
+## Status: v0.0.5
 
 ## Features
 
@@ -39,6 +39,8 @@ PC, with Vulkan for the graphics. No emulator runs.
 - 30, 60 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
 - Steam Deck presets
 - Gyro aiming with controllers that have one, rumble
+- Wii Remote + Nunchuk: point at the screen to aim, with the buttons laid out like Metroid Prime: Trilogy (a Mayflash
+  DolphinBar or the PC's Bluetooth; F1 menu, Controls tab: Wii Remote)
 - The game's button prompts drawn for your controller - Xbox, PlayStation, Switch, keyboard and mouse or Wii Remote,
   following your bindings - in the game's own style (F1 menu, Controls tab: Button icons; Auto follows what you used
   last)
@@ -48,7 +50,6 @@ PC, with Vulkan for the graphics. No emulator runs.
 
 ## Future work
 
-- Adding Wiimote support
 - Adding VR support
 
 > [!WARNING]
@@ -59,6 +60,11 @@ PC, with Vulkan for the graphics. No emulator runs.
 > - Lava rising animation appears in Transport Tunnel A in magmoor when it shouldn't
 >
 > Found something else? See [Bugs and feature requests](#bugs-and-feature-requests).
+
+**New in v0.0.5: Wii Remote, HDR and button icons.** Play with a Wii Remote and Nunchuk, pointing at the screen to
+aim; HDR on HDR displays; the game's button prompts drawn for your controller (Xbox, PlayStation, keyboard and mouse
+or Wii Remote); and a Cheats tab (infinite energy, missiles and power bombs, a hint timer, L3 to show the next hint).
+The Ruined Courtyard's water is back.
 
 **New in v0.0.4: smoother doors.** Going through a door used to freeze the game for up to half a second while the
 next room's textures were decoded on the CPU. They're now decoded on the graphics card, and lighting and texture
@@ -116,7 +122,7 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 
 ### Windows
 
-1. Download `PrimeRecomp-v0.0.4-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
+1. Download `PrimeRecomp-v0.0.5-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
    extract it somewhere you can write to (e.g. Documents or a games folder - not Program Files).
 2. Run `primerecomp.exe`. The start screen asks for your game files: choose the folder that holds `exefs` and
    `romfs`, then **Set up**. It copies what it needs and recompiles the game on your PC. This happens once and
@@ -148,7 +154,7 @@ appears, MoltenVK compiles its shader for Metal, which can show as a brief hitch
 
 ### Linux
 
-1. Download `PrimeRecomp-v0.0.4-linux-x86_64.AppImage` from
+1. Download `PrimeRecomp-v0.0.5-linux-x86_64.AppImage` from
    [Releases](https://github.com/gminustwo/primerecomp/releases) and make it executable (`chmod +x`, or in your file
    manager: Properties -> Permissions -> executable).
 2. Run it. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs`, **Set up**, then
