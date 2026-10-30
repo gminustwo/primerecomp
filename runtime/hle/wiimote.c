@@ -348,7 +348,7 @@ static bool pointer_raw(const WiimoteDot *dots, float *px, float *py) {
     float roll = atan2f(g_pair[1], g_pair[0]), c = cosf(-roll), s = sinf(-roll);
     float dx = mx - 512, dy = my - 384;
     float rx = dx * c - dy * s, ry = dx * s + dy * c;
-    *px = -rx / 512, *py = ry / 384;  // (pointing up moves the bar down the image)
+    *px = -rx / 512, *py = -ry / 384;  // (both ways mirrored: the user's real remote, 2026-10-29 - y was the wrong way)
     return true;
 }
 

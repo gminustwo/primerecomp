@@ -699,9 +699,9 @@ static void wiimote_section(void) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(o, ImVec2(o.x + bw, o.y + bh), IM_COL32(8, 12, 20, 255), 6 * k);
     dl->AddRect(o, ImVec2(o.x + bw, o.y + bh), theme::u32(theme::text_dim), 6 * k);
-    for (int i = 0; i < 4; i++)  // (the camera's image turned to match where it points: both ways mirrored)
+    for (int i = 0; i < 4; i++)  // (the camera's image mirrored sideways, as the pointer reads it: wiimote.c pointer_raw)
         if (w.dots[i].valid)
-            dl->AddCircleFilled(ImVec2(o.x + bw * (1 - w.dots[i].x / 1024.0f), o.y + bh * (1 - w.dots[i].y / 768.0f)),
+            dl->AddCircleFilled(ImVec2(o.x + bw * (1 - w.dots[i].x / 1024.0f), o.y + bh * (w.dots[i].y / 768.0f)),
                                 6 * k, IM_COL32(255, 255, 255, 255));
     float area = g_settings.wiimote_area, mx = g_settings.wiimote_mid[0], my = g_settings.wiimote_mid[1];
     ImVec2 c(o.x + bw * 0.5f, o.y + bh * 0.5f);
