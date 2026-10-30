@@ -585,11 +585,25 @@ static void tab_gameplay(void) {
 static void tab_cheats(void) {
     opt_begin("##cheats", ImGui::GetFontSize() / 34);
     opt_section("Hints");
-    opt_int("Hint timer", &g_settings.hint_minutes, 0, HINT_MINUTES_MAX, 1, 0, "%d min",
-            "The longest the game waits before a hint shows where to go next, and before it shows it again if you're "
-            "still on your way. On its own it waits 15 to 40 minutes for most hints, and 30 before showing one "
-            "again. Hints the game shows right away still do.\n\nNeeds the game's own Hint System option on (pause "
-            "menu, Options).", "Game's own");
+    {   // (settings.c g_hint_waits: the game's own, 1 s, 30 s, 1..30 min)
+        static char names[N_HINT_WAITS][16];
+        static const char *ptrs[N_HINT_WAITS];
+        for (int i = 0; i < N_HINT_WAITS; i++) {
+            int s = g_hint_waits[i];
+            if (!s) snprintf(names[i], sizeof names[i], "Game's own");
+            else if (s < 60) snprintf(names[i], sizeof names[i], "%d sec", s);
+            else snprintf(names[i], sizeof names[i], "%d min", s / 60);
+            ptrs[i] = names[i];
+        }
+        int hi = settings_hint_wait_index(g_settings.hint_seconds);
+        if (opt_choice("Hint timer", &hi, ptrs, N_HINT_WAITS, 0,
+                       "The longest the game waits before a hint shows where to go next, and before it shows it again "
+                       "if you're still on your way. On its own it waits 15 to 40 minutes for most hints, and 30 "
+                       "before showing one again. 1 sec: as soon as the game has one for you - and again right after "
+                       "it goes, until you get there. Hints the game shows right away still do.\n\nNeeds the game's "
+                       "own Hint System option on (pause menu, Options).", false))
+            g_settings.hint_seconds = g_hint_waits[hi];
+    }
     opt_section("Samus");
     opt_toggle("Infinite energy", &g_settings.inf_energy, false,
                "Hits still land (the flash, the knockback) but take no energy, however hard they hit, and the energy "
