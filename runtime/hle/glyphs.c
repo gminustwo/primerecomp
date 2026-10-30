@@ -278,10 +278,10 @@ static bool icon_spec(const GameIcon *ic, int set, GaSpec *s) {
         return true;
     }
     if (set == ICONS_KEYBOARD) return key_symbol(s, g_bind_key[ic->input]);
-    if (set == ICONS_WII) {  // (input.c wiimote_buttons: 2 = X, 1 = Minus, C = Y, Z = ZL; A, B and + are themselves;
-                             // L, R and ZR have nothing)
-        const char *w = ic->input == BIND_X ? "2" : ic->input == BIND_Y ? "C" : ic->input == BIND_ZL ? "Z" :
-                        ic->input == BIND_A ? "A" : ic->input == BIND_B ? "B" : ic->input == BIND_PLUS ? "+" :
+    if (set == ICONS_WII) {  // (input.c wiimote_buttons: + = X, 2 = Plus, 1 = Minus, C = Y, Z = ZL; A and B are
+                             // themselves; L, R and ZR have nothing)
+        const char *w = ic->input == BIND_X ? "+" : ic->input == BIND_Y ? "C" : ic->input == BIND_ZL ? "Z" :
+                        ic->input == BIND_A ? "A" : ic->input == BIND_B ? "B" : ic->input == BIND_PLUS ? "2" :
                         ic->input == BIND_MINUS ? "1" : NULL;
         if (!w || (ic->shape != GA_DOTS && !strcmp(w, k_switch_label[ic->input]))) return false;
         text(s, w);
