@@ -26,7 +26,7 @@ extern "C" bool vk_imgui_backend_init(void) {
     ii.UseDynamicRendering = true;
     ii.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
     ii.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
-    ii.PipelineRenderingCreateInfo.pColorAttachmentFormats = &g_vk.sc_format;
+    ii.PipelineRenderingCreateInfo.pColorAttachmentFormats = &g_vk.sdr_format;  // (HDR frames: hdr.c vk_hdr_menu_begin)
     bool ok = ImGui_ImplVulkan_Init(&ii);
     if (!ok) LOG("[vk] ImGui Vulkan backend init failed\n");
     return ok;

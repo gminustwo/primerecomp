@@ -56,6 +56,18 @@ static void create_instance(void) {
         free(ie);
     }
 #endif
+    {   // HDR swapchains (hdr.c): the colour spaces past sRGB
+        uint32_t n = 0;
+        vkEnumerateInstanceExtensionProperties(NULL, &n, NULL);
+        VkExtensionProperties *ie = calloc(n ? n : 1, sizeof *ie);
+        vkEnumerateInstanceExtensionProperties(NULL, &n, ie);
+        for (uint32_t i = 0; i < n; i++)
+            if (!strcmp(ie[i].extensionName, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME) && n_ext < 14) {
+                ext[n_ext++] = VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME;
+                g_vk.colorspace_ext = true;
+            }
+        free(ie);
+    }
     bool validate = getenv("LARECOMP_VK_VALIDATION") != NULL;
     if (validate) ext[n_ext++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     const char *layers[] = {"VK_LAYER_KHRONOS_validation"};
@@ -346,8 +358,13 @@ static VkPresentModeKHR present_mode(void) {
     return got;
 }
 
-// what present_mode chose from: V-Sync (a change makes a new swapchain: vk_frame_begin)
-static int present_key(void) { return g_settings.vsync; }
+// An HDR swapchain for this frame: a game frame drawn with its targets made for HDR (backend_present asks each frame;
+// the start screen's stay SDR)
+static bool g_frame_wants_hdr;
+static bool hdr_wanted(void) { return g_frame_wants_hdr && g_vk.colorspace_ext; }
+
+// what create_swapchain chose from: V-Sync, HDR (a change makes a new swapchain: vk_frame_begin)
+static int present_key(void) { return g_settings.vsync | hdr_wanted() << 1; }
 static int sc_present_key = -1;
 
 static void create_swapchain(void) {
@@ -367,6 +384,26 @@ static void create_swapchain(void) {
     VkSurfaceFormatKHR sf = fmts[0];
     for (uint32_t i = 0; i < nf; i++)
         if (fmts[i].format == VK_FORMAT_B8G8R8A8_UNORM && fmts[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) { sf = fmts[i]; break; }
+    // HDR (hdr.c): scRGB or HDR10 when the surface lists one (Windows: with HDR on in its display settings)
+    VkSurfaceFormatKHR hf;
+    int hdr = g_vk.colorspace_ext ? vk_hdr_choose(fmts, nf, &hf) : HDR_OUT_NONE;
+    g_vk.hdr_offered = hdr != HDR_OUT_NONE;
+    {
+        static int logged = -1;
+        if (logged != hdr) {
+            char offered[512] = "";
+            for (uint32_t i = 0; i < nf; i++)
+                snprintf(offered + strlen(offered), sizeof offered - strlen(offered), "%s%d/%d", i ? ", " : "",
+                         fmts[i].format, fmts[i].colorSpace);
+            LOG("[vk] surface formats (format/colour space): %s; HDR: %s\n", offered,
+                hdr == HDR_OUT_SCRGB ? "scRGB" : hdr == HDR_OUT_PQ ? "HDR10" : hdr == HDR_OUT_TEST ? "test" : "none");
+            logged = hdr;
+        }
+    }
+    g_vk.hdr_out = HDR_OUT_NONE;
+    if (hdr_wanted() && hdr != HDR_OUT_NONE) sf = hf, g_vk.hdr_out = hdr;
+    if (g_vk.hdr_out == HDR_OUT_NONE || g_vk.hdr_out == HDR_OUT_TEST) g_vk.sdr_format = sf.format;
+    if (!g_vk.sdr_format) g_vk.sdr_format = VK_FORMAT_B8G8R8A8_UNORM;
     uint32_t count = caps.minImageCount + 1;
     if (caps.maxImageCount && count > caps.maxImageCount) count = caps.maxImageCount;
     if (count > 8) count = 8;
@@ -382,9 +419,16 @@ static void create_swapchain(void) {
     for (uint32_t i = 0; i < g_vk.sc_count; i++) vkDestroyImageView(g_vk.dev, g_vk.sc_views[i], NULL);
     if (old) vkDestroySwapchainKHR(g_vk.dev, old, NULL);
     g_vk.sc_format = sf.format;
+    g_vk.sc_colorspace = sf.colorSpace;
+    if (g_vk.hdr_out) LOG("[vk] HDR swapchain: %s, paper white %d nits, peak %d\n",
+                          g_vk.hdr_out == HDR_OUT_SCRGB ? "scRGB" : g_vk.hdr_out == HDR_OUT_PQ ? "HDR10" : "test (SDR)",
+                          g_settings.hdr_paper, g_settings.hdr_peak);
     g_vk.sc_extent = ext;
     g_vk.sc_count = 8;
     vkGetSwapchainImagesKHR(g_vk.dev, g_vk.swapchain, &g_vk.sc_count, g_vk.sc_images);
+    // (an SDR frame of the game's HDR targets - the frame HDR goes off: exec.c vk_present_draw - draws with this;
+    // made now, outside any rendering: one made inside one crashed the NVIDIA driver)
+    if (g_vk.hdr_out == HDR_OUT_NONE && g_vk.hdr_offered) vk_hdr_pipeline("present.vert", "present_hdr.frag", sf.format, false);
     for (uint32_t i = 0; i < g_vk.sc_count; i++) {
         VkImageViewCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = g_vk.sc_images[i],
                                     .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = sf.format,
@@ -424,7 +468,7 @@ static void image_barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, V
     vkCmdPipelineBarrier2(cb, &di);
 }
 
-typedef struct { uint32_t image; VkSemaphore acquired; bool ok; } Frame;
+typedef struct { uint32_t image; VkSemaphore acquired; bool ok, hdr; } Frame;  // (hdr: drawn into hdr.c's composite)
 static Frame cur_frame;
 // kernel.c: this thread's time blocked. Waiting for the display (FIFO) in the acquire and the present counts too:
 // idle, not work (exec.c vk_pace_frame - a 60 Hz display's whole 16.7 ms frames were "too slow")
@@ -453,11 +497,27 @@ bool vk_frame_begin(const float clear[4]) {
         recreate_swapchain();
         r = vkAcquireNextImageKHR(g_vk.dev, g_vk.swapchain, UINT64_MAX, acquire_sem[slot], VK_NULL_HANDLE, &cur_frame.image);
     }
-    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) { LOG("[vk] acquire failed: %d\n", r); return false; }
+    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {  // (a sleeping / locked screen: every frame - logged now and then)
+        static uint64_t nfail;
+        if (nfail++ % 600 < 3) {
+            VkSurfaceCapabilitiesKHR caps = {0};
+            vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_vk.phys, g_vk.surface, &caps);
+            LOG("[vk] acquire failed: %d (%llu times; window %dx%d flags %#llx, surface %ux%u, swapchain %ux%u)\n", r,
+                (unsigned long long)nfail, w, h, (unsigned long long)SDL_GetWindowFlags(window), caps.currentExtent.width,
+                caps.currentExtent.height, g_vk.sc_extent.width, g_vk.sc_extent.height);
+        }
+        return false;
+    }
     cur_frame.acquired = acquire_sem[slot];
     slot_seq[slot] = vk_pending_seq();
     g_blocked_ns += SDL_GetTicksNS() - t_acquire;
     VkCommandBuffer cb = vk_cmd();
+    cur_frame.hdr = g_vk.hdr_out != HDR_OUT_NONE;
+    if (cur_frame.hdr) {  // the frame goes into hdr.c's composite; the window image is written at vk_frame_end
+        vk_hdr_frame_begin(cb, clear);
+        cur_frame.ok = true;
+        return true;
+    }
     image_barrier(cb, g_vk.sc_images[cur_frame.image], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     VkRenderingAttachmentInfo ca = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = g_vk.sc_views[cur_frame.image],
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -482,6 +542,7 @@ void vk_frame_suspend(void) {
 void vk_frame_resume(void) {
     if (!cur_frame.ok) return;
     VkCommandBuffer cb = vk_cmd();
+    if (cur_frame.hdr) { vk_hdr_frame_resume(cb); return; }
     VkRenderingAttachmentInfo ca = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = g_vk.sc_views[cur_frame.image],
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
@@ -511,8 +572,27 @@ void vk_frame_end(const char *shot_path) {
     if (!cur_frame.ok) return;
     VkCommandBuffer cb = vk_cmd();
     vkCmdEndRendering(cb);
-    VkSpan shot = {0};
-    if (shot_path) save_window_image(cb, &shot);
+    VkSpan shot = {0}, sc_check = {0};
+    bool hdr = cur_frame.hdr;
+    if (hdr) {  // the composite into the window image, in the swapchain's colour space (a shot: the composite)
+        uint64_t check = shot_path && g_vk.hdr_out != HDR_OUT_TEST
+                             ? (uint64_t)g_vk.sc_extent.width * g_vk.sc_extent.height * (g_vk.sc_format == VK_FORMAT_R16G16B16A16_SFLOAT ? 8 : 4) : 0;
+        if (shot_path) shot = vk_hdr_shot_copy(cb, check);
+        image_barrier(cb, g_vk.sc_images[cur_frame.image], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        vk_hdr_frame_finish(cb, g_vk.sc_views[cur_frame.image]);
+        if (shot_path && g_vk.hdr_out != HDR_OUT_TEST) {  // (and the window image as the display gets it: a check)
+            uint32_t w = g_vk.sc_extent.width, h = g_vk.sc_extent.height;
+            uint64_t at = (uint64_t)w * h * 8;  // (after the composite's copy, in the same readback)
+            sc_check = (VkSpan){shot.buf, shot.off + at, (uint8_t *)shot.ptr + at};
+            image_barrier(cb, g_vk.sc_images[cur_frame.image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            VkBufferImageCopy rg = {.bufferOffset = sc_check.off, .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                    .imageExtent = {w, h, 1}};
+            vkCmdCopyImageToBuffer(cb, g_vk.sc_images[cur_frame.image], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sc_check.buf, 1, &rg);
+            image_barrier(cb, g_vk.sc_images[cur_frame.image], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        }
+    } else if (shot_path) {
+        save_window_image(cb, &shot);
+    }
     image_barrier(cb, g_vk.sc_images[cur_frame.image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     uint32_t img = cur_frame.image;
     if (!done_sem[img]) done_sem[img] = binary_semaphore();
@@ -525,7 +605,15 @@ void vk_frame_end(const char *shot_path) {
     g_blocked_ns += SDL_GetTicksNS() - t_present;
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) recreate_swapchain();
     cur_frame.ok = false;
-    if (shot_path) {
+    if (shot_path && hdr) {
+        vk_wait_seq(seq);
+        uint32_t w, h;
+        uint8_t *px = malloc((uint64_t)g_vk.sc_extent.width * g_vk.sc_extent.height * 4);
+        vk_hdr_shot_convert(&shot, px, &w, &h);
+        vk_save_png(shot_path, px, w, h);
+        free(px);
+        if (sc_check.ptr) vk_hdr_shot_check(&sc_check, g_vk.sc_extent.width, g_vk.sc_extent.height);
+    } else if (shot_path) {
         vk_wait_seq(seq);
         uint32_t w = g_vk.sc_extent.width, h = g_vk.sc_extent.height;
         uint8_t *px = shot.ptr;
@@ -573,7 +661,24 @@ void backend_present(NvnTexture *t) {
     vk_end_pass();
     static const float black[4] = {0, 0, 0, 1};
     uint64_t t0 = SDL_GetTicksNS();
+    {   // (test) LARECOMP_HDR_TOGGLE_AT=<frame>,...: the Video tab's HDR row flipped at those frames
+        static const char *e = (const char *)1;
+        if (e == (const char *)1) e = getenv("LARECOMP_HDR_TOGGLE_AT");
+        for (const char *p = e; p && *p;) {
+            if (strtoull(p, (char **)&p, 10) == total_frames) g_settings.hdr = !g_settings.hdr, LOG("[hdr] test: HDR %s\n", g_settings.hdr ? "on" : "off");
+            while (*p == ',') p++;
+        }
+    }
+    // HDR: the swapchain goes by what this frame was drawn with (the game's targets as they were made), the targets
+    // by the setting from the next frame on - so a frame drawn for HDR goes out as HDR, and the other way round, also
+    // the frame the Video tab's HDR row changes
+    static bool targets_hdr;
+    g_frame_wants_hdr = targets_hdr;
     bool have = vk_frame_begin(black);
+    g_frame_wants_hdr = false;  // (asked for this frame only: the start screen's stay SDR)
+    extern void renderer_set_hdr(bool on);  // (textures.c: the game's full-size sRGB targets as RGBA16F from now on)
+    targets_hdr = g_settings.hdr && g_vk.colorspace_ext && g_vk.hdr_offered;
+    renderer_set_hdr(targets_hdr);
     uint64_t nd = SDL_GetTicksNS() - t0;
     if (nd > 30000000) {
         static int warned;
@@ -607,7 +712,9 @@ void backend_present(NvnTexture *t) {
         static long menu_at = -1;
         if (menu_at < 0) menu_at = getenv("LARECOMP_MENU_AT") ? atol(getenv("LARECOMP_MENU_AT")) : 0;
         if (menu_at && (long)total_frames + 1 == menu_at) { extern void menu_test_open(void); menu_test_open(); }
+        if (cur_frame.hdr) vk_hdr_menu_begin(cb);  // (an HDR frame: the menu as SDR in an image of its own, laid over)
         menu_render((void *)cb, g_vk.sc_extent.width, g_vk.sc_extent.height);
+        if (cur_frame.hdr) vk_hdr_menu_end(cb);
         static long win_shot = -1;
         if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
         bool shot = win_shot && (long)total_frames + 1 == win_shot;

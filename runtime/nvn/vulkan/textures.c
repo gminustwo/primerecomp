@@ -168,6 +168,17 @@ static bool format_supports(VkFormat f, VkFormatFeatureFlags want) {
 // (The rules of LAS Recomp's Metal renderer.)
 static float g_rs_x = 1, g_rs_y = 1;
 void renderer_set_scale(float sx, float sy) { g_rs_x = sx; g_rs_y = sy; }
+
+// HDR output (hdr.c), set at each present like the scale: the game's full-size 8-bit sRGB render targets - the one
+// it tonemaps into and draws its visor, anti-aliasing and HUD on, which it presents, and its anti-aliasing's copy -
+// are RGBA16F instead, so the tonemapper's highlights past 1 survive to the present. Both hold linear light (an sRGB
+// target's shaders write linear values, and blending is linear), so nothing else changes. The smaller ones (the
+// half-size average of the picture the visor glass dims by) stay as they are.
+static bool g_hdr_targets;
+void renderer_set_hdr(bool on) { g_hdr_targets = on; }
+static bool hdr_target(const NvnTexture *t, const TexBackend *b) {
+    return g_hdr_targets && b->scalable && t->format == 0x38 && t->width >= 1280 && t->samples <= 1 && t->levels <= 1;
+}
 uint64_t renderer_present_count(void);
 
 static bool tex_scalable(const NvnTexture *t) {
@@ -321,6 +332,8 @@ static void create_image(NvnTexture *t, TexBackend *b, bool render) {
     uint32_t samples = t->samples > 1 ? t->samples : 1;
     if (samples > 1) levels = 1;
     VkFormat vf = mf.vf;
+    b->hdr = hdr_target(t, b);
+    if (b->hdr) vf = VK_FORMAT_R16G16B16A16_SFLOAT;
     VkFormatFeatureFlags need = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
     b->astc_bw = b->astc_bh = 0;
     if (!format_supports(vf, need)) {
@@ -496,7 +509,11 @@ static void share_unlink(TexBackend *b) {
 static TexBackend *tex_backend_for(NvnTexture *t, bool gpu_write) {
     TexBackend *b = t->backend;
     if (b) {
-        if (b->scalable && (b->sx != g_rs_x || b->sy != g_rs_y)) {  // output resolution changed: reallocate
+        // output resolution changed, or HDR output turned on or off: reallocate
+        if (b->scalable && (b->sx != g_rs_x || b->sy != g_rs_y || b->hdr != hdr_target(t, b))) {
+            if (b->hdr != hdr_target(t, b))
+                LOG("[hdr] frame %llu: %p %ux%u f%#x made %s\n", (unsigned long long)renderer_present_count(), (void *)t,
+                    t->width, t->height, t->format, b->hdr ? "RGBA8 again" : "RGBA16F");
             destroy_image(b);
             create_image(t, b, true);
         }

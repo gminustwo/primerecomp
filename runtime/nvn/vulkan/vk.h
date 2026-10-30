@@ -49,6 +49,11 @@ typedef struct {
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
     VkFormat sc_format;
+    VkColorSpaceKHR sc_colorspace;
+    VkFormat sdr_format;   // the SDR swapchain's format: ImGui draws in it (in an HDR frame, into an image of its own)
+    bool colorspace_ext;   // VK_EXT_swapchain_colorspace: HDR swapchains can be made
+    bool hdr_offered;      // the window's surface lists an HDR format (the Video tab says so)
+    int hdr_out;           // HDR_OUT_*: the swapchain is HDR, and how (hdr.c)
     VkExtent2D sc_extent;
     uint32_t sc_count;
     VkImage sc_images[8];
@@ -121,6 +126,7 @@ typedef struct TexBackend {
     bool shared;  // listed in the share table under key
     struct { uint64_t addr, stride; uint32_t target, scalable, width, height, depth, levels, format, samples; } key;
     struct TexBackend *share_next;
+    bool hdr;             // one of the game's sRGB targets, made RGBA16F for HDR output (textures.c hdr_target)
     int16_t glyph;        // one of the game's button prompt icons (runtime/hle/glyphs.c): its id + 1, else 0
     uint32_t glyph_gen;   // the icons' generation it was drawn for (a newer one: uploaded again)
 } TexBackend;
@@ -146,6 +152,23 @@ uint64_t vk_frame_counter(void);
 // ---- shaders / pipelines (shaders.c)
 VkShaderModule vk_compile_glsl(const char *src, int stage, const char *name);  // NULL on failure (logged)
 VkShaderModule vk_builtin_shader(const char *name);  // internal shaders (clear, copy, present)
+
+// ---- HDR output (hdr.c)
+enum { HDR_OUT_NONE, HDR_OUT_SCRGB, HDR_OUT_PQ, HDR_OUT_TEST /* (LARECOMP_HDR_TEST: on the SDR swapchain) */ };
+int vk_hdr_choose(const VkSurfaceFormatKHR *f, uint32_t n, VkSurfaceFormatKHR *out);  // an HDR format of these (HDR_OUT_*)
+float vk_hdr_shoulder(void);   // the patched tonemapper's peak over paper white (0: not an HDR frame)
+bool vk_hdr_frame(void);       // the frame being drawn is HDR (its rendering is into the composite)
+void vk_hdr_frame_begin(VkCommandBuffer cb, const float clear[4]);
+void vk_hdr_frame_resume(VkCommandBuffer cb);
+void vk_hdr_frame_finish(VkCommandBuffer cb, VkImageView sc_view);
+void vk_hdr_menu_begin(VkCommandBuffer cb);
+void vk_hdr_menu_end(VkCommandBuffer cb);
+VkSpan vk_hdr_shot_copy(VkCommandBuffer cb, uint64_t extra);
+void vk_hdr_shot_convert(const VkSpan *s, uint8_t *rgba, uint32_t *w, uint32_t *h);
+void vk_hdr_shot_check(const VkSpan *s, uint32_t w, uint32_t h);
+VkPipeline vk_hdr_pipeline(const char *vs, const char *fs, VkFormat fmt, bool blend);
+void vk_hdr_draw(VkCommandBuffer cb, VkPipeline p, VkImageView src, const float pc[16]);
+bool hdr_patch_tonemap(char **src);
 
 // ---- device / window (device.c)
 void vk_save_png(const char *path, const uint8_t *rgba, uint32_t w, uint32_t h);

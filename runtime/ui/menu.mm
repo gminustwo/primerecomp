@@ -386,6 +386,7 @@ static bool choice(const char *label, int *value, const char *const *names, int 
 }
 
 extern "C" double output_scale_dynamic_factor(void);
+extern "C" int vk_hdr_status(void);  // runtime/nvn/vulkan/hdr.c: 0 no HDR display, 1 available, 2 on now
 extern "C" void renderer_frame_times(float out[3]);  // runtime/nvn/vulkan/exec.c (Vulkan only)
 extern "C" void output_scale_render_size(double *w, double *h);
 
@@ -443,6 +444,32 @@ static void tab_display(void) {
                "On: no tearing - the screen only ever shows whole frames.\n\nOff: each frame goes to the screen "
                "the moment it's done - a little less input lag, but tearing (a line across the image where two "
                "frames meet).");
+    opt_section("HDR");
+    {   // (runtime/nvn/vulkan/hdr.c; device.c makes the swapchain again on a change)
+        int st = vk_hdr_status();
+        char d[900];
+        snprintf(d, sizeof d,
+                 "High dynamic range: the bright parts of the picture - the sun on the snow, lights, explosions, beam "
+                 "shots, lava - go past the brightness of white menus, up to your display's peak, while the rest of "
+                 "the picture looks as it always has. Needs an HDR display with HDR turned on in the system's display "
+                 "settings (Windows: Settings > System > Display > Use HDR).\n\n%s",
+                 st == 2 ? "On: the game goes to your display as HDR." :
+                 st == 1 ? "Your display takes HDR." :
+                 "Your display isn't taking HDR right now: turn on HDR in the system's display settings (it applies "
+                 "at once).");
+        if (st == 0 && !g_settings.hdr) opt_disable_next();
+        opt_toggle("HDR", &g_settings.hdr, false, d);
+        if (!g_settings.hdr) opt_disable_next();
+        opt_int("Peak brightness", &g_settings.hdr_peak, HDR_PEAK_MIN, HDR_PEAK_MAX, 50, 1000, "%d nits",
+                "The brightest your display gets, in nits (cd/m2): the game's brightest highlights are made to reach "
+                "it and no further, so nothing clips. The Windows HDR Calibration app, or your display's "
+                "specifications, tell what it is (often 600 to 1000 for a monitor, 1000 to 2000 for a TV).");
+        if (!g_settings.hdr) opt_disable_next();
+        opt_int("Paper white", &g_settings.hdr_paper, HDR_PAPER_MIN, HDR_PAPER_MAX, 10, 200, "%d nits",
+                "How bright white is - the menus, the HUD, a white wall in daylight: everything up to the game's own "
+                "white. 200 suits most rooms; more in a bright room, less in a dark one. The highlights go above it "
+                "up to the peak brightness.");
+    }
 
     opt_section("Rendering");
     // display order -> RES_* (the ini / enum order predates the menu order)

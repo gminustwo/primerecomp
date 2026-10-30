@@ -31,6 +31,9 @@ PC, with Vulkan for the graphics. No emulator runs.
 
 - Mouse aim that turns and aims directly, as in a PC shooter; full keyboard, mouse and controller rebinding
 - Any resolution up to 8K, AMD FSR 1 upscaling, SMAA anti-aliasing, anisotropic texture filtering
+- HDR on HDR displays (scRGB or HDR10): the sun on the snow, lights, beam shots and explosions go past the
+  brightness of white, up to your display's peak, while the rest of the picture looks as it always has (F1 menu,
+  Video tab: HDR, peak brightness, paper white)
 - Ultrawide and any aspect ratio, the HUD out at the screen's sides (or a 21:9 frame's, or the 16:9 middle);
   adjustable field of view
 - 30, 60 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
