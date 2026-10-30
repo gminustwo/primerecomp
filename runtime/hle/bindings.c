@@ -25,7 +25,7 @@ _Static_assert(BIND_MOUSE_LEFT == SDL_SCANCODE_COUNT, "mouse buttons follow SDL'
     SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, PADB_LTRIGGER, PADB_RTRIGGER, SDL_GAMEPAD_BUTTON_START, SDL_GAMEPAD_BUTTON_BACK, \
     SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_DOWN}
 #define DEF_KEY { \
-    SDL_SCANCODE_RETURN, SDL_SCANCODE_SPACE, SDL_SCANCODE_X, SDL_SCANCODE_LCTRL, 0, 0, \
+    SDL_SCANCODE_RETURN, SDL_SCANCODE_SPACE, SDL_SCANCODE_X, SDL_SCANCODE_LCTRL, SDL_SCANCODE_H, 0, \
     SDL_SCANCODE_LSHIFT, SDL_SCANCODE_F, BIND_MOUSE_RIGHT, BIND_MOUSE_LEFT, SDL_SCANCODE_TAB, SDL_SCANCODE_ESCAPE, \
     SDL_SCANCODE_T, SDL_SCANCODE_Q, SDL_SCANCODE_E, SDL_SCANCODE_R, \
     SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A, SDL_SCANCODE_D, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, \
@@ -75,7 +75,7 @@ static const char *const k_names[BIND_KEY_COUNT] = {
 // What the game's Dual Stick scheme does with each (its Options -> Controls -> View Controls page; the game's "Swap
 // Beam and Visor" option trades the d-pad's visors for the beams)
 static const char *const k_actions[BIND_KEY_COUNT] = {
-    "Shoot beam", "Jump", "Beam select (hold)", "Morph Ball", "", "", "Jump", "Missile", "Lock on / scan (hold)",
+    "Shoot beam", "Jump", "Beam select (hold)", "Morph Ball", "Show a hint (Cheats tab)", "", "Jump", "Missile", "Lock on / scan (hold)",
     "Shoot beam (hold: charge)", "Map", "Pause menu", "X-Ray Visor", "Combat Visor", "Scan Visor", "Thermal Visor",
     "Move forward", "Move back", "Strafe left", "Strafe right", "Look up", "Look down", "Turn left", "Turn right",
     "Power Beam", "Wave Beam", "Ice Beam", "Plasma Beam",

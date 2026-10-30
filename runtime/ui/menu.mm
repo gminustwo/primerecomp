@@ -597,13 +597,19 @@ static void tab_cheats(void) {
         }
         int hi = settings_hint_wait_index(g_settings.hint_seconds);
         if (opt_choice("Hint timer", &hi, ptrs, N_HINT_WAITS, 0,
-                       "The longest the game waits before a hint shows where to go next, and before it shows it again "
-                       "if you're still on your way. On its own it waits 15 to 40 minutes for most hints, and 30 "
-                       "before showing one again. 1 sec: as soon as the game has one for you - and again right after "
-                       "it goes, until you get there. Hints the game shows right away still do.\n\nNeeds the game's "
-                       "own Hint System option on (pause menu, Options).", false))
+                       "The longest the game waits before a hint first shows where to go next. On its own it waits 15 "
+                       "to 40 minutes for most hints. 1 sec: as soon as the game has one for you. After it has shown, "
+                       "the game's own wait before showing it again stands (30 minutes) - L3 brings it back sooner. "
+                       "Hints the game shows right away still do.\n\nNeeds the game's own Hint System option on "
+                       "(pause menu, Options).", false))
             g_settings.hint_seconds = g_hint_waits[hi];
     }
+    opt_toggle("Hint on L3", &g_settings.hint_on_l3, true,
+               "Pressing the left stick in and letting go (keyboard: H - or whatever you bind to Left stick press, "
+               "Controls tab) shows the next hint now: the one the game is counting down to, or the last one again if you're still "
+               "on your way. The game itself does nothing with that button.\n\nNeeds the game's own Hint System "
+               "option on (pause menu, Options), and a hint the game has for you - early on, and right after you've "
+               "found what the last one pointed to, there may be none.");
     opt_section("Samus");
     opt_toggle("Infinite energy", &g_settings.inf_energy, false,
                "Hits still land (the flash, the knockback) but take no energy, however hard they hit, and the energy "

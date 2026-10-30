@@ -43,8 +43,8 @@ PC, with Vulkan for the graphics. No emulator runs.
   following your bindings - in the game's own style (F1 menu, Controls tab: Button icons; Auto follows what you used
   last)
 - Any cutscene skippable
-- Cheats (F1 menu, Cheats tab): infinite energy, missiles and power bombs, and a hint timer that cuts the game's
-  15-40 minute wait for a hint down to as little as a minute
+- Cheats (F1 menu, Cheats tab): infinite energy, missiles and power bombs, a hint timer that cuts the game's
+  15-40 minute wait for a hint down to as little as a second, and L3 (keyboard: H) to show the next hint at once
 
 ## Future work
 
@@ -217,6 +217,7 @@ Keyboard and mouse play like a PC shooter:
 | Beams: Power / Wave / Ice / Plasma | 1 / 2 / 3 / 4 |
 | Map | Tab |
 | Pause menu | Esc |
+| Show a hint (F1 menu, Cheats tab) | H (controller: L3) |
 
 In the game's menus Enter / Space confirm, Esc goes back and Q / E switch pages. Everything can be rebound.
 

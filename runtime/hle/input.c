@@ -214,6 +214,8 @@ bool input_user_blocked(const SDL_Event *e) {
     }
 }
 
+_Atomic uint64_t g_input_buttons;  // the Switch buttons the game was last given (runtime/hle/cheats.c: L3 for a hint)
+
 // Controller family for the Controls tab's button names (bindings.c): 0 Nintendo / other / none, 1 Xbox, 2 PlayStation.
 // LARECOMP_PAD_TYPE=xbox|playstation|nintendo pretends one is attached (tests).
 static _Atomic int pad_family;
@@ -602,6 +604,8 @@ static void fill_state(Cpu *c) {
     if (rx > 16000) b |= 1ull << 22;
     if (ry < -16000) b |= 1ull << 23;
     *(uint64_t *)(s + 8) = b;
+    extern _Atomic uint64_t g_input_buttons;
+    g_input_buttons = b;
     static uint64_t last_b;
     if (b != last_b && getenv("LARECOMP_INPUT")) LOG("[input] id %#x buttons %#llx (sampling %lld, lr %llx)\n", id, (unsigned long long)b, (long long)sampling, c->x[30]);
     last_b = b;

@@ -79,8 +79,11 @@ void cheats_hooks_init(void) {  // (each boot, from game_hooks_init)
 //    room marked on the map) while it's under the text's time. The player reaching that room, or the text done (the
 //    second timer, 20 s), sets the time to the hint's +0x1c: it counts down again and the hint shows again.
 // The game's waits are long: 15 to 40 minutes before most hints first show (a few right away: 0 or 9 s), 30 minutes
-// before one shows again (the artifacts' 60). The hint timer (g_settings.hint_seconds, 0 = the game's own) cuts both
-// waits down to it, those already under way too; shorter ones stay as they are.
+// before one shows again (the artifacts' 60). The hint timer (g_settings.hint_seconds, 0 = the game's own) cuts the
+// first wait down to it, one already under way too (a shorter one stays as it is); once a hint has shown, the game's
+// own wait before it shows again stands (a short timer cutting that too had the hint come back every few seconds).
+// L3 (the left stick pressed in - whatever the player bound to it; g_settings.hint_on_l3) shows the next hint due at
+// once: one counting down to its first showing, or one waiting to show again.
 // LARECOMP_LOG_HINTS=1: the hints and their times, once, and each hint's changes ("[hint]").
 static uint64_t hint_set(void) {
     uint64_t ui = LD64(guest_sym("gpUniverseInfo")), tok = GUEST_PTR_OK(ui) ? LD64(ui) : 0;
@@ -125,14 +128,45 @@ static void hint_frame(uint64_t gs) {
     for (int i = 0; i < n; i++) {
         uint32_t st = LD32(states + 12ull * i);
         float *t = (float *)(uintptr_t)(states + 12ull * i + 4);
-        float text = *(const float *)(uintptr_t)(hints + 0x38ull * i + 0x24);
         if (log && fresh && (st == 1 || st == 2)) LOG("[hint] %d: state %u, time %.1f (as loaded)\n", i, st, *t);
         else if (log && !fresh && (st != was[i].state || *t > was[i].t + 0.5f))
             LOG("[hint] %d: state %u -> %u, time %.1f -> %.1f\n", i, was[i].state, st, was[i].t, *t);
         if (wait > 0 && st == 1 && *t > wait) *t = wait;
-        else if (wait > 0 && st == 2 && *t > text + wait) *t = text + wait;
         was[i].state = st, was[i].t = *t;
     }
+    // L3: the next hint due shown now (at 0 a counting one shows - the game's own step -; one waiting to come back
+    // shows while its time is under its text's). One just shown (its time run out, the game not yet back to its wait
+    // before showing it again - about 20 s) is shown again. On letting go, and only if R3 wasn't pressed meanwhile:
+    // both sticks pressed in open PrimeRecomp's menu.
+    extern _Atomic uint64_t g_input_buttons;  // (runtime/hle/input.c: bit 4 the left stick pressed, bit 5 the right)
+    static bool l3_was, l3_armed;
+    uint64_t btn = g_input_buttons;
+    bool l3 = (btn >> 4) & 1;
+    if (l3 && !l3_was) l3_armed = true;
+    if ((btn >> 5) & 1) l3_armed = false;
+    if (!l3 && l3_was && l3_armed && g_settings.hint_on_l3) {
+        int best = -1;
+        float best_left = 0;
+        for (int i = 0; i < n; i++) {
+            uint32_t st = LD32(states + 12ull * i);
+            float t = *(const float *)(uintptr_t)(states + 12ull * i + 4);
+            float text = *(const float *)(uintptr_t)(hints + 0x38ull * i + 0x24);
+            float left = st == 1 ? t : t - text;  // (time until it shows; under 0: shown just now)
+            if ((st == 1 || st == 2) && (best < 0 || left < best_left)) best = i, best_left = left;
+        }
+        if (best >= 0) {
+            float *t = (float *)(uintptr_t)(states + 12ull * best + 4);
+            float text = *(const float *)(uintptr_t)(hints + 0x38ull * best + 0x24);
+            *t = LD32(states + 12ull * best) == 1 ? 0.01f : text;
+            char name[64];
+            hint_name(hints + 0x38ull * best, name, sizeof name);
+            if (best_left > 0) LOG("[hint] L3: %s shown now (it was due in %.0f s)\n", name, best_left);
+            else LOG("[hint] L3: %s shown again\n", name);
+        } else {
+            LOG("[hint] L3: no hint due (hint system %s)\n", LD8(gs + 0x14e) ? "on" : "off");
+        }
+    }
+    l3_was = l3;
 }
 
 // (debug) LARECOMP_DAMAGE=<frame>:<amount>[,<frame>:<amount>...]: from that frame on, the next gameplay frame hits
