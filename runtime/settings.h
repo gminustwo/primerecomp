@@ -64,6 +64,7 @@ typedef struct {
     bool skippable_cutscenes;  // every cutscene can be skipped, seen before or not (runtime/hle/game.c)
     int hint_seconds;    // Cheats: the game waits at most this long before a hint shows, and before it shows it again
                          // (0: the game's own waits; one of g_hint_waits; runtime/hle/cheats.c)
+    bool hint_on_l3;     // Cheats: the left stick pressed in shows the next hint due at once (runtime/hle/cheats.c)
     bool inf_energy;     // Cheats: damage takes no energy, and the energy stays full
     bool inf_missiles;   // Cheats: missiles stay full
     bool inf_power_bombs;  // Cheats: power bombs stay full
