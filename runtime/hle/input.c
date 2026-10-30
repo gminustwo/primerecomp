@@ -537,12 +537,18 @@ static int32_t clamp_axis(int32_t v) { return v > 32767 ? 32767 : v < -32767 ? -
 // missile, the d-pad picks visors, the right stick beams, Plus the map, Minus the pause menu): A = A, B (the
 // trigger) = B, Z = ZL, C = Y, 1 = X, the d-pad = the d-pad, - / + = Minus / Plus, the Nunchuk's stick = the left
 // stick; 2 held turns the d-pad into the right stick (the beams). (ZR / R, the Pointer scheme's "reset gyro", aren't
-// needed: the IR pointer doesn't drift. Home: unused - the overlay menu is F1 / the controller's own chord.)
+// needed: the IR pointer doesn't drift.) Home: the pointer centred where the remote points now (the Controls tab's
+// "Centre the pointer" from the couch: with the sensor bar above or below the screen, an uncentred pointer reads
+// off the middle - seen with the real remote, the view kept turning down).
 static uint64_t wiimote_buttons(int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     WiimoteState w;
     wiimote_state(&w);
     *lx = *ly = *rx = *ry = 0;
     if (!w.connected || !g_settings.wiimote) return 0;
+    static bool home_was;
+    bool home = (w.buttons & WM_HOME) != 0;
+    if (home && !home_was && wiimote_calibrate_middle()) settings_save();
+    home_was = home;
     bool beams = (w.buttons & WM_TWO) != 0;
     static const struct { uint16_t wm; int bit; } map[] = {
         {WM_A, 0}, {WM_B, 1}, {WM_ONE, 2}, {WM_MINUS, 11}, {WM_PLUS, 10},

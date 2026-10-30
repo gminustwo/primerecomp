@@ -378,10 +378,27 @@ HLE_FUNC("_ZN2nn3hid21GetSixAxisSensorStateEPNS0_18SixAxisSensorStateERKNS0_19Si
 HLE_FUNC("_ZN2nn3hid21IsSixAxisSensorAtRestERKNS0_19SixAxisSensorHandleE", hid_sixaxis_at_rest) {
     static int env = -2;  // (LARECOMP_GYRO_REST=0/1: forced, tests; LARECOMP_GYRO_TEST's motion is never at rest)
     if (env == -2) env = getenv("LARECOMP_GYRO_REST") ? atoi(getenv("LARECOMP_GYRO_REST")) : -1;
+    // The Wii Remote lying still counts only out of play (the pause screens, the map, the game's messages): the game
+    // calibrates the Pointer scheme there (it waits for the controller to be put down), but put down in play and
+    // picked up again it stops the game for "The pointer will now be recentered." - which an IR pointer, absolute,
+    // has no use for (rt_npad_poll keeps its references pinned anyway). Seen with the real remote: four such stops in
+    // three minutes, each time it was laid on the desk a moment.
+    extern bool game_in_play(void);
     pthread_mutex_lock(&g_lock);
-    bool rest = wiimote_drives() ? wm.still_s > 1.5f : m.still_s > 1.5f;
+    bool rest = wiimote_drives() ? wm.still_s > 1.5f && !game_in_play() : m.still_s > 1.5f;
     pthread_mutex_unlock(&g_lock);
     c->x[0] = env >= 0 ? env : !sensor_on() || rest;
+    if (getenv("LARECOMP_LOG_REST")) {  // (debug) who asks, and what it's told, on each change per caller
+        extern uint64_t vk_frame_counter(void);
+        static uint64_t lr[8]; static int ans[8], n;
+        int k = 0;
+        while (k < n && lr[k] != c->x[30]) k++;
+        if (k == n && n < 8) lr[n] = c->x[30], ans[n++] = -1;
+        if (k < 8 && ans[k] != (int)c->x[0]) {
+            ans[k] = (int)c->x[0];
+            LOG("[rest] frame %llu: caller %llx told %d\n", (unsigned long long)vk_frame_counter(), (unsigned long long)c->x[30], (int)c->x[0]);
+        }
+    }
 }
 
 RT_ON_RESET(motion_reset) {
