@@ -28,6 +28,8 @@ Settings g_settings = {
     .show_fps = false,
     .frame_rate = 60,
     .vsync = true,
+    .hdr_peak = 1000,
+    .hdr_paper = 200,
     .upscaler = UPSCALE_FSR1,
     .res_lines = 2160,
     .fov = FOV_GAME,
@@ -163,6 +165,9 @@ void settings_load(void) {
             g_settings.frame_rate = r == 120 || r == 30 ? r : r == 0 ? 120 : 60;  // (0: Uncapped, gone since 2026-10-27)
         }
         else if (!strcmp(key, "vsync")) g_settings.vsync = atoi(val) != 0;
+        else if (!strcmp(key, "hdr")) g_settings.hdr = atoi(val) != 0;
+        else if (!strcmp(key, "hdr_peak_nits")) g_settings.hdr_peak = atoi(val);
+        else if (!strcmp(key, "hdr_paper_white_nits")) g_settings.hdr_paper = atoi(val);
         else if (!strcmp(key, "fov")) g_settings.fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
         else if (!strcmp(key, "skippable_cutscenes")) g_settings.skippable_cutscenes = atoi(val) != 0;
         else if (!strcmp(key, "hint_minutes"))
@@ -217,6 +222,10 @@ void settings_load(void) {
     if (g_settings.wiimote_area > 1) g_settings.wiimote_area = 1;
     if (!(g_settings.wiimote_smooth >= 0)) g_settings.wiimote_smooth = 0;
     if (g_settings.wiimote_smooth > 0.9f) g_settings.wiimote_smooth = 0.9f;
+    if (g_settings.hdr_peak < HDR_PEAK_MIN) g_settings.hdr_peak = HDR_PEAK_MIN;
+    if (g_settings.hdr_peak > HDR_PEAK_MAX) g_settings.hdr_peak = HDR_PEAK_MAX;
+    if (g_settings.hdr_paper < HDR_PAPER_MIN) g_settings.hdr_paper = HDR_PAPER_MIN;
+    if (g_settings.hdr_paper > HDR_PAPER_MAX) g_settings.hdr_paper = HDR_PAPER_MAX;
     LOG("[settings] loaded %s\n", SETTINGS_FILE);
     if (migrated) settings_save();
 }
@@ -236,6 +245,8 @@ void settings_save(void) {
     fprintf(f, "show_fps = %d\n", g_settings.show_fps);
     fprintf(f, "frame_rate = %d\n", g_settings.frame_rate);
     fprintf(f, "vsync = %d\n", g_settings.vsync);
+    fprintf(f, "hdr = %d\nhdr_peak_nits = %d\nhdr_paper_white_nits = %d\n", g_settings.hdr, g_settings.hdr_peak,
+            g_settings.hdr_paper);
     fprintf(f, "fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.skippable_cutscenes,
             g_settings.gyro);
     fprintf(f, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,

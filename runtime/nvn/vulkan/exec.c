@@ -1568,6 +1568,8 @@ static void translate_program(void *arg) {
         atomic_store(&p->state, 2);
         return;
     }
+    if (hdr_patch_tonemap(&p->fi->msl))  // (hdr.c: highlights past paper white when frames go out as HDR)
+        LOG("[hdr] the tonemapper (code %llx) patched for HDR\n", (unsigned long long)p->code[1]);
     override_glsl(&p->vi->msl, p->code[0], "vs");
     override_glsl(&p->fi->msl, p->code[1], "fs");
     if (p->has_gs) override_glsl(&p->gi->msl, p->code[2], "gs");  // (emulated: inside the vs source)
@@ -2942,6 +2944,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
     float rs[66][4] = {{1, 1, 0, 0}};  // ([65]: mirror mode)
     if (rscale_row0) memcpy(rs[0], rscale_row0, 16);
     rs[65][0] = g_mirror_w;
+    rs[64][2] = vk_hdr_shoulder();  // (the patched tonemapper: hdr.c hdr_patch_tonemap)
     for (int i = 0; i < p->nbinds; i++) {
         VkBindingInfo *b = &p->binds[i];
         if (b->set != set) continue;
@@ -4392,9 +4395,11 @@ static void copy_texture_to_buffer(const TexRefRec *src, uint64_t dst) {
     vk_full_barrier(cb);
     VkImage srcimg = b->image;
     VmaAllocation small_mem = NULL;
-    if ((tsx != 1 || tsy != 1) && level == 0 && !renderer_format_is_depth(t->format)) {
-        // the CPU expects guest-sized texels: filter the scaled allocation down first
-        VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = b->format,
+    if ((tsx != 1 || tsy != 1 || b->hdr) && level == 0 && !renderer_format_is_depth(t->format)) {
+        // the CPU expects guest-sized texels: filter the scaled allocation down first (and in the guest's format: a
+        // target made RGBA16F for HDR, textures.c hdr_target)
+        VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
+                                .format = b->hdr ? vk_format(t->format) : b->format,
                                 .extent = {t->width, t->height, 1}, .mipLevels = 1, .arrayLayers = 1, .samples = VK_SAMPLE_COUNT_1_BIT,
                                 .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
         VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
@@ -4606,9 +4611,9 @@ static VkImageView raw_view(TexBackend *b) {
 static VkPipelineLayout post_layout;
 static VkDescriptorSetLayout post_set_layout;
 
-static VkPipeline post_pipeline(const char *fs) {
-    static struct { const char *fs; VkPipeline p; } cache[8];
-    for (int i = 0; i < 8; i++) if (cache[i].p && cache[i].fs == fs) return cache[i].p;
+static VkPipeline post_pipeline(const char *fs, VkFormat fmt) {
+    static struct { const char *fs; VkFormat f; VkPipeline p; } cache[16];
+    for (int i = 0; i < 16; i++) if (cache[i].p && cache[i].fs == fs && cache[i].f == fmt) return cache[i].p;
     if (!post_layout) {
         VkDescriptorSetLayoutBinding b[3];
         for (uint32_t i = 0; i < 3; i++)
@@ -4638,7 +4643,6 @@ static VkPipeline post_pipeline(const char *fs) {
                                               .pAttachments = &cba};
     VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dy = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = 2, .pDynamicStates = dyn};
-    VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
     VkPipelineRenderingCreateInfo ri = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = 1,
                                         .pColorAttachmentFormats = &fmt};
     VkPipelineDepthStencilStateCreateInfo ds = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -4648,16 +4652,17 @@ static VkPipeline post_pipeline(const char *fs) {
                                        .pColorBlendState = &cb, .pDynamicState = &dy, .layout = post_layout};
     VkPipeline p;
     VK_CHECK(vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, &pi, NULL, &p));
-    for (int i = 0; i < 8; i++) if (!cache[i].p) { cache[i].fs = fs; cache[i].p = p; break; }
+    for (int i = 0; i < 16; i++) if (!cache[i].p) { cache[i].fs = fs; cache[i].f = fmt; cache[i].p = p; break; }
     return p;
 }
 
-// Post image `i` at w x h (RGBA8, kept until the size changes). 0, 1: SMAA edges / weights, 2: SMAA output,
-// 3, 4: FSR EASU / RCAS.
+// Post image `i` at w x h (RGBA8; an HDR frame's, RGBA16F; kept until the size changes). 0, 1: SMAA edges /
+// weights, 2: SMAA output, 3, 4: FSR EASU / RCAS, 5: the game's image as PQ (an HDR frame's, hdr_encode).
 static TexBackend *post_image(int i, uint32_t w, uint32_t h) {
-    static TexBackend img[5];
+    static TexBackend img[6];
     TexBackend *d = &img[i];
-    if (d->image && (d->width != w || d->height != h)) {
+    VkFormat fmt = vk_hdr_frame() ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+    if (d->image && (d->width != w || d->height != h || d->format != fmt)) {
         vk_views_forget(d);
         vk_defer_image(d->image, d->mem);
         d->image = VK_NULL_HANDLE;
@@ -4665,12 +4670,12 @@ static TexBackend *post_image(int i, uint32_t w, uint32_t h) {
     }
     if (!d->image) {
         VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
-                                .format = VK_FORMAT_R8G8B8A8_UNORM, .extent = {w, h, 1}, .mipLevels = 1, .arrayLayers = 1,
+                                .format = fmt, .extent = {w, h, 1}, .mipLevels = 1, .arrayLayers = 1,
                                 .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
                                 .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
         VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
         VK_CHECK(vmaCreateImage(g_vk.vma, &ci, &ai, &d->image, &d->mem, NULL));
-        d->format = VK_FORMAT_R8G8B8A8_UNORM; d->width = w; d->height = h; d->depth = 1; d->layers = 1; d->levels = 1;
+        d->format = fmt; d->width = w; d->height = h; d->depth = 1; d->layers = 1; d->levels = 1;
         d->samples = 1; d->aspect = VK_IMAGE_ASPECT_COLOR_BIT; d->base_type = VK_IMAGE_VIEW_TYPE_2D;
         vk_image_init_layout(vk_cmd(), d->image, d->aspect);
     }
@@ -4711,7 +4716,7 @@ static VkImageView smaa_lut(int i) {
 // clear: start from zero (SMAA's edge pass only writes edge pixels; its weights / output read them).
 static void post_pass(VkCommandBuffer cb, const char *fs, const VkImageView *srcs, int n, TexBackend *dst, const float pc[8],
                       bool clear) {
-    VkPipeline pipe = post_pipeline(fs);  // (before the rendering begins: created inside it, the NVIDIA driver crashed)
+    VkPipeline pipe = post_pipeline(fs, dst->format);  // (before the rendering begins: created inside it, the NVIDIA driver crashed)
     vk_full_barrier(cb);
     VkRenderingAttachmentInfo ca = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = post_view(dst),
                                     .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
@@ -4741,19 +4746,35 @@ static void post_pass(VkCommandBuffer cb, const char *fs, const VkImageView *src
     vkCmdEndRendering(cb);
 }
 
+// What a game image's texels are, for an HDR frame (present_hdr.frag / hdr_encode.frag): linear light (floating
+// point: the game's targets with HDR on) or sRGB-encoded bytes (raw_view: the rest)
+static bool tex_linear(const TexBackend *b) {
+    return b->format == VK_FORMAT_R16G16B16A16_SFLOAT || b->format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+           b->format == VK_FORMAT_R32G32B32A32_SFLOAT;
+}
+
 // The view the present samples: the game image, or its anti-aliased / upscaled version. ow x oh: the whole image's
-// size in the window (its crop is drawn into the viewport).
-static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, double oh_d) {
+// size in the window (its crop is drawn into the viewport). *pq: (an HDR frame) the view holds PQ (hdr_encode).
+static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, double oh_d, bool *pq) {
     VkImageView v = raw_view(b);
     bool smaa = g_settings.antialias == AA_SMAA;
     uint32_t ow = (uint32_t)lround(ow_d), oh = (uint32_t)lround(oh_d);
     if (ow > 16384) ow = 16384;
     if (oh > 16384) oh = 16384;
     bool fsr = g_settings.upscaler == UPSCALE_FSR1 && (ow > b->width + 1 || oh > b->height + 1);  // (an upscale only)
+    *pq = false;
     if (!smaa && !fsr) return v;
     extern void vk_frame_suspend(void);
     extern void vk_frame_resume(void);
     vk_frame_suspend();
+    if (vk_hdr_frame()) {  // an HDR frame: SMAA and FSR (made for gamma-encoded pictures) on the image as PQ
+        float m[8] = {tex_linear(b) ? 0.0f : 1.0f, (float)g_settings.hdr_paper};
+        TexBackend *e = post_image(5, b->width, b->height);
+        VkImageView in[3] = {v};
+        post_pass(cb, "hdr_encode.frag", in, 1, e, m, false);
+        v = post_view(e);
+        *pq = true;
+    }
     if (smaa) {  // SMAA 1x: luma edges -> blending weights -> neighbourhood blending
         float w = (float)b->width, h = (float)b->height;
         float m[8] = {1.0f / w, 1.0f / h, w, h};
@@ -4793,7 +4814,24 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, 
 // Inside the window image's rendering (device.c vk_frame_begin): the game image into (vx, vy, vw, vh).
 void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, float vw, float vh, const float pv[8]) {
     if (!b || !b->image || (b->aspect & ~VK_IMAGE_ASPECT_COLOR_BIT)) return;
-    VkImageView src = post_process(cb, b, pv[6] > 0 ? vw / pv[6] : vw, pv[7] > 0 ? vh / pv[7] : vh);
+    bool pq;
+    VkImageView src = post_process(cb, b, pv[6] > 0 ? vw / pv[6] : vw, pv[7] > 0 ? vh / pv[7] : vh, &pq);
+    // an HDR frame: into hdr.c's composite, linear (1.0 = paper white); an SDR one of linear texels (HDR just turned
+    // off, the display stopped taking it): sRGB-encoded on the way (the SDR path shows the bytes as they are)
+    bool lin_sdr = !vk_hdr_frame() && tex_linear(b);
+    if (vk_hdr_frame() || lin_sdr) {
+        float pc[16];
+        memcpy(pc, pv, 32);
+        pc[8] = pq ? 2.0f : tex_linear(b) ? 0.0f : 1.0f, pc[9] = (float)g_settings.hdr_paper, pc[10] = lin_sdr;
+        pc[11] = pc[12] = pc[13] = pc[14] = pc[15] = 0;
+        VkViewport vp = {vx, vy, vw, vh, 0, 1};
+        vkCmdSetViewport(cb, 0, 1, &vp);
+        VkFormat f = lin_sdr ? g_vk.sc_format : VK_FORMAT_R16G16B16A16_SFLOAT;
+        vk_hdr_draw(cb, vk_hdr_pipeline("present.vert", "present_hdr.frag", f, false), src, pc);
+        VkViewport full = {0, 0, (float)g_vk.sc_extent.width, (float)g_vk.sc_extent.height, 0, 1};
+        vkCmdSetViewport(cb, 0, 1, &full);
+        return;
+    }
     VkPipeline p = present_pipeline(g_vk.sc_format);
     VkDescriptorSet ds = vk_alloc_set(present_set_layout);
     VkDescriptorImageInfo ii = {vk_default_sampler(true), src, VK_IMAGE_LAYOUT_GENERAL};
@@ -4821,7 +4859,9 @@ void renderer_save_texture_tex(TexBackend *b, const char *path) {
     vk_end_pass();
     VkImage img;
     VmaAllocation mem;
-    VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = VK_FORMAT_R8G8B8A8_UNORM,
+    // (linear texels - the game's targets with HDR on - into an sRGB image: encoded as the bytes of the others are)
+    VkFormat sf = tex_linear(b) ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+    VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = sf,
                             .extent = {w, h, 1}, .mipLevels = 1, .arrayLayers = 1, .samples = VK_SAMPLE_COUNT_1_BIT,
                             .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
     VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
@@ -4830,7 +4870,7 @@ void renderer_save_texture_tex(TexBackend *b, const char *path) {
     vk_full_barrier(cb);
     vk_image_init_layout(cb, img, VK_IMAGE_ASPECT_COLOR_BIT);
     VkImageViewCreateInfo vci = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = img, .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                                 .format = VK_FORMAT_R8G8B8A8_UNORM, .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+                                 .format = sf, .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
     VkImageView tv;
     VK_CHECK(vkCreateImageView(g_vk.dev, &vci, NULL, &tv));
     VkRenderingAttachmentInfo ca = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = tv, .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
@@ -4838,7 +4878,7 @@ void renderer_save_texture_tex(TexBackend *b, const char *path) {
     VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {w, h}}, .layerCount = 1,
                           .colorAttachmentCount = 1, .pColorAttachments = &ca};
     vkCmdBeginRendering(cb, &ri);
-    VkPipeline p = present_pipeline(VK_FORMAT_R8G8B8A8_UNORM);
+    VkPipeline p = present_pipeline(sf);
     VkDescriptorSet ds = vk_alloc_set(present_set_layout);
     VkDescriptorImageInfo ii = {vk_default_sampler(true), raw_view(b), VK_IMAGE_LAYOUT_GENERAL};
     VkWriteDescriptorSet wr = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = 0, .descriptorCount = 1,

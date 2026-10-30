@@ -23,7 +23,8 @@ enum { AA_OFF = 0, AA_SMAA = 1 };
 // back buttons.
 enum { FACE_NINTENDO = 0, FACE_XBOX = 1 };
 enum { FOV_GAME = 55, FOV_MIN = 45, FOV_MAX = 90 };
-enum { HINT_MINUTES_MAX = 30 };  // (Cheats tab "Hint timer": 0 = the game's own timing, else 1..30 minutes)
+enum { HINT_MINUTES_MAX = 30 };
+enum { HDR_PEAK_MIN = 400, HDR_PEAK_MAX = 4000, HDR_PAPER_MIN = 80, HDR_PAPER_MAX = 500 };  // (nits: Video tab "HDR")  // (Cheats tab "Hint timer": 0 = the game's own timing, else 1..30 minutes)
 #define MOUSE_SENS_MIN 0.1f  // (mouse aim sensitivity range: Controls tab)
 #define MOUSE_SENS_MAX 10.0f
 // System language served to the game (runtime/services/am.c GetDesiredLanguage, services/hid_set.c GetLanguageCode):
@@ -52,6 +53,10 @@ typedef struct {
     int frame_rate;      // frames per second: 60 (the Switch's), 120 (the simulation too) or 30 (two 60 Hz steps a frame)
                          // (runtime/hle/game.c); LARECOMP_FPS overrides it
     bool vsync;          // no tearing (runtime/nvn/vulkan/device.c present_mode)
+    bool hdr;            // HDR output when the display takes it (runtime/nvn/vulkan/hdr.c): the game's highlights
+                         // past paper white, up to hdr_peak
+    int hdr_peak;        // HDR: the display's peak brightness, nits (HDR_PEAK_MIN..MAX)
+    int hdr_paper;       // HDR: paper white - the menus, the HUD, a white wall in daylight - nits (HDR_PAPER_MIN..MAX)
     int fov;             // first-person vertical field of view in degrees, FOV_MIN..FOV_MAX (55: the game's): game.c
     bool skippable_cutscenes;  // every cutscene can be skipped, seen before or not (runtime/hle/game.c)
     int hint_minutes;    // Cheats: the game waits at most this many minutes before a hint shows, and before it shows
