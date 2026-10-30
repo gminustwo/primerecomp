@@ -736,8 +736,8 @@ static void wiimote_section(void) {
     ImGui::EndGroup();
     hint("Aiming uses the game's own Pointer controls: pause, Options -> Controls -> Control Scheme -> Pointer (it "
          "asks to calibrate: lay the remote down for a moment). Laid out like Metroid Prime: Trilogy: A shoots, B "
-         "jumps, Z locks on, C morphs, 2 fires a missile, the d-pad picks visors, hold - and push the stick to pick "
-         "a beam, + the map, 1 the pause menu, the Nunchuk's stick moves. Centre the pointer once (it remembers): point at the middle of "
+         "jumps, Z locks on, C morphs, + fires a missile, the d-pad picks visors, hold - and push the stick to pick "
+         "a beam, 2 the map, 1 the pause menu, the Nunchuk's stick moves. Centre the pointer once (it remembers): point at the middle of "
          "your screen and press Home - or click the button, then point there. A smaller area needs less movement to "
          "reach the screen's edges; the game's own Aim Sensitivity sets how fast the view turns.");
 }

@@ -535,7 +535,7 @@ static int32_t clamp_axis(int32_t v) { return v > 32767 ? 32767 : v < -32767 ? -
 // The Wii Remote + Nunchuk (runtime/hle/wiimote.c) as the Switch controller, laid out like Metroid Prime: Trilogy's
 // controls on the game's Pointer scheme (its View Controls: A shoots, B jumps, ZL locks on, Y morphs, X fires a
 // missile, the d-pad picks visors, the right stick beams, Plus the map, Minus the pause menu): A = A, B (the
-// trigger) = B, Z = ZL, C = Y, 2 = X (missile), 1 = Minus (the pause menu), + = Plus, the d-pad = the d-pad, the
+// trigger) = B, Z = ZL, C = Y, + = X (missile), 2 = Plus (the map), 1 = Minus (the pause menu), the d-pad = the d-pad, the
 // Nunchuk's stick = the left stick; - held turns the stick into the right stick (the beams: a push snaps to its
 // direction, Samus stands still meanwhile; the user's layout, 2026-10-29). (ZR / R, the Pointer scheme's "reset
 // gyro", aren't needed: the IR pointer doesn't drift.) Home: the pointer centred where the remote points now (the Controls tab's
@@ -551,7 +551,7 @@ static uint64_t wiimote_buttons(int32_t *lx, int32_t *ly, int32_t *rx, int32_t *
     if (home && !home_was && wiimote_calibrate_middle()) settings_save();
     home_was = home;
     static const struct { uint16_t wm; int bit; } map[] = {
-        {WM_A, 0}, {WM_B, 1}, {WM_TWO, 2}, {WM_ONE, 11}, {WM_PLUS, 10},
+        {WM_A, 0}, {WM_B, 1}, {WM_PLUS, 2}, {WM_ONE, 11}, {WM_TWO, 10},
         {WM_LEFT, 12}, {WM_UP, 13}, {WM_RIGHT, 14}, {WM_DOWN, 15}};
     uint64_t b = 0;
     for (size_t i = 0; i < sizeof map / sizeof *map; i++)
