@@ -35,7 +35,7 @@ momentarily black object; later runs use the caches (`cache/` in the data folder
    It copies them in and recompiles the game for your Mac (a few minutes, once).
 3. Press **Play**.
 
-Needs: a Mac with Apple Silicon (M1 or newer) and macOS 15 or newer, and about 15 GB of free disk space.
+Needs: a Mac with Apple Silicon (M1 or newer) and macOS 15 or newer, and about 8 GB of free disk space.
 
 Everything the app writes lives in `~/Library/Application Support/io.github.primerecomp`: game files (`extracted/`),
 the game code library, saves, settings (`primerecomp.ini`), shader caches. Started from Finder the log is
@@ -56,7 +56,7 @@ The app itself holds no game code. Either set up the game files on its start scr
 the compiler, below), or recompile the game in the checkout:
 
     python3 -m venv tools/venv && tools/venv/bin/pip install capstone==5.0.9 unicorn==2.1.4 lz4==4.4.5
-    # your own game files as extracted/exefs, extracted/romfs; the start screen's setup also makes extracted/romfs.bin
+    # your own game files as extracted/exefs, extracted/romfs (the game reads romfs/ in place)
     make gen            # once: recompile the game from extracted/exefs
     make -j             # -> build/primerecomp and the game code library build/primegame.dylib
 
