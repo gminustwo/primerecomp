@@ -37,6 +37,12 @@ def _step(gen, a):
 
 PATCHES = {a: _step for a in STEP_SITES}
 
+# CPlayerMP1::GetDampedClampedVelocityWR(mgr, dt), once per tick: in the air after a jump it takes 3.5 * |v| / mass
+# off Samus' horizontal speed each call - per tick, where its other cases scale their friction by dt * 60. At 120 ticks
+# a second she slowed twice as fast, and a running jump fell 20% short (issue #12). Its `fmul s8, s0, s1` (|v| / mass
+# times 3.5) gets the same dt * 60 (runtime/hle/game.c rt_air_drag): unchanged at 60.
+PATCHES[0x7000cee3ec] = lambda gen, a: '{ extern void rt_air_drag(Cpu *); rt_air_drag(c); }'
+
 # CStateManager::BeginFrame (every gameplay frame; it also steps a running autosave): `mov x19, x0`, then the
 # runtime's debug autosave (runtime/hle/game.c rt_debug_autosave, LARECOMP_AUTOSAVE_AT) - saving tested without
 # reaching a save station.

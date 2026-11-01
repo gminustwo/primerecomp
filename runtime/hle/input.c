@@ -39,7 +39,7 @@ static _Atomic int64_t sampling;
 // Host keys / buttons held by a test script (LARECOMP_HOST_INPUT, input_frame): they go through the bindings
 static uint8_t test_keys[BIND_KEY_HOST_COUNT];
 static _Atomic uint32_t test_pad;
-static _Atomic int32_t test_lx, test_ly;  // (a resting stick's drift: "lstick" in LARECOMP_HOST_INPUT)
+static _Atomic int32_t test_lx, test_ly, test_rx, test_ry;  // (a resting stick's drift: "lstick" / "rstick" in LARECOMP_HOST_INPUT)
 static bool host_test;  // (then a real controller is left out: the player's own pad must not spoil the test)
 
 static int held_key(int sc) { return sc > 0 && sc < BIND_KEY_HOST_COUNT && (keys_down[sc] || test_keys[sc]); }
@@ -111,6 +111,33 @@ void input_mouse_frame(SDL_Window *w) {  // (the event loop, each pass)
     LOG("[input] mouse %s\n", want ? "captured (mouse aim)" : "released");
 }
 
+// A stick's dead zone (Controls tab; issue #14): the game's own is small - about 5% of full tilt - and it acts hard
+// just past it (measured: the right stick resting at 7.6% turned the view a full circle in 5 s; the left at 6.1% walked
+// Samus slowly), so a stick resting a little off its middle turned the view or walked her. Radial: within dz of the
+// middle it reads 0; past it the tilt is scaled back up from 0, so no step at its edge and full tilt stays full (with
+// the game's own on top, 5% here ignores sticks resting up to ~10% off).
+static void dead_zone(_Atomic int32_t *xa, _Atomic int32_t *ya, int32_t x, int32_t y, float dz) {
+    float fx = x / 32767.0f, fy = y / 32767.0f, m = sqrtf(fx * fx + fy * fy);
+    if (dz > 0 && m <= dz) x = y = 0;
+    else if (dz > 0) {
+        float k = (m - dz) / (1 - dz) / m;
+        x = (int32_t)lroundf(fminf(fmaxf(fx * k, -1), 1) * 32767), y = (int32_t)lroundf(fminf(fmaxf(fy * k, -1), 1) * 32767);
+    }
+    *xa = x, *ya = y;
+}
+
+// The controller's sticks as they are (the Controls tab's dead zone picture): x, y of the left then the right, -1..1
+// (y up); false with no controller
+bool input_raw_sticks(float out[4]) {
+    SDL_Gamepad *p = pad;
+    if (!p) return false;
+    out[0] = SDL_GetGamepadAxis(p, SDL_GAMEPAD_AXIS_LEFTX) / 32767.0f;
+    out[1] = -SDL_GetGamepadAxis(p, SDL_GAMEPAD_AXIS_LEFTY) / 32767.0f;
+    out[2] = SDL_GetGamepadAxis(p, SDL_GAMEPAD_AXIS_RIGHTX) / 32767.0f;
+    out[3] = -SDL_GetGamepadAxis(p, SDL_GAMEPAD_AXIS_RIGHTY) / 32767.0f;
+    return true;
+}
+
 // Controller buttons (and the triggers as buttons) -> Switch buttons through g_bind_pad; the sticks stay the sticks.
 static void recompute_pad(void) {
     uint32_t host = test_pad;
@@ -124,11 +151,15 @@ static void recompute_pad(void) {
     for (int i = 0; i < BIND_PAD_COUNT; i++)
         if (g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT && (host >> g_bind_pad[i] & 1)) b |= 1ull << i;
     pad_buttons = b;
-    if (!pad || host_test) { pad_lx = test_lx, pad_ly = test_ly, pad_rx = pad_ry = 0; return; }
-    pad_lx = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
-    pad_ly = -SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY);
-    pad_rx = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX);
-    pad_ry = -SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY);
+    if (!pad || host_test) {  // (a test's resting stick: through the dead zone as a real one)
+        dead_zone(&pad_lx, &pad_ly, test_lx, test_ly, g_settings.deadzone[0]);
+        dead_zone(&pad_rx, &pad_ry, test_rx, test_ry, g_settings.deadzone[1]);
+        return;
+    }
+    dead_zone(&pad_lx, &pad_ly, SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX), -SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY),
+              g_settings.deadzone[0]);
+    dead_zone(&pad_rx, &pad_ry, SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX), -SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY),
+              g_settings.deadzone[1]);
 }
 
 // Forget held keys (the menu took focus); the gamepad is re-read on its next event.
@@ -138,35 +169,19 @@ void input_reset(void) {
     recompute_keyboard();
 }
 
-// Rumble: the game's vibration values (hid SendVibrationValue(s), per device: the low / high band amplitudes; MPR
-// plays its rumble effects for missiles, damage and the like) drive the controller's motors, the left device the
-// left (low frequency) one and the right device the right one. The game sends values for every player: player 1's
-// (npad 0) and the handheld one's count, whichever is stronger. The game's IPC thread sets them; the event loop,
-// which owns the pad, sends them (input_rumble_pump). LARECOMP_NO_RUMBLE=1: none; scripted runs don't rumble;
-// LARECOMP_LOG_RUMBLE=1 logs the changes.
-static _Atomic uint32_t rumble_amp[2][2];  // [npad 0, handheld][left, right], 0..65535
+// Rumble: runtime/hle/rumble.c plays the game's vibration on the controller; the event loop, which owns it, pumps
+// it (here, after each event, and when it's idle). LARECOMP_NO_RUMBLE=1: none; scripted runs don't rumble.
 static bool scripted_run(void);
-void input_set_vibration(uint32_t handle, float amp_low, float amp_high) {
-    uint32_t npad = (handle >> 8) & 0xFF;
-    if (npad != 0 && npad != 0x20) return;
-    float a = fmaxf(amp_low, amp_high);
-    rumble_amp[npad != 0][handle & 1] = a > 0 ? (uint32_t)(fminf(a, 1.0f) * 65535.0f) : 0;  // (NaN: 0)
-}
+void rumble_pump(SDL_Gamepad *pad, bool off);
 void input_rumble_pump(void) {
-    static int off = -1, verbose = -1;
-    static uint32_t sent[2];
-    static uint64_t sent_ns;
+    static int off = -1;
     if (off < 0) off = (getenv("LARECOMP_NO_RUMBLE") && atoi(getenv("LARECOMP_NO_RUMBLE"))) || scripted_run();
-    if (verbose < 0) verbose = getenv("LARECOMP_LOG_RUMBLE") ? 1 : 0;
-    uint32_t l = rumble_amp[0][0] > rumble_amp[1][0] ? rumble_amp[0][0] : rumble_amp[1][0];
-    uint32_t r = rumble_amp[0][1] > rumble_amp[1][1] ? rumble_amp[0][1] : rumble_amp[1][1];
-    if (!g_settings.rumble) l = r = 0;  // (switched off in the menu: a running rumble stops)
-    uint64_t now = SDL_GetTicksNS();
-    if (l == sent[0] && r == sent[1] && (!(l | r) || now - sent_ns < 100000000ull)) return;  // (refreshed every 100 ms)
-    if (verbose && (l != sent[0] || r != sent[1])) LOG("[rumble] %u %u%s\n", l, r, pad && !off ? "" : " (not sent)");
-    if (pad && !off) SDL_RumbleGamepad(pad, (Uint16)l, (Uint16)r, 200);
-    wiimote_rumble(!off && (l > 16000 || r > 16000));  // (the remote's motor is on / off)
-    sent[0] = l, sent[1] = r, sent_ns = now;
+    rumble_pump(pad, off);
+    static float dz_was[2] = {-1, -1};  // (a dead zone changed in the menu: the sticks again, resting or not)
+    if (g_settings.deadzone[0] != dz_was[0] || g_settings.deadzone[1] != dz_was[1]) {
+        dz_was[0] = g_settings.deadzone[0], dz_was[1] = g_settings.deadzone[1];
+        recompute_pad();
+    }
 }
 
 volatile int g_debug_frame_request;  // F9: dump the next frame's passes (build/pass_*.png) + draw log
@@ -321,7 +336,8 @@ static _Atomic int32_t script_lx, script_ly, script_rx, script_ry;
 // Tests of the bindings, through them like a real player:
 // LARECOMP_HOST_INPUT="frame:key:<SDL key name>:frames,frame:pad:<button>:frames,..." holds a host key / controller
 //   button (names as in primerecomp.ini's bind_* lines: "Z", "Keypad 0", "south", "ltrigger"...);
-//   "frame:lstick:<x>/<y>:frames" holds the controller's left stick there (raw SDL units, y up: a drifting stick).
+//   "frame:lstick:<x>/<y>:frames" holds the controller's left stick there (raw SDL units, y up: a drifting stick);
+//   "rstick" the right one.
 // "frame:type:<text>" types <text> as real key events (down, text, up per character), through the overlay menu / name
 //   entry first like a player's typing; "{Escape}" (any SDL key name) presses that key. No ',' or ':' in <text>.
 // "frame:sdlpad:<button>:frames" / "frame:sdlkey:<key>:frames" hold a controller button / key as real events (down
@@ -394,7 +410,7 @@ static void host_test_frame(uint64_t frame) {
     if (hspec) {
         uint8_t keys[BIND_KEY_HOST_COUNT] = {0};
         uint32_t padm = 0;
-        int32_t sx = 0, sy = 0;
+        int32_t sx = 0, sy = 0, rx = 0, ry = 0;
         snprintf(buf, sizeof buf, "%s", hspec);
         char *save = NULL;
         for (char *tok = strtok_r(buf, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
@@ -408,6 +424,7 @@ static void host_test_frame(uint64_t frame) {
             if (frame < start || frame >= start + len) continue;
             if (!strcmp(dev, "key")) { int sc = bind_key_from_name(name); if (sc > 0 && sc < BIND_KEY_HOST_COUNT) keys[sc] = 1; }
             else if (!strcmp(dev, "lstick")) sscanf(name, "%d/%d", &sx, &sy);
+            else if (!strcmp(dev, "rstick")) sscanf(name, "%d/%d", &rx, &ry);
             else if (!strcmp(dev, "mouse")) {
                 float mx = 0, my = 0;
                 sscanf(name, "%f/%f", &mx, &my);
@@ -415,12 +432,13 @@ static void host_test_frame(uint64_t frame) {
             }
             else { int h = bind_pad_from_name(name); if (h >= 0) padm |= 1u << h; }
         }
-        bool kch = memcmp(keys, test_keys, sizeof keys) != 0, pch = padm != test_pad || sx != test_lx || sy != test_ly;
+        bool kch = memcmp(keys, test_keys, sizeof keys) != 0, pch = padm != test_pad || sx != test_lx || sy != test_ly ||
+                                                            rx != test_rx || ry != test_ry;
         for (int sc = 0; sc < BIND_KEY_HOST_COUNT; sc++)
             if (keys[sc] && !test_keys[sc]) key_menu[sc] = !game_in_play();  // (as a real key press)
         memcpy(test_keys, keys, sizeof keys);
         test_pad = padm;
-        test_lx = sx, test_ly = sy;
+        test_lx = sx, test_ly = sy, test_rx = rx, test_ry = ry;
         if (kch) recompute_keyboard();
         if (pch) recompute_pad();
     }
@@ -601,6 +619,9 @@ static void fill_state(Cpu *c) {
     int32_t ly = clamp_axis((menu ? 0 : key_ly + pad_ly + wm_ly) + script_ly);
     int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx + mouse_rx + wm_rx) + script_rx);
     int32_t ry = clamp_axis((menu ? 0 : key_ry + pad_ry + mouse_ry + wm_ry) + script_ry);
+    static long stick_log = -2;  // (debug) LARECOMP_LOG_STICKS=<n>: the sticks the game gets, every n-th read
+    if (stick_log == -2) stick_log = getenv("LARECOMP_LOG_STICKS") ? atol(getenv("LARECOMP_LOG_STICKS")) : 0;
+    if (stick_log > 0 && sampling % stick_log == 0) LOG("[input] sticks %d %d  %d %d\n", lx, ly, rx, ry);
     // stick directions also appear as buttons (bits 16-23)
     if (lx < -16000) b |= 1ull << 16;
     if (ly > 16000) b |= 1ull << 17;

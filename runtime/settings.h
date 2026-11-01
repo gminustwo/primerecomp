@@ -28,6 +28,8 @@ enum { N_HINT_WAITS = 33 };
 extern const int g_hint_waits[N_HINT_WAITS];
 int settings_hint_wait_index(int seconds);  // the offered wait nearest to it
 enum { HDR_PEAK_MIN = 400, HDR_PEAK_MAX = 4000, HDR_PAPER_MIN = 80, HDR_PAPER_MAX = 500 };  // (nits: Video tab "HDR")
+#define DEADZONE_MAX 0.30f  // (a stick's dead zone, 0..this: Controls tab)
+#define RUMBLE_STRENGTH_MAX 2.0f  // (rumble strength, 0..this = 200%: Audio tab)
 #define MOUSE_SENS_MIN 0.1f  // (mouse aim sensitivity range: Controls tab)
 #define MOUSE_SENS_MAX 10.0f
 // System language served to the game (runtime/services/am.c GetDesiredLanguage, services/hid_set.c GetLanguageCode):
@@ -50,7 +52,11 @@ typedef struct {
                          // the game's own (runtime/nvn/vulkan/textures.c vk_sampler)
     float volume;        // master volume, 1 = 100%
     bool reverb;         // room reverb effect
-    bool rumble;         // controller rumble (runtime/hle/input.c)
+    bool rumble;         // controller rumble (runtime/hle/rumble.c)
+    float rumble_strength;  // rumble: 1 = 100%, 0..RUMBLE_STRENGTH_MAX (rumble.c)
+    bool hd_rumble;      // HD rumble: the game's own vibration on a Switch Pro Controller / Joy-Con, a wired DualSense's
+                         // haptics (rumble.c); off: the plain two motors on every controller
+    float deadzone[2];   // the left / right stick's dead zone, a share of full tilt (0..DEADZONE_MAX): runtime/hle/input.c
     bool movie_audio;
     bool show_fps;
     int frame_rate;      // frames per second: 60 (the Switch's), 120 (the simulation too) or 30 (two 60 Hz steps a frame)
