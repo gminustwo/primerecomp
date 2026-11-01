@@ -15,14 +15,14 @@ CPU). Set it up once in Desktop Mode; play it from Game Mode afterwards:
    `chmod +x` in Konsole).
 2. Copy your own game files (the folder holding `exefs` and `romfs`) onto the Deck or its SD card.
 3. Start the AppImage. On the start screen pick that folder under Game files folder, then **Set up game files**. It
-   copies the game files to `~/.local/share/primerecomp` (about 15 GB on the internal drive) and recompiles the
+   copies the game files to `~/.local/share/primerecomp` (about 8 GB on the internal drive) and recompiles the
    game for the Deck; that takes several minutes. Your copied game files can be deleted afterwards.
 4. Add it to Steam: Steam (desktop) -> Games -> Add a Non-Steam Game to My Library -> Browse, set the file type to
    "All Files", pick the AppImage. It then shows up in Game Mode.
 5. In Game Mode the Deck's controls arrive as Steam's Xbox controller. Open the PrimeRecomp menu with L3+R3 (press
    both sticks) -> Controls -> Face buttons -> Xbox, so the button marked A is A.
 
-To keep those 15 GB on the SD card instead, move `~/.local/share/primerecomp` there before the setup and leave a
+To keep those 8 GB on the SD card instead, move `~/.local/share/primerecomp` there before the setup and leave a
 link in its place (`ln -s /run/media/deck/<card name>/primerecomp ~/.local/share/primerecomp`). The folder picker is a
 desktop file dialog, which is why the setup is done in Desktop Mode. The log is
 `~/.local/share/primerecomp/primerecomp.log`: attach it to bug reports.

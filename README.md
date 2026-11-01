@@ -116,7 +116,8 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 - On Windows and Linux, a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Zen or newer) and a GPU with a Vulkan
   1.3 driver (any current NVIDIA, AMD or Intel driver; on Linux, Mesa's RADV / ANV or NVIDIA's)
 - **macOS:** a Mac with Apple Silicon (M1 or newer) and macOS 15 or newer (Intel Macs aren't supported)
-- About 15 GB of free disk space (the game files are copied in, about 7 GB, plus the recompiled game)
+- About 8 GB of free disk space (the game files are copied in, about 7 GB, plus the recompiled game; less when your
+  game files are on the same drive: they're linked rather than copied where the file system allows)
 - Your own Metroid Prime Remastered v1.0.0 game files, **extracted**: a folder holding `exefs` and `romfs`
   (extract both from your own dump with your usual Switch tools)
 
@@ -180,7 +181,7 @@ your distribution's `fuse3` package. More in [docs/linux.md](docs/linux.md).
    Video tab has it and a **60 fps** preset (960 x 540 scaled up with AMD FSR 1) under "Steam Deck" (pick one there
    after updating from v0.0.2); turn on **Show FPS** to see which one holds where you play.
 
-The setup puts about 15 GB in `~/.local/share/primerecomp`; [docs/linux.md](docs/linux.md#steam-deck) shows how to
+The setup puts about 8 GB in `~/.local/share/primerecomp`; [docs/linux.md](docs/linux.md#steam-deck) shows how to
 keep it on the SD card instead.
 
 ### Updating

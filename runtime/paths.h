@@ -32,7 +32,7 @@ bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n);
 
 // The only way the app deletes game files. Removes the named entry of game_dir (an extracted/ folder) only if
 // game_dir is <data root>/extracted itself (symlinks resolved; a symlinked extracted/ is refused) and the entry is
-// one the setup creates (exefs, romfs, romfs.bin, leftover folders) and not a link. The folder the user picked
+// one the setup creates (exefs, romfs, leftover folders - romfs.bin from older versions) and not a link. The folder the user picked
 // never gets here. true = removed or not there.
 bool rt_remove_game_file(const char *game_dir, const char *name);
 // All the game files set up there (rt_remove_game_file on each, then the empty folder). Saves and settings stay.

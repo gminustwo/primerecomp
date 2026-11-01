@@ -7,8 +7,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <pthread.h>
+
 #include "../hle.h"
 #include "../ipc.h"
+#include "../romfs_build.h"
 
 #define FS_PATH_NOT_FOUND MAKE_RESULT(2, 1)
 #define FS_PATH_EXISTS MAKE_RESULT(2, 2)
@@ -16,7 +19,122 @@
 #define FS_NOT_EMPTY MAKE_RESULT(2, 8)
 
 const char *g_save_dir = "save";
-static int romfs_fd = -1;
+
+// ------------------------------------------------------------------ the base RomFS image
+// The game reads its data as one raw RomFS image. It's served from the player's romfs/ folder: the header and tables
+// laid out in memory (runtime/romfs_build.c), each file's bytes read from its own file, the gaps between files zeros -
+// no image file on disk, so the game data isn't kept twice (issues #11, #15: setup kept romfs/ and the romfs.bin built
+// from it, 6.8 GB each; as LAS Recomp has done since its Beta 5). A romfs.bin from an older version is used only
+// when the folder isn't there.
+static RomfsLayout g_base;
+static bool g_base_open;
+static int g_base_fd = -1;  // (an older version's romfs.bin)
+static pthread_mutex_t g_base_lock = PTHREAD_MUTEX_INITIALIZER;
+#define BASE_FDS 32  // files kept open (macOS allows 256 open files by default)
+static struct { int file, fd; uint64_t used; } g_base_fds[BASE_FDS];
+static uint64_t g_base_tick;
+
+static int base_file_fd(int i) {  // (g_base_lock held)
+    int slot = 0;
+    for (int k = 0; k < BASE_FDS; k++) {
+        if (g_base_fds[k].fd > 0 && g_base_fds[k].file == i) { g_base_fds[k].used = ++g_base_tick; return g_base_fds[k].fd; }
+        if (g_base_fds[k].used < g_base_fds[slot].used) slot = k;
+    }
+    if (g_base_fds[slot].fd > 0) close(g_base_fds[slot].fd);
+    int fd = open(g_base.files[i].path, O_RDONLY);
+    g_base_fds[slot].file = i, g_base_fds[slot].fd = fd > 0 ? fd : 0, g_base_fds[slot].used = ++g_base_tick;
+    return fd;
+}
+
+static uint64_t base_size(void) {
+    if (g_base_fd >= 0) {
+        struct stat sb;
+        fstat(g_base_fd, &sb);
+        return (uint64_t)sb.st_size;
+    }
+    return g_base.size;
+}
+
+// n bytes of the base image at off (past its end: zeros)
+static ssize_t base_pread(void *dst_, uint64_t n, uint64_t off) {
+    if (g_base_fd >= 0) return pread(g_base_fd, dst_, n, (off_t)off);
+    uint8_t *dst = dst_;
+    memset(dst, 0, n);
+    uint64_t end = off + n;
+    if (off < ROMFS_DATA_START) memcpy(dst, g_base.header + off, (end < ROMFS_DATA_START ? end : ROMFS_DATA_START) - off);
+    uint64_t ta = g_base.tables_off, tb = ta + g_base.tables_size;
+    if (off < tb && end > ta) {
+        uint64_t a = off > ta ? off : ta, b = end < tb ? end : tb;
+        memcpy(dst + (a - off), g_base.tables + (a - ta), b - a);
+    }
+    // the files overlapping [off, end): the first by binary search, then in order
+    int lo = 0, hi = g_base.nfiles - 1, first = g_base.nfiles;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (g_base.files[mid].start + g_base.files[mid].size > off) first = mid, hi = mid - 1;
+        else lo = mid + 1;
+    }
+    pthread_mutex_lock(&g_base_lock);
+    for (int i = first; i < g_base.nfiles && g_base.files[i].start < end; i++) {
+        const RomfsLayoutFile *f = &g_base.files[i];
+        uint64_t a = off > f->start ? off : f->start, b = end < f->start + f->size ? end : f->start + f->size;
+        if (a >= b) continue;
+        int fd = base_file_fd(i);
+        if (fd <= 0 || pread(fd, dst + (a - off), b - a, (off_t)(a - f->start)) != (ssize_t)(b - a)) {
+            pthread_mutex_unlock(&g_base_lock);
+            LOG("[fs] can't read %s\n", f->path);
+            return -1;
+        }
+    }
+    pthread_mutex_unlock(&g_base_lock);
+    return (ssize_t)n;
+}
+
+static void base_close(void) {
+    for (int k = 0; k < BASE_FDS; k++) if (g_base_fds[k].fd > 0) close(g_base_fds[k].fd);
+    memset(g_base_fds, 0, sizeof g_base_fds);
+    romfs_layout_free(&g_base);
+    if (g_base_fd >= 0) close(g_base_fd);
+    g_base_fd = -1;
+    g_base_open = false;
+}
+
+static void base_open(void) {
+    if (g_base_open) return;
+    char path[1100], why[256] = "";
+    snprintf(path, sizeof path, "%s/Worlds", g_romfs_dir);
+    struct stat sb;
+    if (stat(path, &sb) == 0 && romfs_layout(g_romfs_dir, &g_base, why, sizeof why)) {
+        LOG("[fs] romfs: %d files served from %s\n", g_base.nfiles, g_romfs_dir);
+        if (getenv("LARECOMP_ROMFS_VERIFY")) {  // (debug) the served image against a romfs.bin built before, byte for byte
+            snprintf(path, sizeof path, "%s.bin", g_romfs_dir);
+            int fd = open(path, O_RDONLY);
+            struct stat bs;
+            if (fd >= 0 && fstat(fd, &bs) == 0) {
+                const uint64_t chunk = 8 << 20;
+                uint8_t *a = malloc(chunk), *b = malloc(chunk);
+                uint64_t bad = ~0ull, n = (uint64_t)bs.st_size;
+                for (uint64_t o = 0; o < n && bad == ~0ull; o += chunk) {
+                    uint64_t k = n - o < chunk ? n - o : chunk;
+                    if (pread(fd, a, k, (off_t)o) != (ssize_t)k || base_pread(b, k, o) != (ssize_t)k) { bad = o; break; }
+                    for (uint64_t i = 0; i < k; i++) if (a[i] != b[i]) { bad = o + i; break; }
+                }
+                LOG("[fs] verify: served image %llu bytes, %s %llu bytes: %s at %llx\n", (unsigned long long)g_base.size, path,
+                    (unsigned long long)n, bad == ~0ull && n == g_base.size ? "identical" : "DIFFERENT",
+                    (unsigned long long)(bad == ~0ull ? 0 : bad));
+                free(a), free(b);
+                close(fd);
+            }
+        }
+    } else {
+        snprintf(path, sizeof path, "%s.bin", g_romfs_dir);  // (an older version's image)
+        g_base_fd = open(path, O_RDONLY);
+        if (g_base_fd < 0) FATAL("cannot read the game data in %s %s(set up the game files on the start screen)\n",
+                                 g_romfs_dir, why);
+        LOG("[fs] romfs: %s (no romfs folder)\n", path);
+    }
+    g_base_open = true;
+}
 
 // ------------------------------------------------------------------ RomFS file index (offset -> path)
 typedef struct { uint64_t start, size; char *path; int fd; const uint8_t *mem; } Overlay;
@@ -47,8 +165,7 @@ RT_ON_RESET(fs_reset) {
     ov_meta = NULL, ov_meta_off = ov_meta_size = ov_end = 0;
     npatches = 0;
     rom_files = NULL, rom_nfiles = 0, rom_data_off = 0;
-    if (romfs_fd >= 0) close(romfs_fd);
-    romfs_fd = -1;
+    base_close();
     g_save_dir = "save";
 }
 
@@ -145,7 +262,7 @@ static int64_t dir_lookup(const uint8_t *dm, uint64_t dsz, const char *path) {
     return cur;
 }
 
-static void add_new_files(int fd, const uint64_t *h, const uint8_t *dmeta, uint64_t dsz, uint64_t fsz) {
+static void add_new_files(const uint64_t *h, const uint8_t *dmeta, uint64_t dsz, uint64_t fsz) {
     const char *dir = overlay_dir();
     if (!dir) return;
     char root[1100];
@@ -162,11 +279,11 @@ static void add_new_files(int fd, const uint64_t *h, const uint8_t *dmeta, uint6
     uint64_t hoff = h[5], hsz = h[6];
     uint8_t *dcopy = malloc(dsz), *hcopy = malloc(hsz), *head = malloc(0x50);
     memcpy(dcopy, dmeta, dsz);
-    if (pread(fd, hcopy, hsz, (off_t)hoff) != (ssize_t)hsz || pread(fd, head, 0x50, 0) != 0x50) return;
+    if (base_pread(hcopy, hsz, hoff) != (ssize_t)hsz || base_pread(head, 0x50, 0) != 0x50) return;
     // the file-meta table to extend: the override-patched copy if there is one
     const uint8_t *base_meta = ov_meta;
     uint8_t *tmp = NULL;
-    if (!base_meta) { tmp = malloc(fsz); pread(fd, tmp, fsz, (off_t)h[7]); base_meta = tmp; }
+    if (!base_meta) { tmp = malloc(fsz); base_pread(tmp, fsz, h[7]); base_meta = tmp; }
     uint64_t extra = 0;
     for (int i = 0; i < n; i++) {
         const char *name = strrchr(nf[i].rel, '/');
@@ -177,11 +294,7 @@ static void add_new_files(int fd, const uint64_t *h, const uint8_t *dmeta, uint6
     uint8_t *meta = calloc(1, nsz);
     memcpy(meta, base_meta, fsz);
     free(tmp);
-    if (!ov_end) {
-        struct stat rs;
-        fstat(fd, &rs);
-        ov_end = (rs.st_size + 0xF) & ~0xFull;
-    }
+    if (!ov_end) ov_end = (base_size() + 0xF) & ~0xFull;
     uint64_t meta_at = ov_end;  // the new table first, then the new files' data
     uint64_t data_at = (meta_at + nsz + 0xF) & ~0xFull;
     uint32_t nb = (uint32_t)(hsz / 4);
@@ -231,14 +344,14 @@ static void add_new_files(int fd, const uint64_t *h, const uint8_t *dmeta, uint6
     LOG("[fs] overlay: %d new romfs files\n", added);
 }
 
-static void rom_index(int fd) {
+static void rom_index(void) {
     uint64_t h[10];
-    if (pread(fd, h, sizeof h, 0) != (ssize_t)sizeof h) return;
+    if (base_pread(h, sizeof h, 0) != (ssize_t)sizeof h) return;
     // header: size, dir hash (off,size), dir meta (off,size), file hash (off,size), file meta (off,size), data off
     uint64_t doff = h[3], dsz = h[4], foff = h[7], fsz = h[8];
     rom_data_off = h[9];
     uint8_t *dmeta = malloc(dsz), *fmeta = malloc(fsz);
-    if (pread(fd, dmeta, dsz, (off_t)doff) != (ssize_t)dsz || pread(fd, fmeta, fsz, (off_t)foff) != (ssize_t)fsz) return;
+    if (base_pread(dmeta, dsz, doff) != (ssize_t)dsz || base_pread(fmeta, fsz, foff) != (ssize_t)fsz) return;
     int cap = 4096;
     rom_files = malloc(sizeof(RomFile) * cap);
     for (uint64_t o = 0; o + 0x20 <= fsz;) {
@@ -272,9 +385,7 @@ static void rom_index(int fd) {
             memcpy(ov_meta, fmeta, fsz);
             ov_meta_off = foff;
             ov_meta_size = fsz;
-            struct stat rs;
-            fstat(fd, &rs);
-            ov_end = (rs.st_size + 0xF) & ~0xFull;
+            ov_end = (base_size() + 0xF) & ~0xFull;
         }
         uint64_t rel = ov_end - rom_data_off, size = (uint64_t)sb.st_size;
         memcpy(ov_meta + rom_files[i].meta + 8, &rel, 8);
@@ -290,7 +401,7 @@ static void rom_index(int fd) {
     }
     if (ov_n) LOG("[fs] overlay: %d romfs files replaced\n", ov_n);
     if (ov_meta) { patches[npatches++] = (Patch){ov_meta_off, ov_meta_size, ov_meta}; }
-    add_new_files(fd, h, dmeta, dsz, fsz);
+    add_new_files(h, dmeta, dsz, fsz);
     qsort(rom_files, rom_nfiles, sizeof *rom_files, rom_cmp);
     free(dmeta);
     free(fmeta);
@@ -298,8 +409,8 @@ static void rom_index(int fd) {
 }
 
 // Virtual RomFS image read: original bytes, with the patched file table and appended replacement files.
-static ssize_t romfs_read(int fd, uint8_t *dst, uint64_t size, uint64_t off) {
-    if (!ov_n) return pread(fd, dst, size, (off_t)off);
+static ssize_t romfs_read(uint8_t *dst, uint64_t size, uint64_t off) {
+    if (!ov_n) return base_pread(dst, size, off);
     uint64_t done = 0;
     while (done < size) {
         uint64_t o = off + done, n = size - done;
@@ -321,7 +432,7 @@ static ssize_t romfs_read(int fd, uint8_t *dst, uint64_t size, uint64_t off) {
             if ((uint64_t)r < n) memset(dst + done + r, 0, n - r);
         } else {
             if (o + n > ov[0].start) n = ov[0].start - o;
-            ssize_t r = pread(fd, dst + done, n, (off_t)o);
+            ssize_t r = base_pread(dst + done, n, o);
             if (r < 0) r = 0;
             if ((uint64_t)r < n) memset(dst + done + r, 0, n - r);
             // overlay the patched tables (file meta, and with added files: header, dir meta, file hash)
@@ -349,7 +460,7 @@ const char *romfs_file_at(uint64_t off) {
 }
 
 // ------------------------------------------------------------------ IStorage (raw RomFS image)
-typedef struct { int fd; uint64_t size; } Storage;
+typedef struct { uint64_t size; } Storage;
 
 static void storage(Service *s, IpcReq *req, IpcResp *resp) {
     Storage *st = s->state;
@@ -359,7 +470,7 @@ static void storage(Service *s, IpcReq *req, IpcResp *resp) {
         IpcBuf *b = out_buf(req, 0);
         if (!b) { resp->result = MAKE_RESULT(2, 6001); break; }
         if (size > b->size) size = b->size;
-        ssize_t n = romfs_read(st->fd, (uint8_t *)(uintptr_t)b->addr, size, off);
+        ssize_t n = romfs_read((uint8_t *)(uintptr_t)b->addr, size, off);
         if (n < 0) LOG("[fs] storage read failed at %llx: %s\n", off, strerror(errno));
         {
             const char *path = romfs_file_at(off);
@@ -381,18 +492,12 @@ static void storage(Service *s, IpcReq *req, IpcResp *resp) {
 }
 
 static Service *open_romfs_storage(void) {
-    if (romfs_fd < 0) {
-        char path[1024];
-        snprintf(path, sizeof path, "%s.bin", g_romfs_dir);  // extracted/romfs.bin
-        romfs_fd = open(path, O_RDONLY);
-        if (romfs_fd < 0) FATAL("cannot open %s (set up the game files on the start screen)\n", path);
-        rom_index(romfs_fd);
+    if (!g_base_open) {
+        base_open();
+        rom_index();
     }
     Storage *st = calloc(1, sizeof *st);
-    st->fd = romfs_fd;
-    struct stat sb;
-    fstat(romfs_fd, &sb);
-    st->size = sb.st_size;
+    st->size = base_size();
     return service_new("IStorage(romfs)", storage, st);
 }
 
