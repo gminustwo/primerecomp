@@ -132,12 +132,13 @@ static void set_job(const std::string &s, bool failed = false, const std::string
     pthread_mutex_unlock(&g_lock);
 }
 
-// Setup failures: a short headline and what to do next (also LARECOMP_LAUNCHER_SHOT=<f>:fail<1-6>, screenshots)
-enum { FAIL_NOT_FOUND = 1, FAIL_UNUSABLE, FAIL_COPY, FAIL_VERSION, FAIL_MISSING, FAIL_BUILD };
+// Setup failures: a short headline and what to do next (also LARECOMP_LAUNCHER_SHOT=<f>:fail<1-8>, screenshots)
+enum { FAIL_NOT_FOUND = 1, FAIL_UNUSABLE, FAIL_COPY, FAIL_VERSION, FAIL_MISSING, FAIL_BUILD, FAIL_NO_EXEFS, FAIL_NO_ROMFS };
 static void set_failure(int k) {
     static const char *const head[] = {"", "No game files found in that folder", "Those files can't be used",
                                        "Setup didn't finish", "Wrong version of the game", "Game files incomplete",
-                                       "The game code didn't build"};
+                                       "The game code didn't build", "Found the romfs, but no exefs",
+                                       "Found the exefs, but no romfs"};
     static const char *const hint[] = {
         "",
         "Choose the folder that holds the game files.",
@@ -145,8 +146,15 @@ static void set_failure(int k) {
         "Make sure there's about 16 GB free and try again.",
         "PrimeRecomp needs version 1.0.0 of the game, without updates.",
         "Some files are missing. Choose the folder again; if it happens again, copy your extracted game files again.",
-        "Make sure there's about 2 GB free and try again. If it keeps happening, report it on GitHub."};
-    if (k >= 1 && k <= 6) set_job(head[k], true, hint[k]);
+        "Make sure there's about 2 GB free and try again. If it keeps happening, report it on GitHub.",
+        // (issue #8: a romfs alone chosen, "no game files" didn't say what was missing)
+        "The game's code is in its exefs folder (main, main.npdm), extracted apart from the romfs: in Ryujinx, "
+        "right-click the game, Extract Data -> ExeFS. Put the exefs and romfs folders side by side and choose either "
+        "one, or the folder holding both.",
+        "The game's data is in its romfs folder (with Worlds inside), extracted apart from the exefs: in Ryujinx, "
+        "right-click the game, Extract Data -> RomFS. Put the exefs and romfs folders side by side and choose either "
+        "one, or the folder holding both."};
+    if (k >= 1 && k <= 8) set_job(head[k], true, hint[k]);
 }
 
 static bool is_dir(const std::string &p) {
@@ -281,7 +289,19 @@ static void *extract_thread(void *) {
     }
     set_job("Looking for the game files...");
     find_game(src, 0, exefs, romfs, unusable);
-    if (exefs.empty() || romfs.empty()) { set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND); goto done; }
+    // one of the two chosen itself (romfs/ or exefs/): the other is usually beside it (not another game's beside it)
+    if (exefs.empty() != romfs.empty()) {
+        std::string e = exefs, r = romfs;
+        bool u = false;
+        find_game(parent_dir(src), 3, e, r, u);
+        if (exefs.empty() && !e.empty() && build_id_ok(e + "/main")) exefs = e;
+        if (romfs.empty()) romfs = r;
+    }
+    if (exefs.empty() || romfs.empty()) {
+        set_failure(unusable && exefs.empty() && romfs.empty() ? FAIL_UNUSABLE : exefs.empty() && !romfs.empty() ? FAIL_NO_EXEFS :
+                    romfs.empty() && !exefs.empty() ? FAIL_NO_ROMFS : FAIL_NOT_FOUND);
+        goto done;
+    }
     if (!build_id_ok(exefs + "/main")) { set_failure(FAIL_VERSION); goto done; }
     {
         // (the picked folder can't be PrimeRecomp's own copy: setting up again deletes that first)
