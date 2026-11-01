@@ -876,7 +876,7 @@ static void bh_probe(const uint8_t *src, const LevelLayout *l, uint32_t bpb, uin
 }
 
 // (debug) LARECOMP_LOG_SLOW_UPLOADS=<ms>: uploads that took longer, with where the time went
-static long slow_ms = -1;
+static double slow_ms = -1;  // (ms; fractions too)
 static uint64_t ut0, ut_hash, ut_swz, ut_astc;
 
 // ASTC where the GPU has none (desktop, Steam Deck): the blocks go into one transient span, every level and layer, and
@@ -1071,12 +1071,12 @@ static bool mod_upload(NvnTexture *t, TexBackend *b, const uint8_t *base, bool s
 
 static void upload_texture_(NvnTexture *t, TexBackend *b);
 static void upload_texture(NvnTexture *t, TexBackend *b) {
-    if (slow_ms < 0) slow_ms = getenv("LARECOMP_LOG_SLOW_UPLOADS") ? atol(getenv("LARECOMP_LOG_SLOW_UPLOADS")) : 0;
+    if (slow_ms < 0) slow_ms = getenv("LARECOMP_LOG_SLOW_UPLOADS") ? atof(getenv("LARECOMP_LOG_SLOW_UPLOADS")) : 0;
     if (!slow_ms) { upload_texture_(t, b); return; }
     ut0 = SDL_GetTicksNS(), ut_hash = ut_swz = ut_astc = 0;
     upload_texture_(t, b);
     uint64_t dt = SDL_GetTicksNS() - ut0;
-    if (dt >= (uint64_t)slow_ms * 1000000)
+    if (dt >= slow_ms * 1e6)
         LOG("[upload] f%llu %ux%u x%u lv%u fmt %#x%s %.1f MB: %.2f ms (hash %.2f, deswizzle %.2f, astc %.2f)\n",
             (unsigned long long)vk_frame_counter(), t->width, t->height, t->layout.layers ? t->layout.layers : 1,
             t->layout.levels, t->format, b->astc_bw ? " astc" : "", tegra_total_size(&t->layout) / 1048576.0, dt / 1e6,
