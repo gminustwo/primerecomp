@@ -101,6 +101,7 @@ typedef struct TexBackend {
     VkImageAspectFlags aspect;
     bool gpu_owned, uploaded, dynamic;
     uint64_t data_hash, sample_hash, checked_frame, full_frame;
+    uint64_t hash_ticket;  // a first upload's data_hash still being worked out by a fill thread (textures.c tex_fill)
     uint32_t wgen;  // page write tracking generation at the last upload check (textures.c)
     bool scalable, presented;
     bool ui_layer;  // a full-size layer a mesh lays over a presented image (the HUD's minimap): that mesh is boxed

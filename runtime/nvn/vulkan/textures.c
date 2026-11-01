@@ -879,6 +879,104 @@ static void bh_probe(const uint8_t *src, const LevelLayout *l, uint32_t bpb, uin
 static double slow_ms = -1;  // (ms; fractions too)
 static uint64_t ut0, ut_hash, ut_swz, ut_astc;
 
+// ---- Background fills (issue #6, the hitch at doors): a texture's blocks deswizzled (or its rows copied) into its
+// transient staging span by helper threads while the render thread goes on recording. Only the GPU reads the span, by
+// the copies recorded here, once the submission goes out: vk_submit_extra waits for the fills first
+// (vk_tex_fills_wait), the render thread running queued ones itself meanwhile. Their source - the game's texture
+// memory - stays as it is until then: an NVN fence completes only with its submission. At a Phendrana door the render
+// thread deswizzled ~8 ms of the ~20 ms of a new room's first textures. Spans of 64 KB and up; smaller ones, and
+// anything read on the CPU afterwards (RGB expanded, button icons, dumps, ASTC on the CPU), inline as before.
+// LARECOMP_SYNC_FILLS=1: all inline.
+// A first upload's full hash (data_hash, ~half of a new texture's cost) goes to them too: it isn't looked at before the
+// texture's next check, a frame or more later. The job leaves it in a slot with its ticket (TexBackend.hash_ticket),
+// taken up there; no pointer to the texture, which the game may destroy meanwhile.
+typedef struct {
+    const uint8_t *src;
+    uint8_t *dst;
+    uint64_t stride;  // (linear: the source's row pitch)
+    uint32_t wb, hb, d, bpb, bhl, bdl, row;
+    bool linear;
+    uint64_t ticket, n;  // a hash job: src's n bytes hashed into hash_slot[ticket % HASH_SLOTS]
+} Fill;
+#define FILL_Q 1024
+#define FILL_THREADS 3
+#define HASH_SLOTS 4096
+static Fill fill_q[FILL_Q];
+static uint32_t fill_head, fill_tail;  // (head: the next to take; tail: the next free)
+static int fill_pending;               // queued and running
+static pthread_mutex_t fill_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t fill_cond = PTHREAD_COND_INITIALIZER, fill_done = PTHREAD_COND_INITIALIZER;
+static struct { _Atomic uint64_t ticket; uint64_t hash; } hash_slot[HASH_SLOTS];
+static uint64_t hash_tickets;  // (render thread)
+
+static void fill_run(const Fill *f) {
+    if (f->ticket) {
+        uint64_t h = hash_full(f->src, f->n);
+        hash_slot[f->ticket % HASH_SLOTS].hash = h;
+        atomic_store(&hash_slot[f->ticket % HASH_SLOTS].ticket, f->ticket);
+    } else if (f->linear)
+        for (uint32_t y = 0; y < f->hb; y++) memcpy(f->dst + (uint64_t)y * f->row, f->src + (uint64_t)y * f->stride, f->row);
+    else
+        tegra_deswizzle(f->src, f->dst, f->wb, f->hb, f->d, f->bpb, f->bhl, f->bdl);
+}
+static bool fill_take_locked(Fill *f) {  // (under fill_lock) the next queued one
+    if (fill_head == fill_tail) return false;
+    *f = fill_q[fill_head % FILL_Q];
+    fill_head++;
+    return true;
+}
+static void fill_finished_locked(void) {
+    if (--fill_pending == 0) pthread_cond_broadcast(&fill_done);
+}
+static void *fill_worker(void *a) {
+    (void)a;
+    for (;;) {
+        Fill f;
+        pthread_mutex_lock(&fill_lock);
+        while (!fill_take_locked(&f)) pthread_cond_wait(&fill_cond, &fill_lock);
+        pthread_mutex_unlock(&fill_lock);
+        fill_run(&f);
+        pthread_mutex_lock(&fill_lock);
+        fill_finished_locked();
+        pthread_mutex_unlock(&fill_lock);
+    }
+    return NULL;
+}
+static void tex_fill(const Fill *f, uint64_t bytes) {
+    static int pool = -1;
+    if (pool < 0) {
+        pool = getenv("LARECOMP_SYNC_FILLS") ? 0 : 1;
+        for (int i = 0; pool && i < FILL_THREADS; i++) { pthread_t t; pthread_create(&t, NULL, fill_worker, NULL); }
+    }
+    if (!pool || bytes < 65536) { fill_run(f); return; }
+    pthread_mutex_lock(&fill_lock);
+    if (fill_tail - fill_head == FILL_Q) {  // (full: this one inline)
+        pthread_mutex_unlock(&fill_lock);
+        fill_run(f);
+        return;
+    }
+    fill_q[fill_tail % FILL_Q] = *f;
+    fill_tail++;
+    fill_pending++;
+    pthread_cond_signal(&fill_cond);
+    pthread_mutex_unlock(&fill_lock);
+}
+void vk_tex_fills_wait(void) {
+    pthread_mutex_lock(&fill_lock);
+    while (fill_pending) {
+        Fill f;
+        if (fill_take_locked(&f)) {
+            pthread_mutex_unlock(&fill_lock);
+            fill_run(&f);
+            pthread_mutex_lock(&fill_lock);
+            fill_finished_locked();
+            continue;
+        }
+        pthread_cond_wait(&fill_done, &fill_lock);
+    }
+    pthread_mutex_unlock(&fill_lock);
+}
+
 // ASTC where the GPU has none (desktop, Steam Deck): the blocks go into one transient span, every level and layer, and
 // the compute decoder (astc_gpu.c) turns them into RGBA8 texels behind them in the span, copied into the image. The CPU
 // decoder took ~10 ms per 1024x1024 texture on the render thread: half a second at a door. False: decode on the CPU.
@@ -904,8 +1002,12 @@ static bool upload_astc_gpu(NvnTexture *t, TexBackend *b, const uint8_t *base, u
             const uint8_t *src = base + layer * layer_size + l.offset;
             uint8_t *blocks = (uint8_t *)s.ptr + in;
             uint64_t q0 = slow_ms ? SDL_GetTicksNS() : 0;
-            if (linear) for (uint32_t y = 0; y < l.hb; y++) memcpy(blocks + (uint64_t)y * l.wb * 16, src + (uint64_t)y * t->stride, l.wb * 16);
-            else tegra_deswizzle(src, blocks, l.wb, l.hb, 1, 16, l.block_height_log2, l.block_depth_log2);
+            static int check = -1;  // (LARECOMP_ASTC_CHECK reads the blocks here: inline then)
+            if (check < 0) check = getenv("LARECOMP_ASTC_CHECK") != NULL;
+            Fill f = {.src = src, .dst = blocks, .stride = t->stride, .wb = l.wb, .hb = l.hb, .d = 1, .bpb = 16,
+                      .bhl = l.block_height_log2, .bdl = l.block_depth_log2, .row = l.wb * 16, .linear = linear};
+            if (check) fill_run(&f);
+            else tex_fill(&f, (uint64_t)l.wb * l.hb * 16);
             if (slow_ms) ut_swz += SDL_GetTicksNS() - q0;
             vk_astc_gpu_check_note(blocks, l.w, l.h, bw, bh, b->astc_srgb);  // (LARECOMP_ASTC_CHECK)
             vk_astc_gpu_dispatch(cb, in, out, l.w, l.h, bw, bh, b->astc_srgb);
@@ -1145,6 +1247,13 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
     if (t->flags & 0x10) b->dynamic = true;
     if (full_hash_budget_frame != frame) { full_hash_budget_frame = frame; full_hash_budget = 4 << 20; }
     const uint8_t *mem = (const uint8_t *)(uintptr_t)t->addr;
+    if (b->hash_ticket) {  // (the first upload's hash, worked out by a fill thread - done: vk_tex_fills_wait came since)
+        uint64_t tk = b->hash_ticket, *slot_t = (uint64_t *)&hash_slot[tk % HASH_SLOTS].ticket;
+        uint64_t t1 = atomic_load((_Atomic uint64_t *)slot_t), h = hash_slot[tk % HASH_SLOTS].hash;
+        b->hash_ticket = 0;
+        if (t1 == tk && atomic_load((_Atomic uint64_t *)slot_t) == tk) b->data_hash = h;
+        else b->uploaded = false;  // (its slot taken since, 4096 uploads on: uploaded again, as new)
+    }
     static int always_full = -1;
     if (always_full < 0) always_full = getenv("LARECOMP_TEX_FULLHASH") ? 1 : 0;
     bool full = b->dynamic || !b->uploaded || always_full;
@@ -1173,6 +1282,17 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
         if (sh == b->sample_hash) return;
     }
     prof_tex_full++; prof_tex_full_bytes += total; if (b->dynamic) prof_tex_dyn++;
+    if (!b->uploaded && !b->dynamic && total >= 65536) {  // a first upload: its hash by a fill thread (tex_fill)
+        Fill f = {.src = mem, .ticket = ++hash_tickets, .n = total};
+        if (!f.ticket) f.ticket = ++hash_tickets;
+        b->hash_ticket = f.ticket;
+        tex_fill(&f, total);
+        b->full_frame = frame;
+        b->sample_hash = fnv_sample(mem, total);
+        b->data_hash = 0;
+        b->uploaded = true;
+        goto upload;
+    }
     if (slow_ms) ut_hash = SDL_GetTicksNS();
     uint64_t h = hash_full(mem, total);
     if (slow_ms) ut_hash = SDL_GetTicksNS() - ut_hash;
@@ -1225,10 +1345,11 @@ upload:
             uint8_t *lin = expand ? malloc(sz) : s.ptr;
             const uint8_t *src = base + layer * layer_size + l.offset;
             uint64_t q0 = slow_ms ? SDL_GetTicksNS() : 0;
-            if (linear) {
-                for (uint32_t y = 0; y < l.hb; y++) memcpy(lin + (uint64_t)y * row, src + (uint64_t)y * t->stride, row);
-            } else {
-                tegra_deswizzle(src, lin, l.wb, l.hb, l.d, fi->bpb, l.block_height_log2, l.block_depth_log2);
+            {
+                Fill f = {.src = src, .dst = lin, .stride = t->stride, .wb = l.wb, .hb = l.hb, .d = l.d, .bpb = fi->bpb,
+                          .bhl = l.block_height_log2, .bdl = l.block_depth_log2, .row = row, .linear = linear};
+                if (expand || dumping) fill_run(&f);  // (read below: RGB expanded, dumped)
+                else tex_fill(&f, sz);                // (the button icons' check reads only 36 x 36: filled inline)
             }
             if (slow_ms) ut_swz += SDL_GetTicksNS() - q0;
             if (dumping && lv == 0 && layer == 0) dump_small_tex(b->data_hash, l.w, l.h, t->format, lin, sz);
