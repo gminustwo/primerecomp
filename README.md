@@ -38,7 +38,10 @@ PC, with Vulkan for the graphics. No emulator runs.
   adjustable field of view
 - 30, 60 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
 - Steam Deck presets
-- Gyro aiming with controllers that have one, rumble
+- Gyro aiming with controllers that have one
+- Rumble with a strength setting, and HD rumble: the game's own two-tone vibration, as a Switch plays it, on a
+  Switch Pro Controller or a single Joy-Con, and on a DualSense's haptics over USB (F1 menu, Audio tab)
+- Stick dead zones, with a picture of where each stick rests (F1 menu, Controls tab)
 - The game's button prompts drawn for your controller - Xbox, PlayStation, Switch, keyboard and mouse or Wii Remote,
   following your bindings - in the game's own style (F1 menu, Controls tab: Button icons; Auto follows what you used
   last)
@@ -291,6 +294,11 @@ screen.
 - [Ryujinx](https://github.com/Ryujinx/Ryujinx) (MIT) - PrimeRecomp's audio effects (reverb, I3DL2 reverb, delay,
   aux, splitters) are ported from Ryujinx's audio renderer, and some shader instruction decoding follows its decoders
 - [envytools](https://github.com/envytools/envytools) - NVIDIA GPU documentation used for the shader translator
+- [Nintendo_Switch_Reverse_Engineering](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering) by
+  dekuNukem - the Switch controllers' HD rumble format;
+  [JoyShockLibrary-plus-HDRumble](https://github.com/MIZUSHIKI/JoyShockLibrary-plus-HDRumble) by MIZUSHIKI - how
+  vibration values become those packets; [RenHDrum](https://github.com/trzz1214/RenHDrum) by trzz1214 - the
+  DualSense's haptics played through its audio channels
 - [Switchbrew](https://switchbrew.org) and the Switch homebrew and emulation communities' documentation
 
 ### Libraries and tools

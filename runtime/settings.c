@@ -24,6 +24,9 @@ Settings g_settings = {
     .volume = 1.0f,
     .reverb = true,
     .rumble = true,
+    .rumble_strength = 1.0f,
+    .hd_rumble = true,
+    .deadzone = {0.05f, 0.05f},
     .movie_audio = true,
     .show_fps = false,
     .frame_rate = 60,
@@ -169,6 +172,10 @@ void settings_load(void) {
         else if (!strcmp(key, "volume")) g_settings.volume = (float)atof(val);
         else if (!strcmp(key, "reverb")) g_settings.reverb = atoi(val) != 0;
         else if (!strcmp(key, "rumble")) g_settings.rumble = atoi(val) != 0;
+        else if (!strcmp(key, "rumble_strength")) g_settings.rumble_strength = (float)atof(val);
+        else if (!strcmp(key, "hd_rumble")) g_settings.hd_rumble = atoi(val) != 0;
+        else if (!strcmp(key, "deadzone_left")) g_settings.deadzone[0] = (float)atof(val);
+        else if (!strcmp(key, "deadzone_right")) g_settings.deadzone[1] = (float)atof(val);
         else if (!strcmp(key, "movie_audio")) g_settings.movie_audio = atoi(val) != 0;
         else if (!strcmp(key, "show_fps")) g_settings.show_fps = atoi(val) != 0;
         else if (!strcmp(key, "frame_rate")) {
@@ -232,6 +239,12 @@ void settings_load(void) {
     if (!tip_key) g_settings.menu_tip_seen = true;  // (a settings file from before the note: not a first launch)
     if (g_settings.volume < 0) g_settings.volume = 0;
     if (g_settings.volume > 2) g_settings.volume = 2;
+    if (!(g_settings.rumble_strength >= 0)) g_settings.rumble_strength = 0;  // (NaN too)
+    if (g_settings.rumble_strength > RUMBLE_STRENGTH_MAX) g_settings.rumble_strength = RUMBLE_STRENGTH_MAX;
+    for (int i = 0; i < 2; i++) {
+        if (!(g_settings.deadzone[i] >= 0)) g_settings.deadzone[i] = 0;
+        if (g_settings.deadzone[i] > DEADZONE_MAX) g_settings.deadzone[i] = DEADZONE_MAX;
+    }
     if (!(g_settings.mouse_sens >= MOUSE_SENS_MIN)) g_settings.mouse_sens = MOUSE_SENS_MIN;  // (NaN too)
     if (g_settings.mouse_sens > MOUSE_SENS_MAX) g_settings.mouse_sens = MOUSE_SENS_MAX;
     if (!(g_settings.wiimote_area >= 0.2f)) g_settings.wiimote_area = 0.2f;  // (NaN too)
@@ -256,7 +269,9 @@ void settings_save(void) {
     fprintf(f, "fullscreen = %d\n", g_settings.fullscreen);
     fprintf(f, "volume = %.2f\n", g_settings.volume);
     fprintf(f, "reverb = %d\n", g_settings.reverb);
-    fprintf(f, "rumble = %d\n", g_settings.rumble);
+    fprintf(f, "rumble = %d\nrumble_strength = %.2f\nhd_rumble = %d\n", g_settings.rumble, g_settings.rumble_strength,
+            g_settings.hd_rumble);
+    fprintf(f, "deadzone_left = %.2f\ndeadzone_right = %.2f\n", g_settings.deadzone[0], g_settings.deadzone[1]);
     fprintf(f, "movie_audio = %d\n", g_settings.movie_audio);
     fprintf(f, "show_fps = %d\n", g_settings.show_fps);
     fprintf(f, "frame_rate = %d\n", g_settings.frame_rate);

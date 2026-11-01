@@ -38,6 +38,26 @@ uint32_t rt_sim_step_bits(int negative) {
     return negative ? b | 0x80000000u : b;
 }
 
+// CPlayerMP1::GetDampedClampedVelocityWR's air drag (tools/patches.py, 0x7000cee3ec `fmul s8, s0, s1`): s0 = Samus'
+// horizontal speed / her mass, s1 = 3.5 - the speed she loses this tick in the air after a jump, which the game takes
+// per tick. Times the tick's share of 1/60 s, as the function's other friction is (dt * 60): at 120 she slowed twice
+// as fast as at 60 and running jumps fell short - 9.8 units instead of 12.2 (issue #12). Exactly the game's at 60.
+void rt_air_drag(Cpu *c) {
+    float a, b, r;
+    uint32_t ab = (uint32_t)c->v[0], bb = (uint32_t)c->v[1], sb = rt_sim_step_bits(0);
+    memcpy(&a, &ab, 4);
+    memcpy(&b, &bb, 4);
+    r = a * b;
+    if (sb != 0x3c888889u) {  // (not 1/60: the 120 fps step)
+        float step;
+        memcpy(&step, &sb, 4);
+        r *= step * 60.0f;
+    }
+    uint32_t rb;
+    memcpy(&rb, &r, 4);
+    c->v[8] = (__uint128_t)rb;
+}
+
 // CGameArchitectureSupport::Update: each frame adds the elapsed time it measured (at most one tick) to an
 // accumulator and runs a simulation tick per full tick in it. (debug) LARECOMP_TICK_LOG=<from frame>:<frames>: per
 // frame, that elapsed time and the passes of its tick loop the frame before ("[tick]").

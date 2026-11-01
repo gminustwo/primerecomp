@@ -36,17 +36,21 @@ SERVICE("hid", hid) {
     case 101: OUT(uint32_t, 0) = 0x1F; resp_size(resp, 4); break;  // GetSupportedNpadStyleSet
     case 121: OUT(int64_t, 0) = 0; resp_size(resp, 8); break;      // GetNpadJoyHoldType
     case 129: OUT(int64_t, 0) = 0; resp_size(resp, 8); break;      // GetNpadHandheldActivationMode
-    case 201: {  // SendVibrationValue(handle, {amp low, freq low, amp high, freq high}, aruid) -> the controller's motors
-        extern void input_set_vibration(uint32_t handle, float amp_low, float amp_high);
-        if (req->data_size >= 20) input_set_vibration(IN(uint32_t, 0), IN(float, 4), IN(float, 12));
+    case 201: {  // SendVibrationValue(handle, {amp low, freq low, amp high, freq high}, aruid) -> the controller
+        extern void input_set_vibration(uint32_t handle, const float v[4]);  // runtime/hle/rumble.c
+        if (req->data_size >= 20) {
+            float v[4] = {IN(float, 4), IN(float, 8), IN(float, 12), IN(float, 16)};
+            input_set_vibration(IN(uint32_t, 0), v);
+        }
         break;
     }
     case 206: {  // SendVibrationValues(aruid; handles[], values[])
-        extern void input_set_vibration(uint32_t handle, float amp_low, float amp_high);
+        extern void input_set_vibration(uint32_t handle, const float v[4]);
         IpcBuf *h = in_buf(req, 0), *v = in_buf(req, 1);
         for (uint64_t i = 0; h && v && i < h->size / 4 && i < v->size / 16; i++) {
-            const float *f = (const float *)(uintptr_t)(v->addr + i * 16);
-            input_set_vibration(((const uint32_t *)(uintptr_t)h->addr)[i], f[0], f[2]);
+            float f[4];
+            memcpy(f, (const void *)(uintptr_t)(v->addr + i * 16), sizeof f);
+            input_set_vibration(((const uint32_t *)(uintptr_t)h->addr)[i], f);
         }
         break;
     }

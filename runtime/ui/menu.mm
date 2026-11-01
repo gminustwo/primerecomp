@@ -761,6 +761,8 @@ static void tab_cheats(void) {
     opt_end();
 }
 
+extern "C" const char *rumble_output_name(void);  // runtime/hle/rumble.c
+
 static void tab_audio(void) {
     opt_begin("##audio", ImGui::GetFontSize() / 34);
     opt_section("Sound");
@@ -774,6 +776,23 @@ static void tab_audio(void) {
     // still mutes Metroid Prime's movies, the game over one among them)
     opt_section("Controller");
     opt_toggle("Rumble", &g_settings.rumble, true, "The game's rumble on the controller (missiles, damage...).");
+    float rs = roundf(g_settings.rumble_strength * 100);
+    if (!g_settings.rumble) opt_disable_next();
+    if (opt_slider("Rumble strength", &rs, 0, RUMBLE_STRENGTH_MAX * 100, 10, 100, "%g%%",
+                   "How strongly the controller rumbles. 100% is the game's own strength (on a controller with two "
+                   "motors - Xbox, DualShock - the game's gentle rumbles are boosted to be felt); up to 200%."))
+        g_settings.rumble_strength = rs / 100.0f;
+    const char *now = rumble_output_name();
+    char hd[900];
+    snprintf(hd, sizeof hd,
+             "The game's own rumble, as a Switch plays it - two tones at the frequencies the game asks for, from soft "
+             "taps to heavy thuds - on a controller that can play it: a Nintendo Switch Pro Controller or a single "
+             "Joy-Con, or a DualSense connected by USB (its haptics, as PS5 games use them). Others - Xbox, "
+             "DualShock 4, a DualSense on Bluetooth, Joy-Con pairs, Steam Input - rumble with their two motors either "
+             "way. Off: two-motor rumble on every controller.\n\nYour controller now: %s.",
+             now ? now : "none connected");
+    if (!g_settings.rumble) opt_disable_next();
+    opt_toggle("HD rumble", &g_settings.hd_rumble, true, hd);
     opt_end();
 }
 
@@ -881,6 +900,51 @@ static void wiimote_section(void) {
          "reach the screen's edges; the game's own Aim Sensitivity sets how fast the view turns.");
 }
 
+// The controller's sticks: each one's dead zone (runtime/hle/input.c dead_zone), with a picture of where the stick is
+// - full tilt the ring, the dead zone the shaded middle, the dot lit once it's past it.
+extern "C" bool input_raw_sticks(float out[4]);
+static void sticks_section(void) {
+    float k = ImGui::GetFontSize() / 34;
+    float raw[4];
+    bool have = input_raw_sticks(raw);
+    static const char *const names[2] = {"Left stick dead zone", "Right stick dead zone"};
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    for (int i = 0; i < 2; i++) {
+        if (i) ImGui::SameLine(0, 48 * k);
+        ImGui::BeginGroup();
+        float r = 52 * k, dz = g_settings.deadzone[i];
+        ImVec2 o = ImGui::GetCursorScreenPos(), c(o.x + r, o.y + r);
+        dl->AddCircleFilled(c, r, IM_COL32(8, 12, 20, 255));
+        dl->AddCircle(c, r, theme::u32(theme::text_dim), 0, 1.5f * k);
+        if (dz > 0) dl->AddCircleFilled(c, fmaxf(r * dz, 2 * k), IM_COL32(70, 84, 108, 255));
+        float m = 0;
+        if (have) {
+            float x = raw[2 * i], y = raw[2 * i + 1];
+            m = sqrtf(x * x + y * y);
+            float s = m > 1 ? 1 / m : 1;  // (a square stick's corners: drawn on the ring)
+            dl->AddCircleFilled(ImVec2(c.x + x * s * r, c.y - y * s * r), 5 * k,
+                                m > dz ? theme::u32(theme::accent) : theme::u32(theme::text_dim));
+        }
+        ImGui::Dummy(ImVec2(2 * r, 2 * r));
+        ImGui::SameLine(0, 16 * k);
+        ImGui::BeginGroup();
+        ImGui::TextUnformatted(names[i]);
+        float pct = roundf(dz * 100);
+        char id[16];
+        snprintf(id, sizeof id, "##dz%d", i);
+        ImGui::SetNextItemWidth(220 * k);
+        if (ImGui::SliderFloat(id, &pct, 0, DEADZONE_MAX * 100, "%.0f%%")) g_settings.deadzone[i] = roundf(pct) / 100;
+        if (ImGui::IsItemDeactivatedAfterEdit()) settings_save();
+        if (have) ImGui::TextColored(theme::text_dim, "Stick at %.0f%%", fminf(m, 1) * 100);
+        else ImGui::TextColored(theme::text_dim, "No controller");
+        ImGui::EndGroup();
+        ImGui::EndGroup();
+    }
+    hint("A stick inside its dead zone counts as let go: one that rests a little off its middle - most do - no longer "
+         "walks Samus or turns the view. Past it the stick counts up from zero, so full tilt is still full. 5% to start "
+         "with; raise it if the dot stays lit with the stick let go, lower it if small moves are lost.");
+}
+
 static void tab_about(void) {
     header("System language");
     {
@@ -915,6 +979,9 @@ static void tab_about(void) {
     hint("The mouse turns Samus and aims up and down directly, as in a PC shooter (the game's Dual Stick control "
          "scheme). It's captured while you play and let go in menus. In the Morph Ball and while locked on it works "
          "the camera stick instead. Sensitivity 1: 0.044 degrees per mouse count.");
+    ImGui::Spacing();
+    header("Controller sticks");
+    sticks_section();
     ImGui::Spacing();
     header("Wii Remote");
     wiimote_section();
