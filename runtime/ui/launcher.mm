@@ -47,6 +47,8 @@ bool vk_imgui_backend_init(void);
 void vk_imgui_backend_shutdown(void);
 uint64_t vk_imgui_texture_rgba(const void *rgba, int w, int h);
 void vk_imgui_texture_update(uint64_t id, const void *rgba, int w, int h);
+void vk_preload_start(void);  // runtime/nvn/vulkan/exec.c: Video > Pre-load shaders
+bool vk_preload_progress(int *done, int *total);
 }
 
 static const uint8_t BUILD_ID[8] = {0x67, 0xc9, 0xca, 0x14, 0x28, 0x22, 0x27, 0x52};  // Metroid Prime Remastered v1.0.0 main
@@ -757,6 +759,36 @@ static void prelaunch_tab(float sc) {
     ImGui::PopTextWrapPos();
 }
 
+// Everything dimmed, a panel in front: a title, a progress bar (f: 0..1), a line under it and notes under that
+static void progress_panel(ImVec2 ds, float sc, const char *title, const char *line, const char *const *notes, int nnotes,
+                           float f) {
+    ImDrawList *fg = ImGui::GetForegroundDrawList();
+    ImVec2 o = ImGui::GetMainViewport()->Pos;
+    fg->AddRectFilled(o, ImVec2(o.x + ds.x, o.y + ds.y), IM_COL32(0, 0, 0, 170));
+    float tfs = g_font_menu->FontSize * 0.75f, sfs = g_font_small->FontSize * 0.85f;
+    ImVec2 ts = g_font_menu->CalcTextSizeA(tfs, FLT_MAX, 0, title);
+    float line_h = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, "A").y;
+    float pw = fminf(ds.x * 0.6f, 900 * sc), bar_y = 36 * sc + ts.y + 30 * sc;
+    for (int i = 0; i < nnotes; i++)  // (wide enough for its text, within the window)
+        pw = fmaxf(pw, g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, notes[i]).x + 96 * sc);
+    pw = fminf(fmaxf(pw, ts.x + 96 * sc), ds.x - 32 * sc);
+    float ph = bar_y + 24 * sc + 26 * sc + line_h + (nnotes ? 14 * sc + nnotes * line_h : 0) + 40 * sc;
+    ImVec2 a(o.x + (ds.x - pw) * 0.5f, o.y + (ds.y - ph) * 0.5f), b(a.x + pw, a.y + ph);
+    fg->AddRectFilled(a, b, theme::u32(theme::panel, 0.98f), 14 * sc);
+    fg->AddRect(a, b, theme::u32(theme::accent, 0.55f), 14 * sc, 0, 1.5f * sc);
+    fg->AddText(g_font_menu, tfs, ImVec2((a.x + b.x - ts.x) * 0.5f, a.y + 36 * sc), theme::u32(theme::heading), title);
+    ImVec2 ba(a.x + 48 * sc, a.y + bar_y), bb(b.x - 48 * sc, a.y + bar_y + 24 * sc);
+    fg->AddRectFilled(ba, bb, IM_COL32(255, 255, 255, 25), 12 * sc);
+    if (f > 0) fg->AddRectFilled(ba, ImVec2(ba.x + (bb.x - ba.x) * fminf(f, 1), bb.y), theme::u32(theme::accent), 12 * sc);
+    ImVec2 ls = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, line);
+    fg->AddText(g_font_small, sfs, ImVec2((a.x + b.x - ls.x) * 0.5f, bb.y + 26 * sc), theme::u32(theme::text), line);
+    for (int i = 0; i < nnotes; i++) {
+        ImVec2 ns = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, notes[i]);
+        fg->AddText(g_font_small, sfs, ImVec2((a.x + b.x - ns.x) * 0.5f, bb.y + 26 * sc + (i + 1) * line_h + 14 * sc),
+                    theme::u32(theme::text_dim), notes[i]);
+    }
+}
+
 extern "C" void launcher_run(const char *root) {
     g_root = root;
     g_start_screen = 1;
@@ -819,10 +851,14 @@ extern "C" void launcher_run(const char *root) {
         if (pg && !strcmp(pg + 1, "delete")) page = SETUP, g_confirm_delete = true;
         if (pg && !strcmp(pg + 1, "tip")) g_settings.menu_tip_seen = false, g_tip_test = true;
     }
+    // PLAY chosen while the shader pre-load runs (Video > Pre-load shaders): its progress until it's done, then the game
+    bool wait_shaders = false;
+    bool wait_test = shot_at && strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":shaders");  // (test: that panel)
 
     static int runs;  // (test: =once - only the first time, so a "Quit to Start Screen" reboot lands here)
     const char *ap = getenv("LARECOMP_LAUNCHER_AUTOPLAY");
-    if (ap && status.empty() && !(runs && !strcmp(ap, "once"))) play = true;  // (test: PLAY at once)
+    // (test: PLAY at once - in the first frame, so it waits for a shader pre-load as PLAY does)
+    bool autoplay = ap && status.empty() && !(runs && !strcmp(ap, "once"));
     runs++;
     // an update (game files there, the game code not built for this version) or an earlier copy found: set up by itself
     bool auto_setup = (check_copied_files(g_root).empty() && !status.empty()) || !g_earlier.empty();
@@ -851,6 +887,7 @@ extern "C" void launcher_run(const char *root) {
     }
     while (!play) {
         menu_apply_window_requests(win);  // (the Video tab's Fullscreen)
+        vk_preload_start();  // (on from the start, or just turned on in Settings: starts now, once)
         if (g_files_deleted) {  // (Settings > Prelaunch deleted them)
             g_files_deleted = false;
             status = check_game_files(g_root);
@@ -959,6 +996,7 @@ extern "C" void launcher_run(const char *root) {
             bool typing = typed_before || ui_text_busy();
 
             if (page == MAIN) {
+                ImGui::BeginDisabled(wait_shaders);  // (waiting for the shaders: the panel in front has the input)
                 {  // the four items close together, the block anchored where QUIT always was (the gap to the status
                    // line stays)
                     ImGui::PushFont(g_font_menu);
@@ -1011,6 +1049,7 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::SetCursorPosX(x0);
                 if (menu_item("QUIT", true)) exit(0);
                 g_menu_gap = 0.35f;
+                ImGui::EndDisabled();
             } else if (page == SETTINGS) {
                 // the in-game menu's tabs (runtime/ui/menu.mm), in a window like the in-game one; tabs that need a
                 // loaded game say so
@@ -1204,9 +1243,6 @@ extern "C" void launcher_run(const char *root) {
                 }
                 static bool test_busy = getenv("LARECOMP_LAUNCHER_SHOT") && strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":extracting");
                 if (busy || test_busy) {  // extracting: everything dimmed, a progress bar in front (input waits)
-                    ImDrawList *fg = ImGui::GetForegroundDrawList();
-                    ImVec2 o = ImGui::GetMainViewport()->Pos;
-                    fg->AddRectFilled(o, ImVec2(o.x + ds.x, o.y + ds.y), IM_COL32(0, 0, 0, 170));
                     float f = test_busy ? 0.42f : extract_progress();
                     // (while the game code is built: what's happening, on whose files - runtime/gamebuild.c)
                     bool recompiling = g_build_frac >= 0;
@@ -1217,32 +1253,10 @@ extern "C" void launcher_run(const char *root) {
                         !recompiling ? "From your earlier copy of PrimeRecomp, which stays as it is."
                         : kind == SETUP_NEW ? "This only needs to be done once and may take a while."
                                             : "Once for this version; it may take a while. Your game files and saves stay."};
-                    int nnotes = recompiling || kind == SETUP_EARLIER ? 1 : 0;
-                    float tfs = g_font_menu->FontSize * 0.75f, sfs = g_font_small->FontSize * 0.85f;
-                    ImVec2 ts = g_font_menu->CalcTextSizeA(tfs, FLT_MAX, 0, title);
-                    float line_h = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, "A").y;
-                    float pw = fminf(ds.x * 0.6f, 900 * sc), bar_y = 36 * sc + ts.y + 30 * sc;
-                    for (int i = 0; i < nnotes; i++)  // (wide enough for its text, within the window)
-                        pw = fmaxf(pw, g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, notes[i]).x + 96 * sc);
-                    pw = fminf(fmaxf(pw, ts.x + 96 * sc), ds.x - 32 * sc);
-                    float ph = bar_y + 24 * sc + 26 * sc + line_h + (nnotes ? 14 * sc + nnotes * line_h : 0) + 40 * sc;
-                    ImVec2 a(o.x + (ds.x - pw) * 0.5f, o.y + (ds.y - ph) * 0.5f), b(a.x + pw, a.y + ph);
-                    fg->AddRectFilled(a, b, theme::u32(theme::panel, 0.98f), 14 * sc);
-                    fg->AddRect(a, b, theme::u32(theme::accent, 0.55f), 14 * sc, 0, 1.5f * sc);
-                    fg->AddText(g_font_menu, tfs, ImVec2((a.x + b.x - ts.x) * 0.5f, a.y + 36 * sc), theme::u32(theme::heading), title);
-                    ImVec2 ba(a.x + 48 * sc, a.y + bar_y), bb(b.x - 48 * sc, a.y + bar_y + 24 * sc);
-                    fg->AddRectFilled(ba, bb, IM_COL32(255, 255, 255, 25), 12 * sc);
-                    if (f > 0) fg->AddRectFilled(ba, ImVec2(ba.x + (bb.x - ba.x) * f, bb.y), theme::u32(theme::accent), 12 * sc);
                     char line[200];
                     snprintf(line, sizeof line, "%s   %d%%", test_busy ? "Setting up the game files..." : job.c_str(),
                              (int)(f * 100));
-                    ImVec2 ls = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, line);
-                    fg->AddText(g_font_small, sfs, ImVec2((a.x + b.x - ls.x) * 0.5f, bb.y + 26 * sc), theme::u32(theme::text), line);
-                    for (int i = 0; i < nnotes; i++) {
-                        ImVec2 ns = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, notes[i]);
-                        fg->AddText(g_font_small, sfs, ImVec2((a.x + b.x - ns.x) * 0.5f, bb.y + 26 * sc + (i + 1) * line_h + 14 * sc),
-                                    theme::u32(theme::text_dim), notes[i]);
-                    }
+                    progress_panel(ds, sc, title, line, notes, recompiling || kind == SETUP_EARLIER ? 1 : 0, f);
                 }
             }
 
@@ -1294,6 +1308,26 @@ extern "C" void launcher_run(const char *root) {
             ImGui::PopStyleColor();
             osk_draw(g_font_menu, s * 0.7f);  // (a text field activated with the controller)
             typed_before = ui_text_busy();
+
+            {   // PLAY while the shader pre-load runs: wait for it (B / Esc: play now, the game takes what's ready)
+                int done = 0, total = 0;
+                bool loading = vk_preload_progress(&done, &total);
+                if (autoplay) play = true, autoplay = false;
+                if (play && loading) play = false, wait_shaders = true;
+                if (wait_shaders && !loading) play = true, wait_shaders = false;
+                if (wait_shaders && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+                                     ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
+                    play = true, wait_shaders = false;
+                if (wait_shaders || wait_test) {
+                    if (wait_test) done = 1234, total = 2900;
+                    char line[160];
+                    if (total) snprintf(line, sizeof line, "%d of %d   %d%%", done, total, (int)(100.0 * done / total));
+                    else snprintf(line, sizeof line, "Reading the shader record...");
+                    const char *notes[] = {"Everything you've seen before, so it won't pop in when you see it again.",
+                                           "B / Esc: play now - the rest loads while you play."};
+                    progress_panel(ds, ds.y / 1080.0f, "Loading shaders", line, notes, 2, total ? (float)done / total : 0);
+                }
+            }
 
             ImGui::Render();
             ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), (VkCommandBuffer)vk_frame_cmd());

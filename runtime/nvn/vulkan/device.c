@@ -5,6 +5,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,13 @@ VkG g_vk;
 static SDL_Window *window;
 static atomic_bool ui_ready;
 static VkDebugUtilsMessengerEXT messenger;
+static size_t pc_saved_size;  // the pipeline cache's size as loaded / last saved (vk_pipeline_cache_save)
+// exec.c: the shader record and pre-load
+extern _Atomic uint64_t vk_last_build_ns;  // when a pipeline was last built (0: none yet)
+extern atomic_bool vk_save_soon;           // pc_saver saves at its next look (the pre-load has finished)
+void vk_shader_record_init(void);
+void vk_preload_start(void);
+void vk_preload_exit(void);
 
 // ================================================================== instance / device
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cb(VkDebugUtilsMessageSeverityFlagBitsEXT sev, VkDebugUtilsMessageTypeFlagsEXT type,
@@ -307,22 +315,58 @@ static void create_device(void) {
         VK_CHECK(vkCreatePipelineCache(g_vk.dev, &pc, NULL, &g_vk.pcache));
     }
     free(data);
+    size_t now = 0;  // (what a save would write now: unchanged, nothing to save)
+    if (vkGetPipelineCacheData(g_vk.dev, g_vk.pcache, &now, NULL) == VK_SUCCESS) pc_saved_size = now;
 }
 
+// The driver's pipeline cache to cache/vk_pipelines.bin, when it has grown since it was loaded or last saved. Called
+// at exit and by pc_saver (any thread: one save at a time).
 void vk_pipeline_cache_save(void) {
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_lock(&lock);
     size_t sz = 0;
-    if (vkGetPipelineCacheData(g_vk.dev, g_vk.pcache, &sz, NULL) != VK_SUCCESS || !sz) return;
+    if (vkGetPipelineCacheData(g_vk.dev, g_vk.pcache, &sz, NULL) != VK_SUCCESS || !sz || sz == pc_saved_size) {
+        pthread_mutex_unlock(&lock);
+        return;
+    }
     void *data = malloc(sz);
     if (vkGetPipelineCacheData(g_vk.dev, g_vk.pcache, &sz, data) == VK_SUCCESS) {
         mkdir("cache", 0755);
         FILE *f = fopen("cache/vk_pipelines.bin.tmp", "wb");
         if (f) {
             bool ok = fwrite(data, 1, sz, f) == sz;
-            fclose(f);
-            if (ok) { remove("cache/vk_pipelines.bin"); rename("cache/vk_pipelines.bin.tmp", "cache/vk_pipelines.bin"); }
+            ok = fclose(f) == 0 && ok;
+            if (ok && plat_replace_file("cache/vk_pipelines.bin.tmp", "cache/vk_pipelines.bin")) {
+                LOG("[vk] pipeline cache saved: %.1f MB (was %.1f)\n", sz / 1048576.0, pc_saved_size / 1048576.0);
+                pc_saved_size = sz;
+            }
         }
     }
     free(data);
+    pthread_mutex_unlock(&lock);
+}
+
+// Saving only at exit lost a whole session's pipelines to a crash, a killed process or a power cut (the SPIR-V cache
+// and the shader record are written as they go, but the driver's step had to be done again). This thread saves the
+// pipeline cache once the builds have gone quiet: five minutes after the last save at the earliest and 3 s after the
+// last build (an area's are all in one save, not half of them), or after fifteen minutes whatever is building; and
+// when the shader pre-load is done. Each save writes the whole cache (tens of MB: not more often), off the game's
+// threads, and only when it has grown.
+static void *pc_saver(void *arg) {
+    (void)arg;
+    plat_thread_background();
+    uint64_t last = plat_now_ns();
+    const uint64_t s = 1000000000ull;
+    for (;;) {
+        plat_sleep_until_ns(plat_now_ns() + 2 * s);
+        uint64_t now = plat_now_ns(), built = atomic_load(&vk_last_build_ns);
+        bool quiet = built && now - built > 3 * s;
+        if (atomic_exchange(&vk_save_soon, false) || (now - last > 300 * s && quiet) || now - last > 900 * s) {
+            vk_pipeline_cache_save();
+            last = now;
+        }
+    }
+    return NULL;
 }
 
 // ================================================================== swapchain
@@ -850,6 +894,7 @@ static void quick_exit_handler(void) {
         vkDeviceWaitIdle(g_vk.dev);
         if (trace) LOG("[vk] exit: saving the pipeline cache\n");
         vk_pipeline_cache_save();
+        vk_preload_exit();
     }
     if (trace) LOG("[vk] exit: terminating\n");
     fflush(stdout);
@@ -902,6 +947,11 @@ void ui_window_init(void) {
     vk_exec_init();
     vk_shaders_init();
     vk_astc_gpu_selftest();  // (LARECOMP_ASTC_SELFTEST only)
+    pthread_t t;
+    pthread_create(&t, NULL, pc_saver, NULL);
+    pthread_detach(t);
+    vk_shader_record_init();
+    vk_preload_start();  // (Video > Pre-load shaders: while the start screen is up)
 }
 
 SDL_Window *ui_window(void) { return window; }

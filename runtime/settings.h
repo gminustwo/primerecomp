@@ -56,6 +56,8 @@ typedef struct {
     int frame_rate;      // frames per second: 60 (the Switch's), 120 (the simulation too) or 30 (two 60 Hz steps a frame)
                          // (runtime/hle/game.c); LARECOMP_FPS overrides it
     bool vsync;          // no tearing (runtime/nvn/vulkan/device.c present_mode)
+    bool preload_shaders;  // the start screen builds every shader recorded so far before PLAY (runtime/nvn/vulkan/exec.c
+                           // vk_preload_start): nothing seen before pops in when it's first drawn in a session
     bool hdr;            // HDR output when the display takes it (runtime/nvn/vulkan/hdr.c): the game's highlights
                          // past paper white, up to hdr_peak
     int hdr_peak;        // HDR: the display's peak brightness, nits (HDR_PEAK_MIN..MAX)

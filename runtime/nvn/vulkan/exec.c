@@ -722,6 +722,7 @@ static VkSpan guest_copy(uint64_t addr, uint64_t size) {
 // LARECOMP_SYNC_SHADERS=1 builds on first use, blocking (deterministic tests).
 typedef struct Job { void (*fn)(void *); void *arg; struct Job *next; } Job;
 static Job *jobs_head, *jobs_tail;
+static Job *low_head, *low_tail;  // (run_job_low: taken when there's nothing else - the shader pre-load's pipelines)
 static pthread_mutex_t jobs_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t jobs_cond = PTHREAD_COND_INITIALIZER;
 
@@ -730,10 +731,11 @@ static void *worker(void *a) {
     plat_thread_background();  // (the game's threads first: builds run beside them, draws skip what isn't ready)
     for (;;) {
         pthread_mutex_lock(&jobs_lock);
-        while (!jobs_head) pthread_cond_wait(&jobs_cond, &jobs_lock);
-        Job *j = jobs_head;
-        jobs_head = j->next;
-        if (!jobs_head) jobs_tail = NULL;
+        while (!jobs_head && !low_head) pthread_cond_wait(&jobs_cond, &jobs_lock);
+        Job **head = jobs_head ? &jobs_head : &low_head, **tail = jobs_head ? &jobs_tail : &low_tail;
+        Job *j = *head;
+        *head = j->next;
+        if (!*head) *tail = NULL;
         pthread_mutex_unlock(&jobs_lock);
         j->fn(j->arg);
         free(j);
@@ -782,27 +784,31 @@ static void run_translate(void (*fn)(void *), void *arg) {
     pthread_mutex_unlock(&tjobs_lock);
 }
 
-static void run_job(void (*fn)(void *), void *arg) {
+static void workers_start(void) {
+    // first entry into an area builds dozens of pipelines at once: use most of the CPU (draws wait for them).
+    // LARECOMP_COMPILE_THREADS=<n>: that many (tests: a Steam Deck's 4 on a bigger CPU)
+    int n = SDL_GetNumLogicalCPUCores() - 4;
+    if (n < 4) n = 4;
+    if (n > 16) n = 16;
+    if (getenv("LARECOMP_COMPILE_THREADS") && atoi(getenv("LARECOMP_COMPILE_THREADS")) > 0) n = atoi(getenv("LARECOMP_COMPILE_THREADS"));
+    for (int i = 0; i < n; i++) { pthread_t t; pthread_create(&t, NULL, worker, NULL); }
+}
+
+static void run_job_(void (*fn)(void *), void *arg, bool low) {
     if (sync_shaders()) { fn(arg); return; }
-    static bool started;
-    if (!started) {
-        started = true;
-        // first entry into an area builds dozens of pipelines at once: use most of the CPU (draws wait for them).
-        // LARECOMP_COMPILE_THREADS=<n>: that many (tests: a Steam Deck's 4 on a bigger CPU)
-        int n = SDL_GetNumLogicalCPUCores() - 4;
-        if (n < 4) n = 4;
-        if (n > 16) n = 16;
-        if (getenv("LARECOMP_COMPILE_THREADS") && atoi(getenv("LARECOMP_COMPILE_THREADS")) > 0) n = atoi(getenv("LARECOMP_COMPILE_THREADS"));
-        for (int i = 0; i < n; i++) { pthread_t t; pthread_create(&t, NULL, worker, NULL); }
-    }
+    static pthread_once_t once = PTHREAD_ONCE_INIT;  // (jobs come from several threads: the render thread, the
+    pthread_once(&once, workers_start);              //  translator, the pre-load, the workers themselves)
     Job *j = malloc(sizeof *j);
     j->fn = fn; j->arg = arg; j->next = NULL;
+    Job **head = low ? &low_head : &jobs_head, **tail = low ? &low_tail : &jobs_tail;
     pthread_mutex_lock(&jobs_lock);
-    if (jobs_tail) jobs_tail->next = j; else jobs_head = j;
-    jobs_tail = j;
+    if (*tail) (*tail)->next = j; else *head = j;
+    *tail = j;
     pthread_cond_signal(&jobs_cond);
     pthread_mutex_unlock(&jobs_lock);
 }
+static void run_job(void (*fn)(void *), void *arg) { run_job_(fn, arg, false); }
+static void run_job_low(void (*fn)(void *), void *arg) { run_job_(fn, arg, true); }
 
 // ================================================================== state
 typedef struct {
@@ -1401,7 +1407,12 @@ typedef struct {
     _Atomic int state;  // 0 building, 1 ready, 2 failed
     VsSim *vsim;         // the vertex shader run on the CPU (cpu_vs_init; render thread), if it is a simple one
     int8_t vsim_state;   // 0 not tried, 1 built, 2 not a simple shader
+    uint64_t ckey;            // its translation inputs' hash (shader record below; 0: none)
+    struct ProgIn *in;        // those inputs, copied, until the shader record has them (record_program)
+    struct PreProg *pre;      // a pre-loaded program (vk_preload_start): its recorded pipelines come with it
 } Prog;
+static void record_program(Prog *p, bool ok);
+static void preload_compiled(Prog *p, bool ok);
 
 static VkPipelineLayout make_layout(Prog *p, int nsets, VkShaderStageFlags s0, VkShaderStageFlags s1) {
     p->set_layout[0] = vk_set_layout(p->binds, p->nbinds, 0, s0);
@@ -1466,7 +1477,13 @@ static void compile_program(void *arg) {
     uint32_t *sv = vk_glsl_to_spirv(p->vi->msl, STAGE_VERTEX, "vs", &nv);
     uint32_t *sf = sv ? vk_glsl_to_spirv(p->fi->msl, STAGE_FRAGMENT, "fs", &nf) : NULL;
     uint32_t *sg = sf && p->has_gs ? vk_glsl_to_spirv(p->gi->msl, STAGE_GEOMETRY, "gs", &ng) : NULL;
-    if (!sv || !sf || (p->has_gs && !sg)) { free(sv); free(sf); free(sg); atomic_store(&p->state, 2); return; }
+    if (!sv || !sf || (p->has_gs && !sg)) {
+        free(sv); free(sf); free(sg);
+        record_program(p, false);
+        if (p->pre) preload_compiled(p, false);
+        atomic_store(&p->state, 2);
+        return;
+    }
     p->nbinds = vk_reflect(sv, nv, p->binds, MAX_BIND);
     p->nbinds += vk_reflect(sf, nf, p->binds + p->nbinds, MAX_BIND - p->nbinds);
     if (sg) p->nbinds += vk_reflect(sg, ng, p->binds + p->nbinds, MAX_BIND - p->nbinds);
@@ -1478,7 +1495,10 @@ static void compile_program(void *arg) {
     free(sg);
     p->layout = make_layout(p, p->has_gs || p->gs_emul ? 3 : 2, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
     atomic_fetch_add(&stat_compiles, 1);
-    atomic_store(&p->state, p->vs && p->fs && (!p->has_gs || p->gs) ? 1 : 2);
+    bool ok = p->vs && p->fs && (!p->has_gs || p->gs);
+    record_program(p, ok);  // (before it's ready: a pipeline's record comes after its program's)
+    if (p->pre) preload_compiled(p, ok);  // (before too: pipelines it won't build are let go before get_program takes it)
+    atomic_store(&p->state, ok ? 1 : 2);
 }
 
 // (debug) LARECOMP_DUMP_FAILED_SHADERS: the code of a stage the translator rejects -> build/shaders/<addr>_s<stage>.bin
@@ -1559,12 +1579,14 @@ static void translate_program(void *arg) {
     if (!p->vi->msl) {
         LOG("[shader] VS translate failed: %s (code %llx)\n", p->vi->error, (unsigned long long)p->code[0]);
         dump_failed_shader(p->code[0], p->cmax[0], 0);
+        record_program(p, false);
         atomic_store(&p->state, 2);
         return;
     }
     if (!p->fi->msl) {
         LOG("[shader] FS translate failed: %s (code %llx)\n", p->fi->error, (unsigned long long)p->code[1]);
         dump_failed_shader(p->code[1], p->cmax[1], 1);
+        record_program(p, false);
         atomic_store(&p->state, 2);
         return;
     }
@@ -1578,6 +1600,202 @@ static void translate_program(void *arg) {
     save_glsl(p->fi->msl, p->code[1], "fs");
     if (p->has_gs) save_glsl(p->gi->msl, p->code[2], "gs");
     run_job(compile_program, p);
+}
+
+// ================================================================== shader record (cache/shaders.bin)
+// What every graphics program translated here was made from - each stage's code as far as the translator reads it
+// (maxwell_code_size), the shader keys - and every pipeline built for one (its PipeKey), appended the first time
+// each is built, whatever the setting. Video > Pre-load shaders replays it on the start screen (vk_preload_start):
+// all of it translated, compiled and built before PLAY, and get_program takes the pre-loaded program whenever the
+// game's has the same code and keys - the same inputs give the same translation - with its pipelines. So nothing
+// seen in an earlier session is skipped while it builds (pop-in) the first time it's drawn in this one. The record
+// keeps the inputs, not the results: an update that translates differently builds the new translations then.
+// LARECOMP_NO_SHADER_RECORD=1: no record, no pre-load.
+#define REC_PATH "cache/shaders.bin"
+#define REC_BAD_PATH "cache/shaders.bad.bin"
+#define REC_MARKER "cache/preload.running"  // (there at start: the last pre-load never finished)
+#define REC_MAGIC 0x31435250u               // "PRC1"
+#define REC_VERSION 1                       // (+1 when a record's meaning changes; its layout is checked by size)
+enum { REC_PROG = 'P', REC_PIPE = 'L' };
+typedef struct { uint32_t magic, version, key_size, pipe_size; } RecFileHdr;
+typedef struct { uint32_t type, size; uint64_t sum; } RecHdr;  // then `size` bytes; sum: their hash
+typedef struct {  // a program's record, then its stages' code (len[i] bytes each)
+    uint64_t ckey;
+    ShaderKey vkey, fkey;  // as get_program made them (before translation changes any)
+    uint8_t gs, emul, gs_in, nstages;  // a translated / vertex-run geometry shader (stage 2), its input class
+    uint32_t len[3];
+} RecProg;
+
+typedef struct ProgIn {  // a program's translation inputs
+    RecProg r;
+    const uint8_t *code[3];  // [0, r.len[i]): the game's code (get_program), or copies
+    bool owned;              // code[] are copies (free them)
+} ProgIn;
+
+static uint64_t hash_words(uint64_t h, const void *p, size_t n);
+
+// inputs (and their hash) of the program get_program is making; ckey 0: a stage too short to translate (not kept)
+static void prog_inputs(ProgIn *in, const uint64_t code[3], const uint64_t cmax[3], const ShaderKey *vkey,
+                        const ShaderKey *fkey, bool gs, bool emul, int gs_in) {
+    memset(in, 0, sizeof *in);
+    in->r.vkey = *vkey;
+    in->r.fkey = *fkey;
+    in->r.gs = gs, in->r.emul = emul, in->r.gs_in = gs || emul ? (uint8_t)gs_in : 0;
+    in->r.nstages = gs || emul ? 3 : 2;
+    static const int stage[3] = {STAGE_VERTEX, STAGE_FRAGMENT, STAGE_GEOMETRY};
+    uint64_t h = hash_words(0x243F6A8885A308D3ull, &in->r.vkey, sizeof in->r.vkey);
+    h = hash_words(h, &in->r.fkey, sizeof in->r.fkey);
+    h = hash_words(h, &in->r.gs, 4);
+    for (int i = 0; i < in->r.nstages; i++) {
+        in->code[i] = (const uint8_t *)(uintptr_t)code[i];
+        size_t n = in->code[i] ? maxwell_code_size(in->code[i], cmax[i], stage[i]) : 0;
+        if (n <= 0x80) return;
+        in->r.len[i] = (uint32_t)n;
+        // (from the SPH: the 0x30-byte NVN header before it isn't read)
+        h = hash_words(h ^ n, in->code[i] + 0x30, n - 0x30);
+    }
+    in->r.ckey = h ? h : 1;
+}
+
+static bool prog_inputs_equal(const ProgIn *a, const ProgIn *b) {
+    if (a->r.ckey != b->r.ckey || memcmp(&a->r.vkey, &b->r.vkey, sizeof a->r.vkey) ||
+        memcmp(&a->r.fkey, &b->r.fkey, sizeof a->r.fkey) || memcmp(&a->r.gs, &b->r.gs, 4) ||
+        memcmp(a->r.len, b->r.len, sizeof a->r.len))
+        return false;
+    for (int i = 0; i < a->r.nstages; i++)
+        if (memcmp(a->code[i] + 0x30, b->code[i] + 0x30, a->r.len[i] - 0x30)) return false;
+    return true;
+}
+
+static ProgIn *prog_inputs_copy(const ProgIn *in) {
+    ProgIn *c = malloc(sizeof *c);
+    *c = *in;
+    c->owned = true;
+    for (int i = 0; i < in->r.nstages; i++) {
+        uint8_t *b = malloc(in->r.len[i]);  // (malloc'd: aligned for the translator's 64-bit reads)
+        memcpy(b, in->code[i], in->r.len[i]);
+        c->code[i] = b;
+    }
+    return c;
+}
+
+static void prog_inputs_free(ProgIn *in) {
+    if (!in) return;
+    if (in->owned) for (int i = 0; i < 3; i++) free((void *)in->code[i]);
+    free(in);
+}
+
+typedef struct { uint64_t *v; size_t n, cap; } U64Set;  // (0 stands for nothing: keys are never 0)
+static bool set_has(const U64Set *s, uint64_t k) {
+    if (!s->cap) return false;
+    for (size_t i = (k ^ (k >> 29)) & (s->cap - 1);; i = (i + 1) & (s->cap - 1)) {
+        if (s->v[i] == k) return true;
+        if (!s->v[i]) return false;
+    }
+}
+static void set_add(U64Set *s, uint64_t k) {
+    if (set_has(s, k)) return;
+    if ((s->n + 1) * 2 > s->cap) {
+        U64Set g = {calloc(s->cap ? s->cap * 2 : 1024, 8), 0, s->cap ? s->cap * 2 : 1024};
+        for (size_t i = 0; i < s->cap; i++) if (s->v[i]) set_add(&g, s->v[i]);
+        free(s->v);
+        *s = g;
+    }
+    size_t i = (k ^ (k >> 29)) & (s->cap - 1);
+    while (s->v[i]) i = (i + 1) & (s->cap - 1);
+    s->v[i] = k;
+    s->n++;
+}
+
+static pthread_mutex_t rec_lock = PTHREAD_MUTEX_INITIALIZER;
+static FILE *rec_file;              // the record, appended to (NULL: none - not writable, or switched off)
+static U64Set rec_progs, rec_pipes;  // what it has: program ckeys, pipeline record hashes
+
+static void rec_write(uint32_t type, const void *a, size_t na, const ProgIn *in) {  // (rec_lock held)
+    RecHdr h = {type, (uint32_t)na, hash_words(0, a, na)};
+    for (int i = 0; in && i < in->r.nstages; i++) h.size += in->r.len[i], h.sum = hash_words(h.sum, in->code[i], in->r.len[i]);
+    bool ok = fwrite(&h, sizeof h, 1, rec_file) == 1 && fwrite(a, na, 1, rec_file) == 1;
+    for (int i = 0; ok && in && i < in->r.nstages; i++) ok = fwrite(in->code[i], in->r.len[i], 1, rec_file) == 1;
+    if (!ok || fflush(rec_file)) {  // (a disk full: a cut-off record at the end, dropped at the next start)
+        LOG("[shader] can't write %s: the shader record stops here\n", REC_PATH);
+        fclose(rec_file);
+        rec_file = NULL;
+    }
+}
+
+// a program that translated and compiled: into the record (once); its copied inputs go either way
+static void record_program(Prog *p, bool ok) {
+    ProgIn *in = p->in;
+    if (!in) return;
+    p->in = NULL;
+    pthread_mutex_lock(&rec_lock);
+    if (ok && rec_file && !set_has(&rec_progs, in->r.ckey)) {
+        rec_write(REC_PROG, &in->r, sizeof in->r, in);
+        set_add(&rec_progs, in->r.ckey);
+    }
+    pthread_mutex_unlock(&rec_lock);
+    prog_inputs_free(in);
+}
+
+// not recorded yet: get_program copies the inputs. (The render thread doesn't wait for a write or the pre-load's read
+// of the record: busy, it copies them anyway - record_program skips what the record has.)
+static bool record_wants(uint64_t ckey) {
+    if (!ckey) return false;
+    if (pthread_mutex_trylock(&rec_lock)) return true;
+    bool w = rec_file && !set_has(&rec_progs, ckey);
+    pthread_mutex_unlock(&rec_lock);
+    return w;
+}
+
+// ---- pre-loaded programs (filled by preload_thread, then published: fixed from then on but for their states)
+typedef struct PreProg {
+    ProgIn in;               // its record's inputs (code: copies)
+    Prog *prog;              // translated from them, as get_program would make it
+    struct Pipe **pipes;     // its recorded pipelines, built once it compiles (preload_compiled)
+    int npipes, cap;
+    bool adopted;            // its pipelines are in pipe_tab (render thread; vk_exec_reset starts over)
+} PreProg;
+static PreProg **pre_all;  // all of them, in record order
+static int pre_n;
+static PreProg **pre_tab;  // by ckey (open addressing, pre_cap slots)
+static size_t pre_cap;
+static atomic_bool pre_published;  // pre_all / pre_tab are complete: get_program may look
+
+static PreProg *pre_lookup(uint64_t ckey) {
+    if (!pre_cap) return NULL;
+    for (size_t i = (ckey ^ (ckey >> 31)) & (pre_cap - 1); pre_tab[i]; i = (i + 1) & (pre_cap - 1))
+        if (pre_tab[i]->in.r.ckey == ckey) return pre_tab[i];
+    return NULL;
+}
+
+// The pre-loaded program with these inputs, if it's built (one still building: the game's own way - that's faster
+// than waiting for the pre-load to get to it)
+static Prog *preload_find(const ProgIn *in) {
+    if (!atomic_load(&pre_published) || !in->r.ckey) return NULL;
+    PreProg *pp = pre_lookup(in->r.ckey);
+    if (!pp || atomic_load(&pp->prog->state) != 1 || !prog_inputs_equal(&pp->in, in)) return NULL;
+    return pp->prog;
+}
+static void preload_adopt(Prog *p);
+
+// A new program's translation inputs (code: the game's addresses, or a pre-load's copies)
+static void prog_init(Prog *p, const uint64_t code[3], const uint64_t cmax[3], const ShaderKey *vkey,
+                      const ShaderKey *fkey, bool gs, bool emul, int gs_in) {
+    for (int i = 0; i < 2; i++) p->code[i] = code[i], p->cmax[i] = cmax[i];
+    p->vkey = *vkey;
+    p->fkey = *fkey;
+    if (gs || emul) {
+        p->has_gs = gs;
+        p->gs_emul = emul;
+        p->code[2] = code[2];
+        p->cmax[2] = cmax[2];
+        p->gkey.glsl = 1;
+        p->gkey.flip_y = vkey->flip_y;
+        p->gkey.x_mode = vkey->x_mode & 1;  // (no edge stretch with a geometry shader: draw_ doesn't ask for it)
+        p->gkey.depth_minus_one = vkey->depth_minus_one;
+        p->gkey.gs_in = (uint8_t)gs_in;
+        p->gkey.gs_lib = emul;
+    }
 }
 
 #define PROG_TAB 4096
@@ -1645,26 +1863,27 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey, int g
     uint32_t slot = (uint32_t)(h ^ (h >> 31)) & (PROG_TAB - 1);
     while (prog_tab[slot].key && prog_tab[slot].key != h) slot = (slot + 1) & (PROG_TAB - 1);
     if (prog_tab[slot].key) return prog_tab[slot].prog;
+    uint64_t code[3], cmax[3];
+    for (int i = 0; i < 3; i++) {
+        code[i] = i < 2 || gs || emul ? np->stages[i].code_addr : 0;
+        cmax[i] = np->stages[i].const_offset ? np->stages[i].const_offset : 0x10000;
+    }
+    ProgIn in;
+    prog_inputs(&in, code, cmax, vkey, fkey, gs, emul, gs_in);
+    Prog *pre = preload_find(&in);
+    if (pre) {  // (the same code and keys as a pre-loaded one: that one, built, with its pipelines)
+        prog_tab[slot].key = h;
+        prog_tab[slot].prog = pre;
+        preload_adopt(pre);
+        return pre;
+    }
     Prog *p = calloc(1, sizeof *p);
     prog_tab[slot].key = h;
     prog_tab[slot].prog = p;
-    for (int i = 0; i < 2; i++) {
-        p->code[i] = np->stages[i].code_addr;
-        p->cmax[i] = np->stages[i].const_offset ? np->stages[i].const_offset : 0x10000;
-    }
-    p->vkey = *vkey;
-    p->fkey = *fkey;
+    prog_init(p, code, cmax, vkey, fkey, gs, emul, gs_in);
+    p->ckey = in.r.ckey;
+    if (record_wants(in.r.ckey)) p->in = prog_inputs_copy(&in);
     if (gs || emul) {
-        p->has_gs = gs;
-        p->gs_emul = emul;
-        p->code[2] = np->stages[2].code_addr;
-        p->cmax[2] = np->stages[2].const_offset ? np->stages[2].const_offset : 0x10000;
-        p->gkey.glsl = 1;
-        p->gkey.flip_y = vkey->flip_y;
-        p->gkey.x_mode = vkey->x_mode & 1;  // (no edge stretch with a geometry shader: draw_ doesn't ask for it)
-        p->gkey.depth_minus_one = vkey->depth_minus_one;
-        p->gkey.gs_in = (uint8_t)gs_in;
-        p->gkey.gs_lib = emul;
         LOG("[vk] program vs %llx fs %llx: geometry shader %llx (input class %d) %s\n", (unsigned long long)p->code[0],
             (unsigned long long)p->code[1], (unsigned long long)p->code[2], gs_in,
             gs ? "translated" : "run by the vertex shader (no geometry shaders here)");
@@ -1884,11 +2103,23 @@ typedef struct {
     uint32_t write_mask[8];
 } PipeKey;
 
-typedef struct { PipeKey k; uint64_t hash; VkPipeline pipe; _Atomic int state; } Pipe;  // state: 0 building, 1 ready, 2 failed
-#define PIPE_TAB 8192
+typedef struct Pipe {
+    PipeKey k;
+    uint64_t hash;
+    VkPipeline pipe;
+    _Atomic int state;  // 0 building, 1 ready, 2 failed
+    bool pre;           // a pre-load's (from the shader record: not recorded again)
+} Pipe;
+// (32768: a pre-loaded program brings every pipeline recorded for it, from all sessions - 8192 could fill up)
+#define PIPE_TAB 32768
 static struct { uint64_t key; Pipe *pipe; } pipe_tab[PIPE_TAB];
+static int pipe_n;  // pipe_tab's entries
+_Atomic uint64_t vk_last_build_ns;  // when a pipeline was last built (device.c pc_saver: saves once builds go quiet)
+atomic_bool vk_save_soon;            // (device.c pc_saver: save at the next look - the pre-load is done)
+static void record_pipeline(const Pipe *pp);
 
-// 8 bytes a step (PipeKey is ~700 bytes, hashed per draw); in-memory tables only - hmix values are compared with
+// 8 bytes a step (PipeKey is ~700 bytes, hashed per draw); in-memory tables and the shader record (its keys and
+// checksums: a change here makes every record fail its check - the record starts over) - hmix values are compared with
 // stored constants (fragment-shader hashes) and must not change.
 static uint64_t hash_words(uint64_t h, const void *p, size_t n) {
     const uint8_t *b = p;
@@ -1971,7 +2202,325 @@ static void build_pipeline(void *arg) {
                           (unsigned long long)k->prog->code[1]);
     }
     atomic_fetch_add(&stat_compiles, 1);
+    atomic_store(&vk_last_build_ns, plat_now_ns());
+    if (r == VK_SUCCESS) record_pipeline(pp);
     atomic_store(&pp->state, r == VK_SUCCESS ? 1 : 2);
+}
+
+// ---- shader record: pipelines, reading it back, the pre-load
+typedef struct { uint64_t ckey; PipeKey k; } RecPipe;  // a pipeline's record (k.prog NULL)
+#define REC_PIPE_SEED 0x13198A2E03707344ull
+
+static void record_pipeline(const Pipe *pp) {
+    if (pp->pre || !pp->k.prog->ckey) return;
+    RecPipe r;
+    r.ckey = pp->k.prog->ckey;
+    memcpy(&r.k, &pp->k, sizeof r.k);  // (with its padding: draw_ zeroes it)
+    r.k.prog = NULL;
+    uint64_t h = hash_words(REC_PIPE_SEED, &r, sizeof r);
+    if (!h) h = 1;
+    pthread_mutex_lock(&rec_lock);
+    if (rec_file && !set_has(&rec_pipes, h)) {
+        rec_write(REC_PIPE, &r, sizeof r, NULL);
+        set_add(&rec_pipes, h);
+    }
+    pthread_mutex_unlock(&rec_lock);
+}
+
+static uint8_t *read_file(const char *path, size_t *n) {
+    *n = 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *b = sz > 0 ? malloc((size_t)sz) : NULL;
+    if (b) *n = fread(b, 1, (size_t)sz, f);
+    fclose(f);
+    return b;
+}
+
+// a whole, undamaged record of this build's layout
+static bool rec_valid(const RecHdr *h, const uint8_t *p) {
+    if (h->type == REC_PIPE) return h->size == sizeof(RecPipe) && h->sum == hash_words(0, p, h->size);
+    if (h->type != REC_PROG || h->size < sizeof(RecProg)) return false;
+    RecProg r;
+    memcpy(&r, p, sizeof r);
+    if ((r.nstages != 2 && r.nstages != 3) || (r.nstages == 3) != (r.gs || r.emul) || !r.ckey) return false;
+    size_t at = sizeof r;
+    uint64_t sum = hash_words(0, p, sizeof r);
+    for (int i = 0; i < r.nstages; i++) {
+        if (r.len[i] <= 0x80 || r.len[i] > 0x80 + 65536 * 8 || r.len[i] > h->size - at) return false;
+        sum = hash_words(sum, p + at, r.len[i]);
+        at += r.len[i];
+    }
+    return at == h->size && sum == h->sum;
+}
+
+// The records of a record file, each to fn; returns how much of it is good (0: none, or another layout's)
+typedef void (*RecFn)(void *ctx, uint32_t type, const uint8_t *p, uint32_t size);
+static size_t rec_parse(const uint8_t *b, size_t n, RecFn fn, void *ctx) {
+    RecFileHdr fh;
+    if (n < sizeof fh) return 0;
+    memcpy(&fh, b, sizeof fh);
+    if (fh.magic != REC_MAGIC || fh.version != REC_VERSION || fh.key_size != sizeof(ShaderKey) || fh.pipe_size != sizeof(PipeKey))
+        return 0;
+    size_t at = sizeof fh;
+    while (n - at >= sizeof(RecHdr)) {
+        RecHdr h;
+        memcpy(&h, b + at, sizeof h);
+        if (h.size > n - at - sizeof h || !rec_valid(&h, b + at + sizeof h)) break;
+        fn(ctx, h.type, b + at + sizeof h, h.size);
+        at += sizeof h + h.size;
+    }
+    return at;
+}
+
+static void rec_note(void *ctx, uint32_t type, const uint8_t *p, uint32_t size) {
+    (void)ctx;
+    uint64_t k;
+    memcpy(&k, p, 8);  // (a program's ckey)
+    if (type == REC_PROG) set_add(&rec_progs, k);
+    else { uint64_t h = hash_words(REC_PIPE_SEED, p, size); set_add(&rec_pipes, h ? h : 1); }
+}
+
+static bool rec_ready;  // vk_shader_record_init found or made the record
+
+// At start (ui_window_init): what the record has, its file opened to append to. A cut-off end (the process ended
+// in a write) is dropped, another build's layout starts a new record.
+void vk_shader_record_init(void) {
+    if (getenv("LARECOMP_NO_SHADER_RECORD")) return;
+    mkdir("cache", 0755);
+    struct stat sb;
+    if (stat(REC_MARKER, &sb) == 0) {  // (the process ended inside the last pre-load: don't do that again)
+        LOG("[shader] the last shader pre-load didn't finish: its record is put aside (%s) and a new one starts\n",
+            REC_BAD_PATH);
+        plat_replace_file(REC_PATH, REC_BAD_PATH);
+        remove(REC_MARKER);
+    }
+    size_t n;
+    uint8_t *b = read_file(REC_PATH, &n);
+    size_t good = b ? rec_parse(b, n, rec_note, NULL) : 0;
+    if (!good || good < n) {  // the good part (or a new header) again
+        if (n) LOG("[shader] shader record: %zu of its %zu bytes dropped (cut off, or another version's)\n", n - good, n);
+        FILE *f = fopen(REC_PATH ".tmp", "wb");
+        RecFileHdr fh = {REC_MAGIC, REC_VERSION, sizeof(ShaderKey), sizeof(PipeKey)};
+        bool ok = f && (good ? fwrite(b, good, 1, f) : fwrite(&fh, sizeof fh, 1, f)) == 1;
+        if (f) ok = fclose(f) == 0 && ok;
+        if (!ok || !plat_replace_file(REC_PATH ".tmp", REC_PATH)) {
+            LOG("[shader] can't write %s: no shader record\n", REC_PATH);
+            free(b);
+            return;
+        }
+    }
+    free(b);
+    rec_file = fopen(REC_PATH, "ab");
+    rec_ready = rec_file != NULL;
+    LOG("[shader] shader record: %zu programs, %zu pipelines\n", rec_progs.n, rec_pipes.n);
+}
+
+void vk_shader_record_counts(int *progs, int *pipes) {
+    pthread_mutex_lock(&rec_lock);
+    *progs = (int)rec_progs.n, *pipes = (int)rec_pipes.n;
+    pthread_mutex_unlock(&rec_lock);
+}
+
+// a recorded pipeline whose key draw_ can still make from this build's translation of its program (the vertex
+// inputs and the targets written come from the translation)
+static bool pipe_fits(const PipeKey *k, const Prog *p) {
+    if (k->attr_mask != p->vi->attr_mask) return false;
+    for (uint32_t i = 0; i < k->ncolor && i < 8; i++)
+        if (k->write_mask[i] && !((p->fi->out_mask >> (i * 4)) & 0xF)) return false;
+    return true;
+}
+
+// a pre-loaded program has compiled (ok) or failed: its pipelines are built (behind the game's own) or let go
+static void preload_compiled(Prog *p, bool ok) {
+    PreProg *pp = p->pre;
+    for (int i = 0; i < pp->npipes; i++) {
+        Pipe *q = pp->pipes[i];
+        if (ok && pipe_fits(&q->k, p)) run_job_low(build_pipeline, q);
+        else atomic_store(&q->state, 2);
+    }
+}
+
+// get_program took a pre-loaded program: its pipelines into pipe_tab (where draw_ finds them by their keys)
+static void preload_adopt(Prog *p) {
+    PreProg *pp = p->pre;
+    if (!pp || pp->adopted) return;
+    pp->adopted = true;
+    for (int i = 0; i < pp->npipes && pipe_n < PIPE_TAB * 3 / 4; i++) {
+        Pipe *q = pp->pipes[i];
+        if (atomic_load(&q->state) == 2) continue;
+        uint32_t s = (uint32_t)(q->hash ^ (q->hash >> 29)) & (PIPE_TAB - 1);
+        while (pipe_tab[s].key && pipe_tab[s].key != q->hash) s = (s + 1) & (PIPE_TAB - 1);
+        if (pipe_tab[s].key) continue;
+        pipe_tab[s].key = q->hash;
+        pipe_tab[s].pipe = q;
+        pipe_n++;
+    }
+    static int n;
+    if (n++ % 100 == 0) LOG("[shader] pre-loaded programs in use: %d\n", n);
+}
+
+static bool pipe_key_sane(const PipeKey *k) {  // (the record's own checks passed: this is belt and braces)
+    if (k->ncolor > 8 || !k->samples || k->samples > 64 || (k->samples & (k->samples - 1)) || k->topo_class > 2 ||
+        (k->used_streams >> 17))
+        return false;
+    for (int i = 0; i < 32; i++)
+        if (((k->attr_mask >> i) & 1) && k->attr_bind[i] > ZERO_BINDING) return false;
+    return true;
+}
+
+typedef struct {
+    PreProg **progs;
+    int np, capp;
+    RecPipe *pipes;
+    int nl, capl;
+} PreParse;
+static void pre_note(void *ctx, uint32_t type, const uint8_t *p, uint32_t size) {
+    (void)size;
+    PreParse *pp = ctx;
+    if (type == REC_PIPE) {
+        if (pp->nl == pp->capl) pp->pipes = realloc(pp->pipes, (pp->capl = pp->capl ? pp->capl * 2 : 1024) * sizeof *pp->pipes);
+        memcpy(&pp->pipes[pp->nl++], p, sizeof(RecPipe));
+        return;
+    }
+    PreProg *o = calloc(1, sizeof *o);
+    memcpy(&o->in.r, p, sizeof o->in.r);
+    o->in.owned = true;
+    size_t at = sizeof o->in.r;
+    for (int i = 0; i < o->in.r.nstages; i++) {
+        uint8_t *c = malloc(o->in.r.len[i]);  // (aligned)
+        memcpy(c, p + at, o->in.r.len[i]);
+        o->in.code[i] = c;
+        at += o->in.r.len[i];
+    }
+    if (pp->np == pp->capp) pp->progs = realloc(pp->progs, (pp->capp = pp->capp ? pp->capp * 2 : 256) * sizeof *pp->progs);
+    pp->progs[pp->np++] = o;
+}
+
+static atomic_bool pre_running;
+static atomic_int pre_done, pre_total;  // its steps: programs translated and compiled, pipelines built
+
+static int preload_count(void) {
+    int d = 0;
+    for (int i = 0; i < pre_n; i++) {
+        d += atomic_load(&pre_all[i]->prog->state) != 0;
+        for (int j = 0; j < pre_all[i]->npipes; j++) d += atomic_load(&pre_all[i]->pipes[j]->state) != 0;
+    }
+    return d;
+}
+
+static void *preload_thread(void *arg) {
+    (void)arg;
+    uint64_t t0 = plat_now_ns();
+    FILE *m = fopen(REC_MARKER, "wb");
+    if (m) fclose(m);
+    PreParse pp = {0};
+    pthread_mutex_lock(&rec_lock);  // (the record as it is now: appends wait for the read)
+    if (rec_file) fflush(rec_file);
+    size_t n;
+    uint8_t *b = read_file(REC_PATH, &n);
+    if (b) rec_parse(b, n, pre_note, &pp);
+    pthread_mutex_unlock(&rec_lock);
+    free(b);
+    // the programs by their inputs' hash, each as get_program would make it (its code: the record's copies)
+    for (pre_cap = 16; pre_cap < (size_t)pp.np * 2; pre_cap *= 2) {}
+    pre_tab = calloc(pre_cap, sizeof *pre_tab);
+    pre_all = malloc((pp.np ? pp.np : 1) * sizeof *pre_all);
+    for (int i = 0; i < pp.np; i++) {
+        PreProg *o = pp.progs[i];
+        if (pre_lookup(o->in.r.ckey)) {  // (recorded twice: two processes at once)
+            for (int k = 0; k < 3; k++) free((void *)o->in.code[k]);
+            free(o);
+            continue;
+        }
+        size_t s = (o->in.r.ckey ^ (o->in.r.ckey >> 31)) & (pre_cap - 1);
+        while (pre_tab[s]) s = (s + 1) & (pre_cap - 1);
+        pre_tab[s] = o;
+        pre_all[pre_n++] = o;
+        uint64_t code[3], cmax[3];
+        for (int k = 0; k < 3; k++) code[k] = (uintptr_t)o->in.code[k], cmax[k] = o->in.r.len[k];
+        Prog *t = calloc(1, sizeof *t);
+        prog_init(t, code, cmax, &o->in.r.vkey, &o->in.r.fkey, o->in.r.gs, o->in.r.emul, o->in.r.gs_in);
+        t->ckey = o->in.r.ckey;
+        t->pre = o;
+        o->prog = t;
+    }
+    free(pp.progs);
+    int npipes = 0;
+    U64Set seen = {0};
+    for (int i = 0; i < pp.nl; i++) {
+        RecPipe *r = &pp.pipes[i];
+        PreProg *o = pre_lookup(r->ckey);
+        uint64_t h = hash_words(REC_PIPE_SEED, r, sizeof *r);
+        if (!o || !pipe_key_sane(&r->k) || set_has(&seen, h ? h : 1)) continue;
+        set_add(&seen, h ? h : 1);
+        Pipe *q = calloc(1, sizeof *q);
+        memcpy(&q->k, &r->k, sizeof q->k);
+        q->k.prog = o->prog;
+        q->hash = hash_words(0xcbf29ce484222325ull, &q->k, sizeof q->k);  // (as draw_ hashes its key)
+        if (!q->hash) q->hash = 1;
+        q->pre = true;
+        if (o->npipes == o->cap) o->pipes = realloc(o->pipes, (o->cap = o->cap ? o->cap * 2 : 8) * sizeof *o->pipes);
+        o->pipes[o->npipes++] = q;
+        npipes++;
+    }
+    free(seen.v);
+    free(pp.pipes);
+    atomic_store(&pre_total, pre_n + npipes);
+    atomic_store(&pre_published, true);
+    LOG("[shader] pre-loading %d programs, %d pipelines\n", pre_n, npipes);
+    // translated here one by one (the translator isn't re-entrant), compiled and built on the workers
+    for (int i = 0; i < pre_n; i++) {
+        Prog *t = pre_all[i]->prog;
+        translate_program(t);
+        if (atomic_load(&t->state) == 2)  // (translation failed: no compile, its pipelines go too)
+            for (int j = 0; j < pre_all[i]->npipes; j++) atomic_store(&pre_all[i]->pipes[j]->state, 2);
+        if (i % 16 == 0) atomic_store(&pre_done, preload_count());
+    }
+    uint64_t t1 = plat_now_ns();
+    int d;
+    while ((d = preload_count()) < pre_n + npipes) {
+        atomic_store(&pre_done, d);
+        plat_sleep_until_ns(plat_now_ns() + 10000000);
+    }
+    atomic_store(&pre_done, d);
+    int bad_progs = 0, built = 0;
+    for (int i = 0; i < pre_n; i++) {
+        bad_progs += atomic_load(&pre_all[i]->prog->state) != 1;
+        for (int j = 0; j < pre_all[i]->npipes; j++) built += atomic_load(&pre_all[i]->pipes[j]->state) == 1;
+    }
+    LOG("[shader] pre-loaded in %.1f s (translated in %.1f s): %d programs (%d failed), %d of %d pipelines built\n",
+        (plat_now_ns() - t0) / 1e9, (t1 - t0) / 1e9, pre_n, bad_progs, built, npipes);
+    remove(REC_MARKER);
+    atomic_store(&pre_running, false);
+    atomic_store(&vk_save_soon, true);  // (device.c pc_saver: what it built into the pipeline cache's file)
+    return NULL;
+}
+
+// Video > Pre-load shaders on and not done yet in this process: start (from the start screen; or at the game's
+// start without one - then beside it, the game taking what's ready). Off with debug options that change translations.
+void vk_preload_start(void) {
+    static bool started;
+    if (started || !g_settings.preload_shaders || !rec_ready || getenv("LARECOMP_GLSL_OVERRIDE") || getenv("LARECOMP_SAVE_MSL"))
+        return;
+    started = true;
+    atomic_store(&pre_running, true);
+    pthread_t t;
+    pthread_create(&t, NULL, preload_thread, NULL);
+    pthread_detach(t);
+}
+
+// true while the pre-load runs; its steps done / all so far (0 / 0 until it has read the record)
+bool vk_preload_progress(int *done, int *total) {
+    *done = atomic_load(&pre_done), *total = atomic_load(&pre_total);
+    return atomic_load(&pre_running);
+}
+
+void vk_preload_exit(void) {  // (exit: the game closed during the pre-load - not a crash in it)
+    if (atomic_load(&pre_running)) remove(REC_MARKER);
 }
 
 // ================================================================== feedback snapshots
@@ -2831,6 +3380,8 @@ void vk_exec_reset(void) {
     rb_complete(~0ull);
     memset(prog_tab, 0, sizeof prog_tab);
     memset(pipe_tab, 0, sizeof pipe_tab);
+    pipe_n = 0;
+    for (int i = 0; atomic_load(&pre_published) && i < pre_n; i++) pre_all[i]->adopted = false;  // (kept: by content)
     g_cs_n = 0;
     gcopy_gen++;
     gmem_release();
@@ -3815,6 +4366,7 @@ static void draw_(CmdRec *r, bool indexed) {
         pp->k = k;
         pipe_tab[pslot].key = ph;
         pipe_tab[pslot].pipe = pp;
+        pipe_n++;
         run_job(build_pipeline, pp);
     }
     if (atomic_load(&pp->state) == 0 && small_targets()) wait_built(&pp->state);

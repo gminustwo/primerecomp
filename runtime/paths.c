@@ -310,6 +310,15 @@ void rt_copy_saves(const char *from, bool settings) {
     snprintf(p, sizeof p, "%s" SEP "save", from);
     if (is_dir(p) && !empty_dir(p) && empty_dir("save"))
         fprintf(stderr, "[paths] saves from %s: %s\n", from, copy_plain(p, "save") ? "copied" : "not all copied");
+    // the shaders it has seen (an update: Video > Pre-load shaders replays them from the record; the SPIR-V and the
+    // driver's pipeline cache keep what this version translates the same way from being built again)
+    static const char *const caches[] = {"cache/shaders.bin", "cache/spirv", "cache/vk_pipelines.bin"};
+    for (int i = 0; settings && i < 3; i++) {
+        snprintf(p, sizeof p, "%s" SEP "%s", from, caches[i]);
+        if (!exists(p) || exists(caches[i])) continue;
+        mkdir("cache", 0755);
+        fprintf(stderr, "[paths] %s from %s: %s\n", caches[i], from, copy_plain(p, caches[i]) ? "copied" : "not all copied");
+    }
     // (larecomp.ini: a copy from before 2026-10-25, renamed by settings_load)
     const char *ini[] = {"primerecomp.ini", "larecomp.ini"};
     if (!settings || getenv("LARECOMP_SETTINGS") || exists(ini[0]) || exists(ini[1])) return;

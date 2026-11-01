@@ -2366,6 +2366,31 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     return info;
 }
 
+// The end of the instructions: the last EXIT followed by self-branch padding, or max_size. Returns the instruction
+// count; *read: the words the scan read to find it (through the word that stopped it).
+static size_t code_end(const uint8_t *blob, size_t max_size, int stage, size_t *read) {
+    const uint8_t *code = stage == STAGE_COMPUTE ? blob : blob + 0x80;  // (compute: no NVN header, no SPH)
+    size_t n = (max_size - (code - blob)) / 8;
+    if (n > 65536) n = 65536;
+    size_t end = 0, i = 0;
+    for (; i < n; i++) {
+        uint64_t w = ((const uint64_t *)code)[i];
+        if (i % 4 == 0) continue;
+        if ((w & 0xfff0000000000000ull) == 0xe240000000000000ull && sbits(w, 20, 24) == -8 && end) break;  // bra self
+        if (w == 0 && i > 4) break;
+        end = i + 1;
+    }
+    *read = i < n ? i + 1 : n;
+    return end;
+}
+
+size_t maxwell_code_size(const uint8_t *blob, size_t max_size, int stage) {
+    size_t at = stage == STAGE_COMPUTE ? 0 : 0x80, read;
+    if (max_size <= at) return 0;
+    code_end(blob, max_size, stage, &read);
+    return at + read * 8;
+}
+
 ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, const ShaderKey *key) {
     ShaderInfo *info = calloc(1, sizeof *info);
     info->stage = stage;
@@ -2391,17 +2416,9 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         c->gs_max_verts = *(const uint32_t *)(sph + 16) & 0xFFF;
         if (!c->glsl) fail(c, "geometry shader: GLSL only");
     }
-    // find the end: the last EXIT followed by self-branch padding, or max_size
-    size_t n = (max_size - (code - blob)) / 8;
-    if (n > 65536) n = 65536;
-    size_t end = 0;
-    for (size_t i = 0; i < n; i++) {
-        uint64_t w = ((const uint64_t *)code)[i];
-        if (i % 4 == 0) continue;
-        if ((w & 0xfff0000000000000ull) == 0xe240000000000000ull && sbits(w, 20, 24) == -8 && end) break;  // bra self
-        if (w == 0 && i > 4) break;
-        end = i + 1;
-    }
+    size_t read;
+    size_t end = code_end(blob, max_size, stage, &read);
+    (void)read;
     // collect branch targets (labels)
     uint8_t *label = calloc(end + 4, 1);
     label[1] = 1;
