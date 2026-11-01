@@ -386,6 +386,7 @@ static bool choice(const char *label, int *value, const char *const *names, int 
 }
 
 extern "C" double output_scale_dynamic_factor(void);
+extern "C" void vk_shader_record_counts(int *programs, int *pipelines);  // runtime/nvn/vulkan/exec.c
 extern "C" int vk_hdr_status(void);  // runtime/nvn/vulkan/hdr.c: 0 no HDR display, 1 available, 2 on now
 extern "C" void renderer_frame_times(float out[3]);  // runtime/nvn/vulkan/exec.c (Vulkan only)
 extern "C" void output_scale_render_size(double *w, double *h);
@@ -527,6 +528,20 @@ static void tab_display(void) {
                        "distance instead of blurring. 16x is the sharpest and costs next to nothing on a recent GPU. "
                        "Game's own: the Switch's filtering.", false))
             g_settings.aniso = levels[ai];
+    }
+    {   // (runtime/nvn/vulkan/exec.c: the shader record, vk_preload_start; the start screen waits for it on PLAY)
+        int progs, pipes;
+        vk_shader_record_counts(&progs, &pipes);
+        char d[900];
+        snprintf(d, sizeof d,
+                 "Builds the shaders of everything you've already seen while the start screen is up. Without it, a "
+                 "shader is built the first time it's needed in a session, and whatever uses it is missing for a "
+                 "moment - the pop-in as you walk into a room. With it, only things you've never seen can pop in."
+                 "\n\nStarting takes a few seconds longer (more after an update) and uses more memory; the frame rate "
+                 "stays the same. From the next start screen on.\n\nRecorded so far (on or off): %d shader programs, "
+                 "%d pipelines.",
+                 progs, pipes);
+        opt_toggle("Pre-load shaders", &g_settings.preload_shaders, false, d);
     }
     // (LAS Recomp's "Remove blur" and "Hide Hero Mode icon" are gone: Link's Awakening only)
     // Steam Deck presets (settings.c settings_steam_deck_preset; a Deck's first start takes the 30 fps one)

@@ -175,6 +175,7 @@ void settings_load(void) {
             g_settings.frame_rate = r == 120 || r == 30 ? r : r == 0 ? 120 : 60;  // (0: Uncapped, gone since 2026-10-27)
         }
         else if (!strcmp(key, "vsync")) g_settings.vsync = atoi(val) != 0;
+        else if (!strcmp(key, "preload_shaders")) g_settings.preload_shaders = atoi(val) != 0;
         else if (!strcmp(key, "hdr")) g_settings.hdr = atoi(val) != 0;
         else if (!strcmp(key, "hdr_peak_nits")) g_settings.hdr_peak = atoi(val);
         else if (!strcmp(key, "hdr_paper_white_nits")) g_settings.hdr_paper = atoi(val);
@@ -257,6 +258,7 @@ void settings_save(void) {
     fprintf(f, "show_fps = %d\n", g_settings.show_fps);
     fprintf(f, "frame_rate = %d\n", g_settings.frame_rate);
     fprintf(f, "vsync = %d\n", g_settings.vsync);
+    fprintf(f, "preload_shaders = %d\n", g_settings.preload_shaders);
     fprintf(f, "hdr = %d\nhdr_peak_nits = %d\nhdr_paper_white_nits = %d\n", g_settings.hdr, g_settings.hdr_peak,
             g_settings.hdr_paper);
     fprintf(f, "fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.skippable_cutscenes,

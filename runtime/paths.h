@@ -49,7 +49,8 @@ unsigned long long rt_game_files_size(const char *game_dir);
 void rt_note_copy(void);  // this copy's game files are set up: noted first
 // The other copies' data roots, latest first (at most max). 0 elsewhere, or when this copy doesn't take part.
 int rt_earlier_copies(char (*out)[1100], int max);
-// The saves (save/) and, with settings, primerecomp.ini of the data root `from`, copied into this one where it has
+// The saves (save/) and, with settings, primerecomp.ini and the shader caches (cache/: the shader record, SPIR-V,
+// pipeline cache - before the window opens and reads them) of the data root `from`, copied into this one where it has
 // none of its own. Real copies, not links: the game writes them in place.
 void rt_copy_saves(const char *from, bool settings);
 

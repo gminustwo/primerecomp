@@ -120,6 +120,10 @@ extern const uint8_t *maxwell_dbg_vs;
 
 // code: shader binary (with the 0x50-byte SPH header for graphics stages)
 ShaderInfo *maxwell_translate(const uint8_t *code, size_t max_size, int stage, const ShaderKey *key);
+// The bytes of a graphics stage's blob from 0 that maxwell_translate reads (header, SPH, the instructions through the
+// word its end scan stops at): with the key, all a translation depends on - the same bytes give the same source,
+// translated with that as max_size too (runtime/nvn/vulkan/exec.c's shader record). 0 if max_size has no room for code.
+size_t maxwell_code_size(const uint8_t *code, size_t max_size, int stage);
 void maxwell_free(ShaderInfo *s);
 
 // vsim.c: a straight-line vertex shader (attribute loads / stores, float MOV / ADD / MUL / FMA) run on the CPU, for
