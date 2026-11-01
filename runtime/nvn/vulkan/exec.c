@@ -4157,11 +4157,41 @@ static bool small_targets(void) {
     return any;
 }
 
-static bool wait_built(_Atomic int *state) {  // (true: ready; a build that fails or takes over 5 s: skipped after all)
+// The job for `arg` (a program's translation or compile, a pipeline's build) moved to the front of its queue: the render
+// thread is waiting for it. (No-op when it isn't queued: running, done, or not queued yet.)
+static void job_to_front(Job **head, Job **tail, pthread_mutex_t *lock, void *arg) {
+    pthread_mutex_lock(lock);
+    for (Job *prev = NULL, *j = *head; j; prev = j, j = j->next) {
+        if (j->arg != arg) continue;
+        if (prev) {
+            prev->next = j->next;
+            if (*tail == j) *tail = prev;
+            j->next = *head;
+            *head = j;
+        }
+        break;
+    }
+    pthread_mutex_unlock(lock);
+}
+
+// Waiting for `job`'s build (state: its Prog's or Pipe's). It goes first in its queues - as the jobs of a new area's
+// first frames queue up (191 at a Phendrana door), a waited-for one sat behind all of them: 19 ms for the water
+// simulation's program there. The translation is bumped once; its compile job is queued only when the translation is
+// done, so the workers' queue is looked at again while waiting. (true: ready; failed or over 5 s: skipped after all)
+static bool wait_built(_Atomic int *state, void *job) {
     uint64_t t0 = plat_now_ns();
-    while (atomic_load(state) == 0 && plat_now_ns() - t0 < 5000000000ull) plat_sleep_until_ns(plat_now_ns() + 250000);
+    if (atomic_load(state) == 0) job_to_front(&tjobs_head, &tjobs_tail, &tjobs_lock, job);
+    for (int n = 0; atomic_load(state) == 0 && plat_now_ns() - t0 < 5000000000ull; n++) {
+        if (n % 4 == 0) job_to_front(&jobs_head, &jobs_tail, &jobs_lock, job);
+        plat_sleep_until_ns(plat_now_ns() + 250000);
+    }
     extern __thread uint64_t g_blocked_ns;
     g_blocked_ns += plat_now_ns() - t0;
+    static int log = -1;  // (debug) LARECOMP_LOG_WAITS=1: waits over a millisecond
+    if (log < 0) log = getenv("LARECOMP_LOG_WAITS") != NULL;
+    if (log && plat_now_ns() - t0 > 1000000)
+        LOG("[wait] frame %llu: %.1f ms for a build (small target %ux%u)\n", (unsigned long long)renderer_present_count(),
+            (plat_now_ns() - t0) / 1e6, st.rt.color[0] ? st.rt.color[0]->width : 0, st.rt.color[0] ? st.rt.color[0]->height : 0);
     return atomic_load(state) == 1;
 }
 
@@ -4189,7 +4219,7 @@ static void draw_(CmdRec *r, bool indexed) {
     uint8_t cls0;
     topology((uint32_t)r->x[0], &topo0, &cls0);
     Prog *pr = get_program(st.program, &vkey, &fkey, cls0);
-    if (pr && atomic_load(&pr->state) == 0 && small_targets()) wait_built(&pr->state);
+    if (pr && atomic_load(&pr->state) == 0 && small_targets()) wait_built(&pr->state, pr);
     if (!pr || atomic_load(&pr->state) != 1) {
         if (g_debug_frame)
             LOG("[draw] SKIPPED (program %s) mode %llu count %llu prog vs=%llx fs=%llx | rt %d %p\n",
@@ -4373,7 +4403,7 @@ static void draw_(CmdRec *r, bool indexed) {
         pipe_n++;
         run_job(build_pipeline, pp);
     }
-    if (atomic_load(&pp->state) == 0 && small_targets()) wait_built(&pp->state);
+    if (atomic_load(&pp->state) == 0 && small_targets()) wait_built(&pp->state, pp);
     if (atomic_load(&pp->state) != 1) {
         free(hud_split.idx);
         free(hud_split.inst_side);
