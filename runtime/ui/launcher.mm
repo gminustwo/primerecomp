@@ -210,10 +210,19 @@ static float extract_progress(void) {
     return f < 0 ? 0 : f > 0.99f ? 0.99f : f;
 }
 
-// Builds the game code from the copied files (a few minutes); false = failed (the job line says so)
+// Builds the game code from the copied files (a few minutes); false = failed (the job line says so).
+// Compiles at once: half the logical cores (about one per physical core; at most 16), a GB of RAM each with 2 left
+// over. Not one per logical core: every core at full load for minutes is what brings down a PC with an unstable CPU
+// (2026-10-31, an i9-14900K on a 2023 BIOS: 32 compiles, corrected machine-check errors all through, then a fatal one
+// and a reboot, twice), and the PC stays usable meanwhile. LARECOMP_BUILD_JOBS=<n> sets it.
 static bool build_game_code(void) {
     int cores = SDL_GetNumLogicalCPUCores(), ram_gb = SDL_GetSystemRAM() / 1024;
-    GameBuildOpts o = {build_progress, cores < ram_gb - 2 ? cores : ram_gb - 2 > 1 ? ram_gb - 2 : 1};
+    int jobs = cores / 2;
+    if (jobs > 16) jobs = 16;
+    if (jobs > ram_gb - 2) jobs = ram_gb - 2;
+    if (const char *e = getenv("LARECOMP_BUILD_JOBS")) jobs = atoi(e);
+    if (jobs < 1) jobs = 1;
+    GameBuildOpts o = {build_progress, jobs};
     char why[256] = "";
     g_build_frac = 0;
     bool ok = gamebuild_run(g_root.c_str(), &o, why, sizeof why);
