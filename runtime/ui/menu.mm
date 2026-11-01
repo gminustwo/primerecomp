@@ -603,6 +603,16 @@ static void tab_gameplay(void) {
                               "a 16:9 screen.", g_settings.fov, across);
         if (opt_slider("Field of view", &fov, FOV_MIN, FOV_MAX, 1, FOV_GAME, "%g", d)) g_settings.fov = (int)lroundf(fov);
     }
+    {
+        float wfov = (float)g_settings.weapon_fov;
+        char d[400];
+        snprintf(d, sizeof d, "The arm cannon is drawn as at this field of view, whatever the view's: at 55, the game's "
+                              "own, it keeps its size and place on screen when you widen the view (with the view's, a "
+                              "wide view shrinks it towards the middle). Its shots and effects go with it. Set it to "
+                              "the field of view above (now %d) to have it widen with the view.", g_settings.fov);
+        if (opt_slider("Weapon field of view", &wfov, FOV_MIN, FOV_MAX, 1, FOV_GAME, "%g", d))
+            g_settings.weapon_fov = (int)lroundf(wfov);
+    }
     opt_section("Motion");
     {
         char d[700];
@@ -982,6 +992,15 @@ static void tab_about(void) {
     ImGui::Spacing();
     header("Controller sticks");
     sticks_section();
+    {
+        bool flick = g_settings.flick_stick;
+        if (ImGui::Checkbox("Flick stick", &flick)) { g_settings.flick_stick = flick; settings_save(); }
+        hint("Push the right stick all the way out and Samus turns to face that way at once: up is ahead, right a "
+             "quarter turn right, down behind you. Keep it out and turn it round, and she turns with it. Let it back "
+             "in to stop. Look up and down with the gyro (the game's Hybrid or Pointer controls, Gameplay tab) or "
+             "the mouse; the right stick no longer does. In the Morph Ball and while locked on the stick works as "
+             "before.");
+    }
     ImGui::Spacing();
     header("Wii Remote");
     wiimote_section();

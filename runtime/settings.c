@@ -38,6 +38,7 @@ Settings g_settings = {
     .upscaler = UPSCALE_FSR1,
     .res_lines = 2160,
     .fov = FOV_GAME,
+    .weapon_fov = FOV_GAME,
     .gyro = true,
     .aniso = 16,
     .mouse_aim = true,
@@ -158,10 +159,12 @@ void settings_load(void) {
     }
     char line[256];
     bool tip_key = false;
-    while (fgets(line, sizeof line, f)) {
+    for (bool first = true; fgets(line, sizeof line, f); first = false) {
         char key[64];
         char val[128] = "";
-        if (sscanf(line, " %63[^= ] = %127[^\n]", key, val) < 1) continue;
+        // (a file saved by an editor as "UTF-8 with BOM": the mark hid the first line's key)
+        const char *p = first && !memcmp(line, "\xEF\xBB\xBF", 3) ? line + 3 : line;
+        if (sscanf(p, " %63[^= ] = %127[^\n]", key, val) < 1) continue;
         // (a hand-edited file's Windows line ends: the file is read as bytes, "original\r" didn't match "original")
         for (size_t n = strnlen(val, sizeof val); n && (val[n - 1] == '\r' || val[n - 1] == ' '); n--) val[n - 1] = 0;
         // (keys only Link's Awakening had - cheats, randomizer, cosmetics... - fall through to the bindings, unread)
@@ -190,6 +193,8 @@ void settings_load(void) {
         else if (!strcmp(key, "hdr_peak_nits")) g_settings.hdr_peak = atoi(val);
         else if (!strcmp(key, "hdr_paper_white_nits")) g_settings.hdr_paper = atoi(val);
         else if (!strcmp(key, "fov")) g_settings.fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
+        else if (!strcmp(key, "weapon_fov"))
+            g_settings.weapon_fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
         else if (!strcmp(key, "skippable_cutscenes")) g_settings.skippable_cutscenes = atoi(val) != 0;
         else if (!strcmp(key, "hint_on_l3")) g_settings.hint_on_l3 = atoi(val) != 0;
         else if (!strcmp(key, "hint_seconds")) g_settings.hint_seconds = g_hint_waits[settings_hint_wait_index(atoi(val))];
@@ -206,6 +211,7 @@ void settings_load(void) {
         else if (!strcmp(key, "mouse_aim")) g_settings.mouse_aim = atoi(val) != 0;
         else if (!strcmp(key, "mouse_sens")) g_settings.mouse_sens = (float)atof(val);
         else if (!strcmp(key, "mouse_invert")) g_settings.mouse_invert = atoi(val) != 0;
+        else if (!strcmp(key, "flick_stick")) g_settings.flick_stick = atoi(val) != 0;
         else if (!strcmp(key, "steam_controller_direct")) g_settings.steam_controller_direct = atoi(val) != 0;
         else if (!strcmp(key, "resolution")) {  // match / dynamic / 75% / 50% / 25% / <lines>p / 4k / 8k (LAS: 1x-8x)
             int n = atoi(val);
@@ -280,10 +286,11 @@ void settings_save(void) {
     fprintf(f, "texture_mods = %d\ndump_textures = %d\n", g_settings.texture_mods, g_settings.dump_textures);
     fprintf(f, "hdr = %d\nhdr_peak_nits = %d\nhdr_paper_white_nits = %d\n", g_settings.hdr, g_settings.hdr_peak,
             g_settings.hdr_paper);
-    fprintf(f, "fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.skippable_cutscenes,
-            g_settings.gyro);
+    fprintf(f, "fov = %d\nweapon_fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.weapon_fov,
+            g_settings.skippable_cutscenes, g_settings.gyro);
     fprintf(f, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
             g_settings.mouse_invert);
+    fprintf(f, "flick_stick = %d\n", g_settings.flick_stick);
     fprintf(f, "hint_seconds = %d\nhint_on_l3 = %d\ninfinite_energy = %d\ninfinite_missiles = %d\ninfinite_power_bombs = %d\n",
             g_settings.hint_seconds, g_settings.hint_on_l3, g_settings.inf_energy, g_settings.inf_missiles,
             g_settings.inf_power_bombs);

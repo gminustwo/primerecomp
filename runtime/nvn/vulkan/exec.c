@@ -4489,11 +4489,31 @@ static void draw_(CmdRec *r, bool indexed) {
         // (edge stretch: the viewport is the whole target, the vertex shader puts the box in its middle; fragments
         // and the scissor keep the box's mapping)
         float vx = edge ? 0 : vp[0] * vp_sx + vp_ox, vw = edge ? vp[2] * pass_sx : vp[2] * vp_sx;
-        set_viewport(vx, vp[1] * vp_sy + vp_oy, vw, vp[3] * vp_sy, zn, zf);
+        float vy = vp[1] * vp_sy + vp_oy, vh = vp[3] * vp_sy;
+        // The arm cannon at a field of view of its own (runtime/hle/game.c rt_gun_view_scale): every draw of the gun's
+        // group - its depth pre-pass, its colour passes, its effects - has the depth range the game gives that group
+        // alone (NCustomRender::construct_depth_range_from_flags, model flag 0x100); its viewport is scaled about its
+        // middle, the same picture as a projection at that field of view. (The scissor still clips to the target.)
+        if (!edge && !boxed && zn == 0.009765623f && zf == 0.038671874f) {
+            extern float rt_gun_view_scale(void);
+            float s = rt_gun_view_scale();
+            // (within the device's viewport size and bounds: 16384 / +-32768 on most, the spec's least 4096 / +-8192)
+            const VkPhysicalDeviceLimits *l = &g_vk.props.limits;
+            float big = fmaxf(fabsf(vw), fabsf(vh)), most = fminf((float)l->maxViewportDimensions[0],
+                                                                  (float)l->maxViewportDimensions[1]);
+            if (s > 1 && big * s > most) s = fmaxf(1, most / big);
+            if (s != 1) {
+                float nx = vx - vw * (s - 1) * 0.5f, ny = vy - vh * (s - 1) * 0.5f;
+                if (nx >= l->viewportBoundsRange[0] && ny >= l->viewportBoundsRange[0] &&
+                    nx + vw * s <= l->viewportBoundsRange[1] && ny + vh * s <= l->viewportBoundsRange[1])
+                    vx = nx, vy = ny, vw *= s, vh *= s;
+            }
+        }
+        set_viewport(vx, vy, vw, vh, zn, zf);
         if (g_debug_frame) {
             VkRect2D sr = scissor_rect();
-            LOG("[draw]   vp %.2f %.2f %.2f %.2f (fs hash %016llx) scissor %d %d %u %u | guest sc %d %d %d %d | pass %ux%u s %.4f %.4f\n",
-                vx, vp[1] * vp_sy + vp_oy, vw, vp[3] * vp_sy, (unsigned long long)g_cur_fs_hash, sr.offset.x, sr.offset.y,
+            LOG("[draw]   vp %.2f %.2f %.2f %.2f z %.6f %.6f (fs hash %016llx) scissor %d %d %u %u | guest sc %d %d %d %d | pass %ux%u s %.4f %.4f\n",
+                vx, vy, vw, vh, zn, zf, (unsigned long long)g_cur_fs_hash, sr.offset.x, sr.offset.y,
                 sr.extent.width, sr.extent.height, st.scissor[0][0], st.scissor[0][1], st.scissor[0][2], st.scissor[0][3], pass_w, pass_h,
                 vp_sx, vp_sy);
         }

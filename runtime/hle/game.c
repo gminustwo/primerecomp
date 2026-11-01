@@ -270,11 +270,18 @@ static void rt_fluid_fx(Cpu *c) {
     g_fluid_fx(c);
 }
 
+static GuestFn g_fp_think;
+static void rt_fp_think(Cpu *c);
+
 void game_hooks_init(void) {  // (each boot, after dispatch_init)
     uint64_t a = guest_sym("_ZN13CGameIOWinMP110FrameBeginER18CArchitectureQueue");
     static bool hooked;
     g_frame_begin = dispatch_lookup(a);
     if (g_frame_begin && !hooked) hle_override(a, rt_frame_begin, "CGameIOWinMP1::FrameBegin"), hooked = true;
+    uint64_t t = guest_sym("_ZN21CFirstPersonCameraMP15ThinkEfR13CStateManager");
+    static bool thooked;
+    g_fp_think = dispatch_lookup(t);
+    if (g_fp_think && !thooked) hle_override(t, rt_fp_think, "CFirstPersonCameraMP1::Think"), thooked = true;
     if (getenv("LARECOMP_LOG_FLUID")) {
         uint64_t f = guest_sym("_ZN10CPlayerMP112FluidFXThinkEN9CActorMP111EFluidStateER15CScriptWaterMP1R13CStateManager");
         static bool fhooked;
@@ -323,6 +330,27 @@ static uint64_t first_person_camera(Cpu *c, uint64_t sm) {
     return GUEST_PTR_OK(cam) && LD64(cam) == guest_sym("_ZTV21CFirstPersonCameraMP1") + 0x10 ? cam : 0;
 }
 
+// The arm cannon's field of view (Gameplay tab, g_settings.weapon_fov; issue #7). The game draws the gun with the
+// view's projection, so a wider view shrinks it towards the middle of the screen. Another field of view is the same
+// picture scaled about the middle (the projection's x and y by tan(view/2) / tan(weapon/2), depth as it was), so the
+// renderer scales the viewport of each draw the gun's group makes (runtime/nvn/vulkan/exec.c: the depth range they all
+// get, CPlayerGunMP1::Render setting model flag 0x100 for its models and its effects alike - muzzle flash, charge,
+// beam). 1 once the first-person camera hasn't been the current one for a few frames (no gun drawn): the scale is
+// stamped with the frame it was worked out in (fov_frame runs twice a frame, once without a first-person camera to
+// find). (LARECOMP_WEAPON_FOV: test override)
+static _Atomic float g_gun_view_scale = 1;
+static _Atomic uint64_t g_gun_scale_frame;
+float rt_gun_view_scale(void) {
+    extern uint64_t vk_frame_counter(void);
+    return g_gun_scale_frame && vk_frame_counter() <= g_gun_scale_frame + 3 ? g_gun_view_scale : 1;
+}
+static int rt_weapon_fov(void) {
+    static int env = -2;
+    if (env == -2) env = getenv("LARECOMP_WEAPON_FOV") ? atoi(getenv("LARECOMP_WEAPON_FOV")) : -1;
+    int f = env > 0 ? env : g_settings.weapon_fov;
+    return f < FOV_MIN ? FOV_MIN : f > FOV_MAX ? FOV_MAX : f;
+}
+
 static void fov_frame(Cpu *c) {
     static int ok = -1;
     float *def = (float *)(uintptr_t)FP_FOV_DEFAULT;
@@ -333,6 +361,17 @@ static void fov_frame(Cpu *c) {
     *def = want;
     uint64_t cam = first_person_camera(c, c->x[0]);
     if (!cam) return;
+    {
+        const float rad = 3.14159265f / 360;  // (half the angle, in radians)
+        float view = *(float *)(uintptr_t)(cam + 0x25c), gun = (float)rt_weapon_fov();
+        float s = view > 1 && view < 179 ? tanf(view * rad) / tanf(gun * rad) : 1;
+        if (fabsf(s - 1) < 1e-4f) s = 1;
+        static float logged = 1;
+        if (fabsf(s - logged) > 0.01f) LOG("[fov] weapon drawn at %g degrees, the view at %g: scale %.3f\n", gun, view, s), logged = s;
+        extern uint64_t vk_frame_counter(void);
+        g_gun_view_scale = s;
+        g_gun_scale_frame = vk_frame_counter();
+    }
     float *now = (float *)(uintptr_t)(cam + 0x25c), *from = (float *)(uintptr_t)(cam + 0x280);
     float *target = (float *)(uintptr_t)(cam + 0x284), *left = (float *)(uintptr_t)(cam + 0x278);
     if (*left <= 0 && *target != want && (*target == 55.0f || *target == applied)) {
@@ -427,6 +466,9 @@ static float *player_transform(uint64_t player) {
 }
 
 static void mouse_look(Cpu *c);
+static void flick_frame(Cpu *c, uint64_t player, uint64_t sm, float dt);
+static bool can_aim_directly(Cpu *c, uint64_t player, uint64_t sm);
+static bool g_aimed_before_camera;  // (this frame's mouse and flick stick went in before the camera's update)
 
 void rt_player_frame(Cpu *c) {
     g_player = c->x[0];
@@ -452,7 +494,129 @@ void rt_player_frame(Cpu *c) {
         if (f) { fprintf(f, "%s   (frame %llu)\n", line, (unsigned long long)frame); fclose(f); }
         LOG("[pos] F8: %s (positions.txt%s)\n", line, f ? "" : ": not writable");
     }
-    mouse_look(c);
+    // (when they went in before the camera's update: what came since waits for the next one, which shows it as soon
+    // as turning here would)
+    if (!g_aimed_before_camera) {
+        uint32_t dbits = (uint32_t)c->v[0];  // (UpdateCameraBob's frame time)
+        float dt;
+        memcpy(&dt, &dbits, 4);
+        mouse_look(c);
+        flick_frame(c, c->x[0], c->x[1], dt);
+    }
+    g_aimed_before_camera = false;
+}
+
+// The first-person camera's update (CFirstPersonCameraMP1::Think, virtual): the mouse's turn and tilt and the flick
+// stick's turn go in just before it, so the camera takes them up the same frame (issue #5). From the player's camera
+// bob - DoPostCameraStuff, after the cameras' updates - the camera only followed a frame later, a frame behind a stick's
+// turn, which the player's own update applies before the cameras. Its player found as Think finds it: the object with
+// the camera's watched id (+0x1e8), cast to CPlayerMP1. Elsewhere (the morph ball, lock-on) rt_player_frame as before.
+static void rt_fp_think(Cpu *c) {
+    static int after = -1;  // (debug) LARECOMP_MOUSE_AFTER_CAMERA=1: after the cameras, as before
+    if (after < 0) after = getenv("LARECOMP_MOUSE_AFTER_CAMERA") != NULL;
+    uint64_t cam = c->x[0], sm = c->x[1];
+    uint64_t logic = GUEST_PTR_OK(sm) ? LD64(sm + 0x4e0150) : 0;
+    if ((g_settings.mouse_aim || g_settings.flick_stick) && !after && GUEST_PTR_OK(logic) &&
+        LD64(logic) == guest_sym("_ZTV25CStateManagerGameLogicMP1") + 0x10) {
+        uint32_t dbits = (uint32_t)c->v[0];  // (Think's frame time)
+        float dt;
+        memcpy(&dt, &dbits, 4);
+        Cpu *saved = malloc(sizeof *saved);
+        *saved = *c;
+        c->x[0] = logic;
+        c->x[1] = LD32(cam + 0x1e8);
+        guest_call(c, guest_sym("_ZN25CStateManagerGameLogicMP110ObjectByIdE15CValueVersionIdIjjtLj16ELj16EE"));
+        guest_call(c, guest_sym("_Z10TCastToPtrI10CPlayerMP1EPT_P10CEntityMP1"));
+        uint64_t player = c->x[0];
+        if (GUEST_PTR_OK(player) && can_aim_directly(c, player, sm)) {
+            c->x[0] = player;
+            c->x[1] = sm;
+            mouse_look(c);
+            flick_frame(c, player, sm, dt);
+            g_aimed_before_camera = true;
+        }
+        *c = *saved;
+        free(saved);
+    }
+    g_fp_think(c);
+}
+
+// Samus can be turned and her view tilted directly (mouse aim, flick stick): on foot (+0x4d4, the morph ball state, 0 =
+// unmorphed: CPlayerMP1::GetMorphBallTransitionState), not locked on (+0x4e0, the orbit state: CPlayerMP1::SetOrbitState),
+// while the game takes turn input at all (+0x1610 bit 0 clear: CPlayerMP1::TurnInput) and with the first-person camera
+// current (not in cutscenes).
+static bool can_aim_directly(Cpu *c, uint64_t player, uint64_t sm) {
+    return LD32(player + 0x4d4) == 0 && LD32(player + 0x4e0) == 0 && !(*(uint8_t *)(uintptr_t)(player + 0x1610) & 1) &&
+           first_person_camera(c, sm);
+}
+
+// Samus turned `right` radians to her right about the world's up axis (y) through CActorMP1::SetTransform, which also
+// tells whoever follows her. Every register is put back.
+static void turn_player(Cpu *c, uint64_t player, float right) {
+    float *m = player_transform(player);
+    if (!right || !m) return;
+    float co = cosf(-right), s = sinf(-right);
+    static float *xf;
+    if (!xf) xf = hle_alloc(64);
+    memcpy(xf, m, 48);
+    for (int k = 0; k < 3; k++) {  // turned about the world's y: rows 0 and 2 of the rotation
+        float r0 = m[k], r2 = m[8 + k];
+        xf[k] = co * r0 + s * r2;
+        xf[8 + k] = -s * r0 + co * r2;
+    }
+    Cpu *saved = malloc(sizeof *saved);
+    *saved = *c;
+    c->x[0] = player;
+    c->x[1] = (uint64_t)(uintptr_t)xf;
+    guest_call(c, guest_sym("_ZN9CActorMP112SetTransformERK12CTransform4f"));
+    *c = *saved;
+    free(saved);
+}
+
+// ---- Flick stick (Controls tab "Flick stick"; issue #10), as JoyShockMapper's: pushed out past FLICK_ON of full tilt,
+// the controller's right stick turns Samus to face where it points - up: ahead, right: 90 degrees right, down: behind -
+// over FLICK_TIME; while it stays out, turning it round turns her as much (1:1); let back in (under FLICK_OFF), nothing.
+// The game doesn't get that stick meanwhile (input_flick_take): looking up and down is the gyro's (the game's motion
+// aiming) or the mouse's. Only where she can be turned directly (can_aim_directly); elsewhere - the morph ball, lock-on
+// - the stick is the game's as before. Just before the first-person camera's update (rt_fp_think), else from
+// CPlayerMP1::UpdateCameraBob (rt_player_frame); dt: their frame time.
+#define FLICK_ON 0.9f
+#define FLICK_OFF 0.8f
+#define FLICK_TIME 0.1f
+static void flick_frame(Cpu *c, uint64_t player, uint64_t sm, float dt) {
+    extern void input_flick_take(bool on);
+    extern bool input_flick_stick(float *x, float *y);
+    static struct { bool held; float last, left, rate; } f;
+    float x, y;
+    if (!g_settings.flick_stick || !player || !input_flick_stick(&x, &y) || !can_aim_directly(c, player, sm)) {
+        input_flick_take(false);
+        f.held = false, f.left = 0;
+        return;
+    }
+    input_flick_take(true);
+    if (!(dt > 0 && dt < 0.5f)) dt = 1 / 60.0f;
+    float m = sqrtf(x * x + y * y), turn = 0;
+    if (!f.held && m >= FLICK_ON) {
+        float a = atan2f(x, y);  // (0: up, positive: to the right)
+        f.held = true, f.last = a, f.left = a, f.rate = fabsf(a) / FLICK_TIME;
+        static int n;
+        if (n++ < 20) LOG("[flick] %.1f degrees\n", a * 180 / (float)M_PI);
+    } else if (f.held && m < FLICK_OFF) {
+        f.held = false;
+    } else if (f.held) {
+        float a = atan2f(x, y), d = a - f.last;
+        if (d > (float)M_PI) d -= 2 * (float)M_PI;
+        else if (d < -(float)M_PI) d += 2 * (float)M_PI;
+        f.last = a;
+        turn += d;
+    }
+    if (f.left != 0) {
+        float step = fminf(f.rate * dt, fabsf(f.left)), s = copysignf(step, f.left);
+        turn += s;
+        f.left -= s;
+        if (fabsf(f.left) < 1e-6f) f.left = 0;
+    }
+    turn_player(c, player, turn);
 }
 
 // ---- Mouse aim (Controls tab "Mouse aim"; runtime/hle/input.c sums the mouse's motion while it's captured)
@@ -466,7 +630,8 @@ void rt_player_frame(Cpu *c) {
 // CPlayerMP1::GetMorphBallTransitionState), not locked on (+0x4e0, the orbit state: CPlayerMP1::SetOrbitState), while
 // the game takes turn input at all (+0x1610 bit 0 clear: CPlayerMP1::TurnInput) and with the first-person camera
 // current (not in cutscenes). Otherwise - the morph ball's camera, lock-on - the motion steers the right stick.
-// Called from CPlayerMP1::UpdateCameraBob (rt_player_frame): the player in x0, the state manager in x1.
+// Called just before the first-person camera's update (rt_fp_think) when it can turn and tilt directly, else from
+// CPlayerMP1::UpdateCameraBob (rt_player_frame): the player in x0, the state manager in x1.
 // LARECOMP_LOOK_LOG=<n>: the look state every n frames.
 #define MOUSE_DEG_PER_COUNT 0.044f  // (at sensitivity 1)
 #define PITCH_LIMIT 1.2217f         // 70 degrees up or down: the game's own free-look range (the stick stops there)
@@ -491,7 +656,7 @@ static void mouse_look(Cpu *c) {
     if (!input_mouse_take(&dx, &dy) || !g_settings.mouse_aim) { input_mouse_stick(0, 0); return; }
     float deg = MOUSE_DEG_PER_COUNT * g_settings.mouse_sens;
     if (g_settings.mouse_invert) dy = -dy;
-    if (morph != 0 || orbit != 0 || no_turn || !first_person_camera(c, sm)) {
+    if (!can_aim_directly(c, player, sm)) {
         // the right stick instead, in proportion to the motion this frame (~25 counts a frame: full tilt)
         float k = 32767.0f / 25 * g_settings.mouse_sens;
         float rx = dx * k, ry = -dy * k;
@@ -520,24 +685,7 @@ static void mouse_look(Cpu *c) {
             free(saved);
         }
     }
-    float *m = player_transform(player);
-    if (!dx || !m) return;
-    float a = -dx * deg * (float)M_PI / 180, co = cosf(a), s = sinf(a);
-    static float *xf;
-    if (!xf) xf = hle_alloc(64);
-    memcpy(xf, m, 48);
-    for (int k = 0; k < 3; k++) {  // turned about the world's y: rows 0 and 2 of the rotation
-        float r0 = m[k], r2 = m[8 + k];
-        xf[k] = co * r0 + s * r2;
-        xf[8 + k] = -s * r0 + co * r2;
-    }
-    Cpu *saved = malloc(sizeof *saved);
-    *saved = *c;
-    c->x[0] = player;
-    c->x[1] = (uint64_t)(uintptr_t)xf;
-    guest_call(c, guest_sym("_ZN9CActorMP112SetTransformERK12CTransform4f"));
-    *c = *saved;
-    free(saved);
+    turn_player(c, player, dx * deg * (float)M_PI / 180);
 }
 
 // LARECOMP_LOAD_AREAS=<id>,<id>,... (32 hex digits each, as "[area] load" logs them): at the first gameplay frame,

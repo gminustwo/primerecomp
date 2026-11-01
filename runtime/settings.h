@@ -71,6 +71,8 @@ typedef struct {
     int hdr_peak;        // HDR: the display's peak brightness, nits (HDR_PEAK_MIN..MAX)
     int hdr_paper;       // HDR: paper white - the menus, the HUD, a white wall in daylight - nits (HDR_PAPER_MIN..MAX)
     int fov;             // first-person vertical field of view in degrees, FOV_MIN..FOV_MAX (55: the game's): game.c
+    int weapon_fov;      // the arm cannon's, drawn as at this field of view whatever the view's (FOV_MIN..FOV_MAX;
+                         // 55: as the game draws it; = fov: as before 2026-11, wider with the view): game.c, exec.c
     bool skippable_cutscenes;  // every cutscene can be skipped, seen before or not (runtime/hle/game.c)
     int hint_seconds;    // Cheats: the game waits at most this long before a hint shows, and before it shows it again
                          // (0: the game's own waits; one of g_hint_waits; runtime/hle/cheats.c)
@@ -86,6 +88,8 @@ typedef struct {
     bool mouse_aim;      // the mouse turns and tilts the view itself (runtime/hle/game.c), captured while playing
     float mouse_sens;    // mouse aim: 1 = 0.044 degrees per mouse count (MOUSE_SENS_MIN..MAX)
     bool mouse_invert;   // mouse aim: moving the mouse forward looks down
+    bool flick_stick;    // the controller's right stick turns Samus to face where it points, then 1:1 as it goes round
+                         // (looking up and down: gyro or mouse): runtime/hle/game.c flick_frame
     bool steam_controller_direct;  // (settings file only) SDL's own Steam Controller driver, for its gyro without
                                    // Steam Input (the window code sets SDL_HINT_JOYSTICK_HIDAPI_STEAM)
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language
