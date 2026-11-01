@@ -1,5 +1,6 @@
 // Cheats (the menu's Cheats tab): the hint timer, infinite energy, missiles and power bombs. All from the runtime, on
 // the game's own data: the game code players built stays as it is (no patch, no new game code id).
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -169,6 +170,119 @@ static void hint_frame(uint64_t gs) {
     l3_was = l3;
 }
 
+// ---- Upgrades
+// The Cheats tab's Upgrades: Samus' items in the game being played, set from the menu the way the game's pickups set
+// them - CPlayerStateMP1::AddPowerUp (the capacity, kept within the item's most: GetItemMax's table; the amount no
+// more than it; the suit worn the best one she has: Phazon, then Gravity, then Varia), then for more of an item
+// IncrPickUp (the counted items' amount up by as much; an energy tank fills the energy). Asked for on the menu's
+// thread, done on the game's (cheats_frame, each state manager frame: a change made in the game's own pause screen
+// lands when play goes on). It's the game's own state: a save at a save station keeps it, as it keeps a pickup.
+// Items (EItemType, as Metroid Prime's): 0 power beam, 1 ice, 2 wave, 3 plasma, 4 missiles, 5 scan visor, 6 morph ball
+// bombs, 7 power bombs, 8 flamethrower, 9 thermal visor, 10 charge beam, 11 super missile, 12 grapple beam, 13 x-ray
+// visor, 14 ice spreader, 15 space jump boots, 16 morph ball, 17 combat visor, 18 boost ball, 19 spider ball, 20 power
+// suit, 21 gravity, 22 varia, 23 phazon, 24 energy tanks, 26 an energy refill, 28 wavebuster, 29..40 the artifacts.
+// LARECOMP_SET_ITEMS=<frame>:<item>=<capacity>[,<item>=<capacity>...] (test): those asked for at that frame.
+enum { ITEMS = 41 };
+#define ITEM_MAX_TABLE 0x7001d208acull  // (CPlayerStateMP1::GetItemMax: the most of each item, 250 missiles ...)
+#define COUNTED_ITEMS 0x1ffe1008490ull  // (IncrPickUp's: missiles, power bombs, charge beam, space jump, tanks, artifacts)
+static _Atomic int g_item_want[ITEMS];  // a capacity asked for, + 1 (0: none)
+static bool g_items_seen;               // a game has been in play since this boot (the menu may show its items)
+static bool g_suit_load;                // a suit came or went: the arm is loaded again for the suit worn
+
+RT_ON_RESET(items_reset) {
+    g_items_seen = g_suit_load = false;
+    for (int i = 0; i < ITEMS; i++) g_item_want[i] = 0;
+}
+
+int cheats_item_most(int item) {
+    if (item < 0 || item >= ITEMS) return 0;
+    static int ok = -1;  // (the table where this game build has it: 250 missiles, 8 power bombs, 14 tanks)
+    if (ok < 0) ok = LD32(ITEM_MAX_TABLE + 4 * ITEM_MISSILES) == 250 && LD32(ITEM_MAX_TABLE + 4 * ITEM_POWER_BOMBS) == 8 &&
+                     LD32(ITEM_MAX_TABLE + 4 * ITEM_ENERGY_TANKS) == 14;
+    return ok ? (int)LD32(ITEM_MAX_TABLE + 4ull * item) : 0;
+}
+
+// The item's capacity now (one asked for: that), -1 with no game in play since the boot
+int cheats_item(int item) {
+    extern int g_start_screen;
+    if (item < 0 || item >= ITEMS || g_start_screen || !g_items_seen || !cheats_item_most(ITEM_MISSILES)) return -1;
+    int w = g_item_want[item];
+    if (w) return w - 1;
+    uint64_t ps = player_state();
+    return ps ? (int)LD32(ps + 0x30 + 8ull * item) : -1;
+}
+
+void cheats_item_set(int item, int capacity) {
+    if (item < 0 || item >= ITEMS) return;
+    int most = cheats_item_most(item);
+    g_item_want[item] = (capacity < 0 ? 0 : capacity > most ? most : capacity) + 1;
+}
+
+static const char *const item_names[ITEMS] = {
+    "power beam", "ice beam", "wave beam", "plasma beam", "missiles", "scan visor", "morph ball bombs", "power bombs",
+    "flamethrower", "thermal visor", "charge beam", "super missile", "grapple beam", "x-ray visor", "ice spreader",
+    "space jump boots", "morph ball", "combat visor", "boost ball", "spider ball", "power suit", "gravity suit",
+    "varia suit", "phazon suit", "energy tanks", "item 25", "energy refill", "item 27", "wavebuster", "artifact 1",
+    "artifact 2", "artifact 3", "artifact 4", "artifact 5", "artifact 6", "artifact 7", "artifact 8", "artifact 9",
+    "artifact 10", "artifact 11", "artifact 12"};
+
+static void item_set(uint64_t ps, int item, int cap) {
+    int32_t *pu = (int32_t *)(uintptr_t)(ps + 0x2c + 8ull * item);  // amount, capacity
+    int was = pu[1], amount_was = pu[0];
+    if (cap == was) return;
+    pu[1] = cap;  // (AddPowerUp)
+    if (pu[0] > cap) pu[0] = cap;
+    if ((item & ~3) == 20) {
+        g_suit_load = true;
+        const int32_t *it = (const int32_t *)(uintptr_t)(ps + 0x2c);
+        *(int32_t *)(uintptr_t)(ps + 0x24) = it[2 * 23 + 1] > 0 ? 3 : it[2 * 21 + 1] > 0 ? 1 : it[2 * 22 + 1] > 0 ? 2 : 0;
+    }
+    if (cap > was && ((COUNTED_ITEMS >> item) & 1)) pu[0] = pu[0] + (cap - was) > cap ? cap : pu[0] + (cap - was);  // (IncrPickUp)
+    if (item == ITEM_ENERGY_TANKS) {  // (more: filled up, as a tank does; fewer: no more than the new full)
+        float *energy = (float *)(uintptr_t)(ps + 0xc), full = full_energy(ps);
+        if (cap > was || *energy > full) *energy = full;
+    }
+    LOG("[cheat] upgrades: %s %d -> %d (amount %d -> %d)%s\n", item_names[item], was, cap, amount_was, pu[0],
+        (item & ~3) == 20 ? (LD32(ps + 0x24) == 3 ? ", wearing the phazon suit" : LD32(ps + 0x24) == 1 ? ", wearing the gravity suit"
+                             : LD32(ps + 0x24) == 2 ? ", wearing the varia suit" : ", wearing the power suit") : "");
+}
+
+// (the state manager in c->x[0]: cheats_frame's)
+static void items_frame(Cpu *c, uint64_t ps, bool in_play) {
+    static const char *test = (const char *)1;  // (the next "<frame>:<items>" of LARECOMP_SET_ITEMS, ';' between)
+    if (test == (const char *)1) test = getenv("LARECOMP_SET_ITEMS");
+    extern uint64_t vk_frame_counter(void);
+    long at;
+    if (test && sscanf(test, "%ld:", &at) == 1 && (long)vk_frame_counter() >= at) {
+        const char *end = strchr(test, ';');
+        for (const char *p = strchr(test, ':') + 1; p && (!end || p < end);) {
+            int item, cap;
+            if (sscanf(p, "%d=%d", &item, &cap) == 2) cheats_item_set(item, cap);
+            p = strchr(p, ',');
+            if (p) p++;
+        }
+        test = end ? end + 1 : NULL;
+    }
+    for (int i = 0; i < ITEMS; i++) {
+        int w = atomic_exchange(&g_item_want[i], 0);
+        if (w) item_set(ps, i, w - 1);
+    }
+    // The suit's look: CPlayerMP1::AsyncLoadSuit (the gun's arm and the grapple arm for the suit worn), as the game's
+    // pickup does for the Phazon Suit (CScriptPickupMP1::Touch; Varia and Gravity come with a scene that loads it)
+    extern uint64_t game_player(void);
+    uint64_t player = game_player();
+    if (g_suit_load && in_play && GUEST_PTR_OK(player) && GUEST_PTR_OK(c->x[0])) {
+        g_suit_load = false;
+        Cpu *saved = malloc(sizeof *saved);
+        *saved = *c;
+        c->x[1] = c->x[0];
+        c->x[0] = player;
+        guest_call(c, guest_sym("_ZN10CPlayerMP113AsyncLoadSuitER13CStateManager"));
+        *c = *saved;
+        free(saved);
+    }
+}
+
 // (debug) LARECOMP_DAMAGE=<frame>:<amount>[,<frame>:<amount>...]: from that frame on, the next gameplay frame hits
 // Samus for <amount> through ApplyLocalDamage, as an enemy's shot would (a power beam hit without knockback) - Infinite
 // energy tested without an enemy around. Her energy before and after goes to the log ("[cheat]").
@@ -224,7 +338,10 @@ static void debug_damage(Cpu *c, uint64_t ps) {
 void cheats_frame(Cpu *c) {
     extern bool game_in_play(void);
     uint64_t gs = game_state(), ps = player_state();
-    if (!gs || !ps || !game_in_play()) return;
+    if (!gs || !ps) return;
+    if (g_items_seen) items_frame(c, ps, game_in_play());
+    if (!game_in_play()) return;
+    g_items_seen = true;
     debug_damage(c, ps);
     {   // (the log: the cheats in play, as they change)
         static int was = -1;
