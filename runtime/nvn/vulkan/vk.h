@@ -129,6 +129,12 @@ typedef struct TexBackend {
     bool hdr;             // one of the game's sRGB targets, made RGBA16F for HDR output (textures.c hdr_target)
     int16_t glyph;        // one of the game's button prompt icons (runtime/hle/glyphs.c): its id + 1, else 0
     uint32_t glyph_gen;   // the icons' generation it was drawn for (a newer one: uploaded again)
+    // texture mods (texmods.c): the image is a replacement (mod: its size over the game's in mod_sx / mod_sy, for the
+    // shaders' texel lookups), or one is loading (mod_img); mod_key: the name of the data last uploaded
+    bool mod;
+    uint64_t mod_key;
+    float mod_sx, mod_sy;
+    struct ModImage *mod_img;
 } TexBackend;
 
 TexBackend *vk_tex(NvnTexture *t, bool for_render);  // backend image (uploads CPU contents unless for_render)

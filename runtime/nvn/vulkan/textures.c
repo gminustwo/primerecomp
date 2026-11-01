@@ -4,11 +4,13 @@
 #include <float.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
 #include "vk.h"
+#include "texmods.h"
 #include "../../glyphs.h"
 #include "../astc.h"
 #include "../renderer.h"
@@ -257,7 +259,7 @@ void vk_image_init_layout(VkCommandBuffer cb, VkImage img, VkImageAspectFlags as
 }
 
 // Images destroyed by the guest are kept until the submissions that may use them have completed.
-typedef struct { VkImage img; VmaAllocation mem; VkImageView view; uint64_t seq; } Dead;
+typedef struct { VkImage img; VmaAllocation mem; VkImageView view; VkBuffer buf; uint64_t seq; } Dead;  // (buf: staging)
 static Dead *dead;
 static int ndead, cap_dead;
 static void views_forget(TexBackend *b);
@@ -268,6 +270,7 @@ void vk_collect_dead(void) {
     for (int i = 0; i < ndead; i++) {
         if (dead[i].seq > done) { dead[k++] = dead[i]; continue; }
         if (dead[i].view) vkDestroyImageView(g_vk.dev, dead[i].view, NULL);
+        else if (dead[i].buf) vmaDestroyBuffer(g_vk.vma, dead[i].buf, dead[i].mem);
         else vmaDestroyImage(g_vk.vma, dead[i].img, dead[i].mem);
     }
     ndead = k;
@@ -562,6 +565,8 @@ void backend_texture_destroyed(NvnTexture *t) {
         if (--b->refs == 0) {
             g_nimages--;
             share_unlink(b);
+            texmods_release(b->mod_img);
+            texmods_forget(b);
             destroy_image(b);
             free(b->pending_rgba);
             free(b->sparse);
@@ -942,6 +947,128 @@ static void dump_small_tex(uint64_t hash, uint32_t w, uint32_t h, uint32_t forma
     if (f) { fwrite(data, 1, size, f); fclose(f); }
 }
 
+// ================================================================== texture mods (texmods.c)
+static bool vk_format_srgb(VkFormat f) {
+    return f == VK_FORMAT_R8G8B8A8_SRGB || f == VK_FORMAT_B8G8R8A8_SRGB || f == VK_FORMAT_BC1_RGB_SRGB_BLOCK ||
+           f == VK_FORMAT_BC1_RGBA_SRGB_BLOCK || f == VK_FORMAT_BC2_SRGB_BLOCK || f == VK_FORMAT_BC3_SRGB_BLOCK ||
+           f == VK_FORMAT_BC7_SRGB_BLOCK ||
+           (f >= VK_FORMAT_ASTC_4x4_UNORM_BLOCK && f <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK && ((f - VK_FORMAT_ASTC_4x4_UNORM_BLOCK) & 1));
+}
+
+// Textures mods take: plain 2D textures the game loads (not its targets, not ones it rewrites), 8-bit unsigned or
+// compressed - what a PNG holds
+static bool mod_eligible(NvnTexture *t, TexBackend *b) {
+    if (t->target != 1 || t->samples > 1 || b->gpu_owned || b->dynamic || b->glyph || b->hdr || b->scalable ||
+        (t->flags & 0x10) || t->width < 8 || t->height < 8 || (t->pool && (t->pool->flags & NVN_POOL_VIRTUAL)) || b->layers > 1)
+        return false;
+    VkFormat f = fmt_of(t->format).vf;
+    return (f >= VK_FORMAT_R4G4B4A4_UNORM_PACK16 && f <= VK_FORMAT_A1R5G5B5_UNORM_PACK16) || f == VK_FORMAT_R8_UNORM ||
+           f == VK_FORMAT_R8G8_UNORM || f == VK_FORMAT_R8G8B8A8_UNORM || f == VK_FORMAT_R8G8B8A8_SRGB ||
+           f == VK_FORMAT_B8G8R8A8_UNORM || f == VK_FORMAT_B8G8R8A8_SRGB ||
+           (f >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && f <= VK_FORMAT_BC4_UNORM_BLOCK) || f == VK_FORMAT_BC5_UNORM_BLOCK ||
+           f == VK_FORMAT_BC7_UNORM_BLOCK || f == VK_FORMAT_BC7_SRGB_BLOCK ||
+           (f >= VK_FORMAT_ASTC_4x4_UNORM_BLOCK && f <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK);
+}
+
+// The replacement in the texture's place: a new image of the file's size and encoding, read in the game texture's
+// colour space (the old image goes once the GPU is done with it). Views take the image's own format (vk_view: it
+// differs from the game's), the shaders' texel lookups its size (mod_sx / mod_sy: exec.c texture_info).
+static bool mod_apply(NvnTexture *t, TexBackend *b, ModImage *m) {
+    static const VkFormat lin[] = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_BC2_UNORM_BLOCK,
+                                   VK_FORMAT_BC3_UNORM_BLOCK, VK_FORMAT_BC4_UNORM_BLOCK, VK_FORMAT_BC5_UNORM_BLOCK,
+                                   VK_FORMAT_BC7_UNORM_BLOCK};
+    static const VkFormat srg[] = {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_BC1_RGBA_SRGB_BLOCK, VK_FORMAT_BC2_SRGB_BLOCK,
+                                   VK_FORMAT_BC3_SRGB_BLOCK, VK_FORMAT_BC4_UNORM_BLOCK, VK_FORMAT_BC5_UNORM_BLOCK,
+                                   VK_FORMAT_BC7_SRGB_BLOCK};
+    VkFormat vf = (vk_format_srgb(fmt_of(t->format).vf) ? srg : lin)[m->kind];
+    if (!format_supports(vf, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT)) {
+        static int nlog;
+        if (nlog++ < 5) LOG("[mods] this GPU can't sample format %d: tex_%ux%u_%016llx stays the game's (a PNG works)\n", vf,
+                            t->width, t->height, (unsigned long long)m->key);
+        return false;
+    }
+    VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT,
+                            .imageType = VK_IMAGE_TYPE_2D, .format = vf, .extent = {m->w, m->h, 1}, .mipLevels = m->levels,
+                            .arrayLayers = 1, .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
+                            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    VkImage img;
+    VmaAllocation mem;
+    if (vmaCreateImage(g_vk.vma, &ci, &ai, &img, &mem, NULL) != VK_SUCCESS) return false;
+    // (its own staging buffer, gone with the submission: a 4K texture is up to 85 MB - the transient ring would keep a
+    // chunk that size for good)
+    uint64_t total = m->off[m->levels - 1] + m->len[m->levels - 1];
+    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = total, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
+    VmaAllocationCreateInfo bai = {.usage = VMA_MEMORY_USAGE_AUTO,
+                                   .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
+    VkBuffer buf;
+    VmaAllocation bmem;
+    VmaAllocationInfo info;
+    if (vmaCreateBuffer(g_vk.vma, &bi, &bai, &buf, &bmem, &info) != VK_SUCCESS) {
+        vmaDestroyImage(g_vk.vma, img, mem);
+        return false;
+    }
+    memcpy(info.pMappedData, m->data, total);
+    VkCommandBuffer cb = vk_upload_cmd();
+    vk_image_init_layout(cb, img, VK_IMAGE_ASPECT_COLOR_BIT);
+    VkBufferImageCopy rg[16];
+    for (uint32_t l = 0; l < m->levels; l++) {
+        uint32_t w = m->w >> l, h = m->h >> l;
+        rg[l] = (VkBufferImageCopy){.bufferOffset = m->off[l], .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, 1},
+                                    .imageExtent = {w ? w : 1, h ? h : 1, 1}};
+    }
+    vkCmdCopyBufferToImage(cb, buf, img, VK_IMAGE_LAYOUT_GENERAL, m->levels, rg);
+    defer((Dead){.buf = buf, .mem = bmem});
+    destroy_image(b);
+    b->image = img, b->mem = mem, b->format = vf;
+    b->width = m->w, b->height = m->h, b->depth = 1, b->layers = 1, b->levels = m->levels;
+    b->base_type = VK_IMAGE_VIEW_TYPE_2D, b->aspect = VK_IMAGE_ASPECT_COLOR_BIT, b->astc_bw = b->astc_bh = 0;
+    b->mod = true, b->mod_sx = (float)m->w / (float)t->width, b->mod_sy = (float)m->h / (float)t->height;
+    LOG("[mods] tex_%ux%u_%016llx replaced: %ux%u, %u levels\n", t->width, t->height, (unsigned long long)m->key, m->w, m->h,
+        m->levels);
+    return true;
+}
+
+static void mod_revert(NvnTexture *t, TexBackend *b) {  // (the game's own image again, of its own size and format)
+    destroy_image(b);
+    create_image(t, b, false);
+    b->mod = false;
+}
+
+static void mod_poll(NvnTexture *t, TexBackend *b) {  // a replacement loading: in place once it's ready
+    ModImage *m = b->mod_img;
+    int s = atomic_load(&m->state);
+    if (!s) return;
+    b->mod_img = NULL;
+    if (s == 1 && m->key == b->mod_key && mod_eligible(t, b)) mod_apply(t, b, m);
+    texmods_release(m);
+}
+
+// At an upload of new data: its name; a replacement for it is asked for (the game's own texture shows meanwhile),
+// one in place for other data goes, and without one, Dump textures takes the game's. True: the replacement in place
+// is this data's - nothing to upload.
+static bool mod_upload(NvnTexture *t, TexBackend *b, const uint8_t *base, bool sparse) {
+    bool elig = !sparse && texmods_active() && mod_eligible(t, b);
+    uint64_t key = 0;
+    if (elig) {
+        LevelLayout l0 = tegra_level(&t->layout, 0);
+        uint64_t end = t->layout.levels > 1 ? tegra_level(&t->layout, 1).offset : tegra_layer_size(&t->layout);
+        key = texmods_key(base + l0.offset, end - l0.offset, t->width, t->height, t->format);
+        if (b->mod && b->mod_key == key) return true;
+    }
+    if (b->mod_img && (!elig || b->mod_img->key != key)) texmods_release(b->mod_img), b->mod_img = NULL;
+    if (b->mod) mod_revert(t, b);
+    if (!elig) return false;
+    b->mod_key = key;
+    if (texmods_has(key)) {
+        if (!b->mod_img) b->mod_img = texmods_request(key);
+    } else if (g_settings.dump_textures) {
+        texmods_dump_request(b, key, t->width, t->height);
+    }
+    return false;
+}
+
 static void upload_texture_(NvnTexture *t, TexBackend *b);
 static void upload_texture(NvnTexture *t, TexBackend *b) {
     if (slow_ms < 0) slow_ms = getenv("LARECOMP_LOG_SLOW_UPLOADS") ? atol(getenv("LARECOMP_LOG_SLOW_UPLOADS")) : 0;
@@ -959,6 +1086,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
 static void upload_texture_(NvnTexture *t, TexBackend *b) {
     bool sparse = t->pool && (t->pool->flags & NVN_POOL_VIRTUAL);
     if ((!t->addr && !sparse) || t->target == 10) return;
+    if (b->mod_img) mod_poll(t, b);
     if (b->glyph && b->glyph_gen != glyph_generation()) b->uploaded = false;  // (a button icon to draw another way)
     const uint8_t *base = (const uint8_t *)(uintptr_t)t->addr;
     uint64_t frame = vk_frame_counter();
@@ -1055,6 +1183,7 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
     b->data_hash = h;
     b->uploaded = true;
 upload:
+    if ((b->mod || b->mod_img || texmods_active()) && mod_upload(t, b, base, sparse)) return;
     if (b->format != mf.vf && !b->astc_bw) return;  // unsupported format: nothing sensible to copy
     VkCommandBuffer cb = vk_upload_cmd();
     uint32_t layers = t->layout.layers ? t->layout.layers : 1;

@@ -58,6 +58,8 @@ typedef struct {
     bool vsync;          // no tearing (runtime/nvn/vulkan/device.c present_mode)
     bool preload_shaders;  // the start screen builds every shader recorded so far before PLAY (runtime/nvn/vulkan/exec.c
                            // vk_preload_start): nothing seen before pops in when it's first drawn in a session
+    bool texture_mods;   // the game's textures replaced by the files in mods/ (runtime/nvn/vulkan/texmods.c), from start
+    bool dump_textures;  // each texture the game loads written to dump/textures/, named for mods/ (texmods.c)
     bool hdr;            // HDR output when the display takes it (runtime/nvn/vulkan/hdr.c): the game's highlights
                          // past paper white, up to hdr_peak
     int hdr_peak;        // HDR: the display's peak brightness, nits (HDR_PEAK_MIN..MAX)

@@ -387,6 +387,8 @@ static bool choice(const char *label, int *value, const char *const *names, int 
 
 extern "C" double output_scale_dynamic_factor(void);
 extern "C" void vk_shader_record_counts(int *programs, int *pipelines);  // runtime/nvn/vulkan/exec.c
+extern "C" int texmods_count(void);                                      // runtime/nvn/vulkan/texmods.c
+extern "C" const char *texmods_folder(void);
 extern "C" int vk_hdr_status(void);  // runtime/nvn/vulkan/hdr.c: 0 no HDR display, 1 available, 2 on now
 extern "C" void renderer_frame_times(float out[3]);  // runtime/nvn/vulkan/exec.c (Vulkan only)
 extern "C" void output_scale_render_size(double *w, double *h);
@@ -542,6 +544,30 @@ static void tab_display(void) {
                  "%d pipelines.",
                  progs, pipes);
         opt_toggle("Pre-load shaders", &g_settings.preload_shaders, false, d);
+    }
+    opt_section("Mods");
+    {   // (runtime/nvn/vulkan/texmods.c)
+        char d[1100];
+        snprintf(d, sizeof d,
+                 "Draws image files from the mods folder in place of the game's own textures: texture packs made for "
+                 "Metroid Prime Remastered. Each file is named after the texture it replaces, the way Dump textures "
+                 "names them (tex_<size>_<name>), in any folders under mods. PNG, or DDS (BC1 to BC7: smaller and "
+                 "faster for big packs); bigger than the original is fine. Packs for the GameCube or Wii game "
+                 "(Dolphin's) don't fit Remastered's models.\n\nFrom the next start. Found: %d replacement texture%s.",
+                 texmods_count(), texmods_count() == 1 ? "" : "s");
+        opt_toggle("Texture mods", &g_settings.texture_mods, true, d);
+        opt_toggle("Dump textures", &g_settings.dump_textures, false,
+                   "For making texture mods: every texture the game loads, as you play, is saved to the dump\\textures "
+                   "folder as a PNG named the way the mods folder wants it. Find the one you want to change, edit it "
+                   "(any size), and put it in mods.\n\nEach texture is saved once; loading is slower while this is on.");
+        if (opt_button("Open the mods folder", "Opens the mods folder, in PrimeRecomp's folder, where texture mods go.")) {
+            char *cwd = SDL_GetCurrentDirectory();
+            char url[1200];
+            snprintf(url, sizeof url, "file:///%s%s", cwd ? cwd : "", texmods_folder());
+            for (char *c = url; *c; c++) if (*c == '\\') *c = '/';
+            SDL_OpenURL(url);
+            SDL_free(cwd);
+        }
     }
     // (LAS Recomp's "Remove blur" and "Hide Hero Mode icon" are gone: Link's Awakening only)
     // Steam Deck presets (settings.c settings_steam_deck_preset; a Deck's first start takes the 30 fps one)
