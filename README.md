@@ -35,13 +35,14 @@ PC, with Vulkan for the graphics. No emulator runs.
   brightness of white, up to your display's peak, while the rest of the picture looks as it always has (F1 menu,
   Video tab: HDR, peak brightness, paper white)
 - Ultrawide and any aspect ratio, the HUD out at the screen's sides (or a 21:9 frame's, or the 16:9 middle);
-  adjustable field of view
+  adjustable field of view, and the arm cannon's apart from it (it keeps its size at a wide view)
 - 30, 60 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
 - Steam Deck presets
 - Gyro aiming with controllers that have one
 - Rumble with a strength setting, and HD rumble: the game's own two-tone vibration, as a Switch plays it, on a
   Switch Pro Controller or a single Joy-Con, and on a DualSense's haptics over USB (F1 menu, Audio tab)
-- Stick dead zones, with a picture of where each stick rests (F1 menu, Controls tab)
+- Stick dead zones, with a picture of where each stick rests, and flick stick: push the right stick out to face that
+  way, turn it round to turn with it (F1 menu, Controls tab)
 - The game's button prompts drawn for your controller - Xbox, PlayStation, Switch, keyboard and mouse or Wii Remote,
   following your bindings - in the game's own style (F1 menu, Controls tab: Button icons; Auto follows what you used
   last)

@@ -128,6 +128,16 @@ static void dead_zone(_Atomic int32_t *xa, _Atomic int32_t *ya, int32_t x, int32
 
 // The controller's sticks as they are (the Controls tab's dead zone picture): x, y of the left then the right, -1..1
 // (y up); false with no controller
+// Flick stick (runtime/hle/game.c flick_frame): the controller's right stick before its dead zone, and whether it's
+// turning Samus now - the game then doesn't get it (its turning and looking would add to the flick's).
+static _Atomic int32_t raw_rx, raw_ry;
+static _Atomic bool flick_takes_stick;
+void input_flick_take(bool on) { flick_takes_stick = on; }
+bool input_flick_stick(float *x, float *y) {
+    *x = raw_rx / 32767.0f, *y = raw_ry / 32767.0f;
+    return pad || host_test;
+}
+
 bool input_raw_sticks(float out[4]) {
     SDL_Gamepad *p = pad;
     if (!p) return false;
@@ -152,14 +162,15 @@ static void recompute_pad(void) {
         if (g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT && (host >> g_bind_pad[i] & 1)) b |= 1ull << i;
     pad_buttons = b;
     if (!pad || host_test) {  // (a test's resting stick: through the dead zone as a real one)
+        raw_rx = test_rx, raw_ry = test_ry;
         dead_zone(&pad_lx, &pad_ly, test_lx, test_ly, g_settings.deadzone[0]);
         dead_zone(&pad_rx, &pad_ry, test_rx, test_ry, g_settings.deadzone[1]);
         return;
     }
     dead_zone(&pad_lx, &pad_ly, SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX), -SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY),
               g_settings.deadzone[0]);
-    dead_zone(&pad_rx, &pad_ry, SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX), -SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY),
-              g_settings.deadzone[1]);
+    raw_rx = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX), raw_ry = -SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY);
+    dead_zone(&pad_rx, &pad_ry, raw_rx, raw_ry, g_settings.deadzone[1]);
 }
 
 // Forget held keys (the menu took focus); the gamepad is re-read on its next event.
@@ -617,8 +628,9 @@ static void fill_state(Cpu *c) {
     uint64_t b = menu ? script_buttons : key_buttons | pad_buttons | wm_b | script_buttons;
     int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx + wm_lx) + script_lx);
     int32_t ly = clamp_axis((menu ? 0 : key_ly + pad_ly + wm_ly) + script_ly);
-    int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx + mouse_rx + wm_rx) + script_rx);
-    int32_t ry = clamp_axis((menu ? 0 : key_ry + pad_ry + mouse_ry + wm_ry) + script_ry);
+    int32_t prx = flick_takes_stick ? 0 : pad_rx, pry = flick_takes_stick ? 0 : pad_ry;
+    int32_t rx = clamp_axis((menu ? 0 : key_rx + prx + mouse_rx + wm_rx) + script_rx);
+    int32_t ry = clamp_axis((menu ? 0 : key_ry + pry + mouse_ry + wm_ry) + script_ry);
     static long stick_log = -2;  // (debug) LARECOMP_LOG_STICKS=<n>: the sticks the game gets, every n-th read
     if (stick_log == -2) stick_log = getenv("LARECOMP_LOG_STICKS") ? atol(getenv("LARECOMP_LOG_STICKS")) : 0;
     if (stick_log > 0 && sampling % stick_log == 0) LOG("[input] sticks %d %d  %d %d\n", lx, ly, rx, ry);
