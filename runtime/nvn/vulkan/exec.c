@@ -3429,6 +3429,10 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
                 memo[ms].type = (uint8_t)st_->type; memo[ms].has_view = e->has_view; memo[ms].view = view;
             }
             renderer_texture_scale(e->tex, &sc[0], &sc[1]);
+            {   // a texture mod's image: its size over the game's, for texel lookups (texmods.c)
+                TexBackend *tb = (TexBackend *)e->tex->backend;
+                if (tb && tb->mod) sc[0] *= tb->mod_sx, sc[1] *= tb->mod_sy;
+            }
             wh[0] = e->tex->width; wh[1] = e->tex->height;
             for (int k = 0; k < nfeedback; k++)
                 if (e->tex == feedback_tex[k] && (st_->type == TEXTYPE_2D || st_->type == TEXTYPE_2D_ARRAY)) {
@@ -5105,9 +5109,10 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
 static VkPipelineLayout present_layout;
 static VkDescriptorSetLayout present_set_layout;
 
-static VkPipeline present_pipeline(VkFormat fmt) {
-    static struct { VkFormat f; VkPipeline p; } cache[4];
-    for (int i = 0; i < 4; i++) if (cache[i].p && cache[i].f == fmt) return cache[i].p;
+// fs: present.frag (the window: opaque), copy.frag (a texture's every channel, alpha too: texture mods' dumps)
+static VkPipeline present_pipeline_fs(VkFormat fmt, const char *fs) {
+    static struct { VkFormat f; const char *fs; VkPipeline p; } cache[8];
+    for (int i = 0; i < 8; i++) if (cache[i].p && cache[i].f == fmt && cache[i].fs == fs) return cache[i].p;
     if (!present_layout) {
         VkDescriptorSetLayoutBinding b = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
         VkDescriptorSetLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &b};
@@ -5121,7 +5126,7 @@ static VkPipeline present_pipeline(VkFormat fmt) {
         {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_VERTEX_BIT,
          .module = vk_builtin_shader("present.vert"), .pName = "main"},
         {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-         .module = vk_builtin_shader("present.frag"), .pName = "main"}};
+         .module = vk_builtin_shader(fs), .pName = "main"}};
     VkPipelineVertexInputStateCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     VkPipelineInputAssemblyStateCreateInfo ia = {.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
                                                  .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
@@ -5144,14 +5149,21 @@ static VkPipeline present_pipeline(VkFormat fmt) {
                                        .pColorBlendState = &cb, .pDynamicState = &dy, .layout = present_layout};
     VkPipeline p;
     VK_CHECK(vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, &pi, NULL, &p));
-    for (int i = 0; i < 4; i++) if (!cache[i].p) { cache[i].f = fmt; cache[i].p = p; break; }
+    for (int i = 0; i < 8; i++) if (!cache[i].p) { cache[i].f = fmt; cache[i].fs = fs; cache[i].p = p; break; }
     return p;
 }
+static VkPipeline present_pipeline(VkFormat fmt) { return present_pipeline_fs(fmt, "present.frag"); }
 
 // Scanout shows the bytes the game wrote: sRGB images are read through a UNORM view (no decode).
 static VkImageView raw_view(TexBackend *b) {
     VkFormat f = b->format == VK_FORMAT_R8G8B8A8_SRGB ? VK_FORMAT_R8G8B8A8_UNORM
-               : b->format == VK_FORMAT_B8G8R8A8_SRGB ? VK_FORMAT_B8G8R8A8_UNORM : b->format;
+               : b->format == VK_FORMAT_B8G8R8A8_SRGB ? VK_FORMAT_B8G8R8A8_UNORM
+               // (compressed sRGB - native ASTC, a texture mod's BC - read as stored too: the image is mutable)
+               : b->format >= VK_FORMAT_ASTC_4x4_UNORM_BLOCK && b->format <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK &&
+                         ((b->format - VK_FORMAT_ASTC_4x4_UNORM_BLOCK) & 1) ? (VkFormat)(b->format - 1)
+               : b->format == VK_FORMAT_BC1_RGBA_SRGB_BLOCK || b->format == VK_FORMAT_BC2_SRGB_BLOCK ||
+                         b->format == VK_FORMAT_BC3_SRGB_BLOCK || b->format == VK_FORMAT_BC7_SRGB_BLOCK ? (VkFormat)(b->format - 1)
+               : b->format;
     static const VkComponentMapping id = {0};
     return vk_image_view(b, VK_IMAGE_VIEW_TYPE_2D, f, 0, 1, 0, 1, id, VK_IMAGE_ASPECT_COLOR_BIT);
 }
@@ -5401,11 +5413,12 @@ void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, floa
 }
 
 // Screenshot of a game texture (presented crop applied to build/frame_* shots), via the present shader into RGBA8.
-void renderer_save_texture_tex(TexBackend *b, const char *path) {
+// (raw: the texture as stored - not flipped for the lower-left origin, no crop: texture mods' dumps, texmods.c)
+static void save_texture(TexBackend *b, const char *path, bool raw) {
     if (!b || !b->image || (b->aspect & ~VK_IMAGE_ASPECT_COLOR_BIT)) return;
     extern const float *vk_shot_crop(void);
     float crop[4] = {0, 0, 1, 1};
-    if (strstr(path, "frame_")) memcpy(crop, vk_shot_crop(), sizeof crop);
+    if (!raw && strstr(path, "frame_")) memcpy(crop, vk_shot_crop(), sizeof crop);
     uint32_t w = (uint32_t)(b->width * crop[2]), h = (uint32_t)(b->height * crop[3]);
     if (!w || !h) return;
     vk_end_pass();
@@ -5430,7 +5443,7 @@ void renderer_save_texture_tex(TexBackend *b, const char *path) {
     VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {w, h}}, .layerCount = 1,
                           .colorAttachmentCount = 1, .pColorAttachments = &ca};
     vkCmdBeginRendering(cb, &ri);
-    VkPipeline p = present_pipeline(sf);
+    VkPipeline p = raw ? present_pipeline_fs(sf, "copy.frag") : present_pipeline(sf);
     VkDescriptorSet ds = vk_alloc_set(present_set_layout);
     VkDescriptorImageInfo ii = {vk_default_sampler(true), raw_view(b), VK_IMAGE_LAYOUT_GENERAL};
     VkWriteDescriptorSet wr = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = 0, .descriptorCount = 1,
@@ -5442,7 +5455,7 @@ void renderer_save_texture_tex(TexBackend *b, const char *path) {
     VkRect2D sc = {{0, 0}, {w, h}};
     vkCmdSetViewport(cb, 0, 1, &vp);
     vkCmdSetScissor(cb, 0, 1, &sc);
-    float pv[8] = {renderer_origin_lower_left() && !strstr(path, "window") ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
+    float pv[8] = {!raw && renderer_origin_lower_left() && !strstr(path, "window") ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
     vkCmdPushConstants(cb, present_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, 32, pv);
     vkCmdDraw(cb, 3, 1, 0, 0);
     vkCmdEndRendering(cb);
@@ -5455,6 +5468,8 @@ void renderer_save_texture_tex(TexBackend *b, const char *path) {
     vkDestroyImageView(g_vk.dev, tv, NULL);
     vmaDestroyImage(g_vk.vma, img, mem);
 }
+void renderer_save_texture_tex(TexBackend *b, const char *path) { save_texture(b, path, false); }
+void renderer_save_texture_raw(TexBackend *b, const char *path) { save_texture(b, path, true); }
 
 // ================================================================== executor (exec_list)
 static void exec_list(uint64_t handle, int depth) {

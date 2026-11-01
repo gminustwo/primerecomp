@@ -30,6 +30,8 @@ extern atomic_bool vk_save_soon;           // pc_saver saves at its next look (t
 void vk_shader_record_init(void);
 void vk_preload_start(void);
 void vk_preload_exit(void);
+void texmods_init(void);        // texmods.c: Video tab "Texture mods"
+void texmods_dump_frame(void);  // ("Dump textures": written between frames)
 
 // ================================================================== instance / device
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cb(VkDebugUtilsMessageSeverityFlagBitsEXT sev, VkDebugUtilsMessageTypeFlagsEXT type,
@@ -703,6 +705,7 @@ void backend_present(NvnTexture *t) {
     TexBackend *b = vk_tex(t, true);
     b->presented = true;
     vk_end_pass();
+    texmods_dump_frame();  // (no pass open here)
     static const float black[4] = {0, 0, 0, 1};
     uint64_t t0 = SDL_GetTicksNS();
     {   // (test) LARECOMP_HDR_TOGGLE_AT=<frame>,...: the Video tab's HDR row flipped at those frames
@@ -952,6 +955,7 @@ void ui_window_init(void) {
     pthread_detach(t);
     vk_shader_record_init();
     vk_preload_start();  // (Video > Pre-load shaders: while the start screen is up)
+    texmods_init();
 }
 
 SDL_Window *ui_window(void) { return window; }

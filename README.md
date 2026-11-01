@@ -44,7 +44,15 @@ PC, with Vulkan for the graphics. No emulator runs.
   last)
 - Any cutscene skippable
 - Cheats (F1 menu, Cheats tab): infinite energy, missiles and power bombs, a hint timer that cuts the game's
-  15-40 minute wait for a hint down to as little as a second, and L3 (keyboard: H) to show the next hint at once
+  15-40 minute wait for a hint down to as little as a second, and L3 (keyboard: H) to show the next hint at once;
+  Samus' upgrades set as you like - missiles, power bombs, energy tanks, suit, beams, visors, morph ball upgrades,
+  artifacts - or all unlocked at once
+- Shader pre-load (F1 menu, Video tab): the shaders of everything you've seen built on the start screen, so nothing
+  pops in the first time it's drawn
+- Texture mods (F1 menu, Video tab: Mods): image files in the `mods` folder drawn in place of the game's textures -
+  PNG of any size, or DDS (BC1-BC7) for big packs. Turn on Dump textures to get the game's textures, named the way
+  `mods` wants them (`dump\textures\tex_<size>_<name>.png`): edit one and put it in `mods`. Made for Remastered's own
+  textures: GameCube / Wii (Dolphin) packs don't fit its models
 
 ## Future work
 
