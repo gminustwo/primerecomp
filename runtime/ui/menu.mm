@@ -597,6 +597,103 @@ static void tab_gameplay(void) {
 }
 
 // Cheats (runtime/hle/cheats.c), live
+// Upgrades: Samus' items in the game being played (runtime/hle/cheats.c: set as the game's pickups set them, on the
+// game's thread; kept by a save at a save station like any pickup)
+extern "C" int cheats_item(int item);  // its capacity, -1: no game in play
+extern "C" void cheats_item_set(int item, int capacity);
+extern "C" int cheats_item_most(int item);
+enum { IT_ICE = 1, IT_WAVE = 2, IT_PLASMA = 3, IT_MISSILES = 4, IT_BOMBS = 6, IT_POWER_BOMBS = 7, IT_FLAMETHROWER = 8,
+       IT_THERMAL = 9, IT_CHARGE = 10, IT_SUPER_MISSILE = 11, IT_GRAPPLE = 12, IT_XRAY = 13, IT_ICE_SPREADER = 14,
+       IT_SPACE_JUMP = 15, IT_MORPH_BALL = 16, IT_BOOST = 18, IT_SPIDER = 19, IT_GRAVITY = 21, IT_VARIA = 22,
+       IT_PHAZON = 23, IT_TANKS = 24, IT_WAVEBUSTER = 28, IT_ARTIFACT = 29 };
+
+static const char *const UPGRADE_NOTE =
+    "\n\nChanges the game you're playing, as finding the item would (or as if you never had): a save at a save station "
+    "keeps it. Turning off something you need to get back out of where you are can leave you stuck.";
+
+static void item_toggle(const char *label, int item, const char *what) {
+    char d[700];
+    snprintf(d, sizeof d, "%s%s", what, UPGRADE_NOTE);
+    bool on = cheats_item(item) > 0;
+    if (opt_toggle(label, &on, false, d)) cheats_item_set(item, on ? 1 : 0);
+}
+
+static void upgrades_section(void) {
+    opt_section("Upgrades");
+    if (cheats_item(IT_MISSILES) < 0) {
+        hint("Load a save to set Samus' upgrades: her beams, visors, suits, missiles and the rest.");
+        return;
+    }
+    {
+        char d[700];
+        snprintf(d, sizeof d, "Every beam, visor, suit and morph ball upgrade, the space jump boots and the grapple "
+                              "beam, and as many missiles (250), power bombs (8) and energy tanks (14) as the game "
+                              "holds, all full. Not the Chozo artifacts (below).%s", UPGRADE_NOTE);
+        if (opt_button("Unlock all upgrades", d)) {
+            for (int i = 0; i <= IT_TANKS; i++) cheats_item_set(i, cheats_item_most(i));
+            cheats_item_set(IT_WAVEBUSTER, 1);
+        }
+    }
+    {
+        char d[700];
+        int m = cheats_item(IT_MISSILES), pb = cheats_item(IT_POWER_BOMBS), t = cheats_item(IT_TANKS);
+        snprintf(d, sizeof d, "How many missiles Samus can carry: the Missile Launcher holds 5, each expansion 5 more, "
+                              "up to 250. More fills them up.%s", UPGRADE_NOTE);
+        if (opt_int("Missiles", &m, 0, cheats_item_most(IT_MISSILES), 5, 0, "%d", d, "None")) cheats_item_set(IT_MISSILES, m);
+        snprintf(d, sizeof d, "How many power bombs Samus can carry: 4 with the Power Bomb itself, each expansion 1 "
+                              "more, up to 8. Needs the Morph Ball. More fills them up.%s", UPGRADE_NOTE);
+        if (opt_int("Power bombs", &pb, 0, cheats_item_most(IT_POWER_BOMBS), 1, 0, "%d", d, "None"))
+            cheats_item_set(IT_POWER_BOMBS, pb);
+        snprintf(d, sizeof d, "Each energy tank is 100 more energy, up to 14 (1499). More fills the energy up.%s",
+                 UPGRADE_NOTE);
+        if (opt_int("Energy tanks", &t, 0, cheats_item_most(IT_TANKS), 1, 0, "%d", d, "None")) cheats_item_set(IT_TANKS, t);
+    }
+    {   // the suits are items of their own; she wears the best she has (Phazon, Gravity, Varia): here, each comes with
+        // the ones before it, as in the game
+        static const char *const suits[] = {"Power Suit", "Varia Suit", "Gravity Suit", "Phazon Suit"};
+        int s = cheats_item(IT_PHAZON) > 0 ? 3 : cheats_item(IT_GRAVITY) > 0 ? 2 : cheats_item(IT_VARIA) > 0 ? 1 : 0;
+        char d[700];
+        snprintf(d, sizeof d, "The suit Samus wears, with the ones before it. Varia: no damage from heat (Magmoor "
+                              "Caverns). Gravity: moving freely under water, and seeing farther there. Phazon: Phazon "
+                              "doesn't hurt her.%s",
+                 UPGRADE_NOTE);
+        if (opt_choice("Suit", &s, suits, 4, 0, d, false)) {
+            cheats_item_set(IT_VARIA, s >= 1);
+            cheats_item_set(IT_GRAVITY, s >= 2);
+            cheats_item_set(IT_PHAZON, s >= 3);
+        }
+    }
+    opt_section("Beams");
+    item_toggle("Charge Beam", IT_CHARGE, "Hold fire to charge a stronger shot; needed for the beam combos.");
+    item_toggle("Ice Beam", IT_ICE, "Freezes enemies; opens white doors.");
+    item_toggle("Wave Beam", IT_WAVE, "Arcing electric shots; opens purple doors.");
+    item_toggle("Plasma Beam", IT_PLASMA, "Burning shots; opens red doors.");
+    item_toggle("Super Missile", IT_SUPER_MISSILE, "Power Beam combo: a charged shot with missiles.");
+    item_toggle("Ice Spreader", IT_ICE_SPREADER, "Ice Beam combo.");
+    item_toggle("Wavebuster", IT_WAVEBUSTER, "Wave Beam combo.");
+    item_toggle("Flamethrower", IT_FLAMETHROWER, "Plasma Beam combo.");
+    opt_section("Visors");
+    item_toggle("Thermal Visor", IT_THERMAL, "Sees heat: enemies in the dark, power conduits.");
+    item_toggle("X-Ray Visor", IT_XRAY, "Sees through walls: hidden platforms and invisible enemies.");
+    opt_section("Morph Ball");
+    item_toggle("Morph Ball", IT_MORPH_BALL, "Roll into a ball through narrow tunnels.");
+    item_toggle("Morph Ball Bomb", IT_BOMBS, "Bombs in morph ball form: break weak floors, bomb jump.");
+    item_toggle("Boost Ball", IT_BOOST, "Charge to boost the morph ball: half pipes.");
+    item_toggle("Spider Ball", IT_SPIDER, "The morph ball holds on to magnetic rails.");
+    opt_section("Movement");
+    item_toggle("Space Jump Boots", IT_SPACE_JUMP, "A second jump in the air.");
+    item_toggle("Grapple Beam", IT_GRAPPLE, "Swing from grapple points.");
+    opt_section("Chozo Artifacts");
+    static const char *const artifacts[12] = {"Truth", "Strength", "Elder", "Wild", "Lifegiver", "Warrior", "Chozo",
+                                              "Nature", "Sun", "World", "Spirit", "Newborn"};
+    for (int i = 0; i < 12; i++) {
+        char label[48];
+        snprintf(label, sizeof label, "Artifact of %s", artifacts[i]);
+        item_toggle(label, IT_ARTIFACT + i, "One of the twelve Chozo artifacts the Artifact Temple asks for to open "
+                                            "the way to the Impact Crater.");
+    }
+}
+
 static void tab_cheats(void) {
     opt_begin("##cheats", ImGui::GetFontSize() / 34);
     opt_section("Hints");
@@ -634,6 +731,7 @@ static void tab_cheats(void) {
                "found room for).");
     opt_toggle("Infinite power bombs", &g_settings.inf_power_bombs, false,
                "Power bombs stay full once you have them.");
+    upgrades_section();
     opt_end();
 }
 
