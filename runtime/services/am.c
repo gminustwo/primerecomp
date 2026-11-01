@@ -159,6 +159,11 @@ static void application_functions(Service *s, IpcReq *req, IpcResp *resp) {
         break;
     }
     case 23: memcpy(resp->data, "1.0.0", 6); resp_size(resp, 0x10); break;
+    // GetSaveDataSize(type, user) -> size, journal size. Before each save write the game asks
+    // (NFSUtility::is_valid_write_size) and writes only what fits the journal + 64 KB. Unanswered (0), a save of one
+    // file (~59 KB) went through but not one of two: copying a file (1 -> 2) did nothing (user, 0.0.5a), and nor would
+    // saving with two files in use. The save is a folder on the host: room enough said.
+    case 26: OUT(int64_t, 0) = 64ll << 20; OUT(int64_t, 8) = 64ll << 20; resp_size(resp, 16); break;
     case 40: OUT(uint8_t, 0) = 0; resp_size(resp, 1); break;  // NotifyRunning
     case 130: case 140: resp->copy_handles[resp->ncopy++] = new_event(); break;
     default: UNHANDLED("IApplicationFunctions");
