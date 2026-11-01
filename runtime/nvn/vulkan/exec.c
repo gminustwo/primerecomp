@@ -515,6 +515,8 @@ void vk_submit_extra(VkSemaphore wait, VkSemaphore signal, VkCommandBuffer extra
                         .signalSemaphoreInfoCount = signal ? 2 : 1, .pSignalSemaphoreInfos = sig,
                         .waitSemaphoreInfoCount = wait ? 1 : 0, .pWaitSemaphoreInfos = &wt};
     {
+        extern void vk_tex_fills_wait(void);  // (textures.c: staging spans still being filled - the copies read them)
+        vk_tex_fills_wait();
         PROF_T0();
         dl_note("submit %llu", (unsigned long long)submit_seq + 1);
         VkResult sr = vkQueueSubmit2(g_vk.queue, 1, &si, VK_NULL_HANDLE);
