@@ -20,7 +20,7 @@ for a in "$@"; do case $a in --no-game) NOGAME=1 ;; --launch) LAUNCH=1 ;; --log)
 
 REPO=
 [ -f "$HERE/../../Makefile" ] && REPO=$(cd "$HERE/../.." && pwd)
-first() { for p in "$@"; do [ -n "$p" ] && [ -e "$p" ] && { echo "$p"; return; }; done; }
+first() { for p in "$@"; do [ -n "$p" ] && [ -e "$p" ] && { echo "$p"; return; }; done; true; }  # (none: empty, not a failure)
 ADB=${ADB:-$(first ${REPO:+"$REPO/build/android/sdk/platform-tools/adb"} ${REPO:+"$REPO/build/android/sdk/platform-tools/adb.exe"} \
     ${ANDROID_HOME:+"$ANDROID_HOME/platform-tools/adb"} "$HOME/Library/Android/sdk/platform-tools/adb" \
     "$HOME/Android/Sdk/platform-tools/adb" "$(command -v adb 2>/dev/null || true)")}

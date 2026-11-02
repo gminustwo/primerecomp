@@ -1,6 +1,7 @@
 #!/bin/bash
-# tools/android/setup_sdk.sh [--emulator]: what the Android build needs, under build/android (nothing system-wide): a
-# JDK 21 (Temurin), the SDK command-line tools, platform-tools (adb), platform 35, build-tools 36.1, NDK 30, Gradle.
+# tools/android/setup_sdk.sh [--emulator]: what the Android build needs without Android Studio, under build/android
+# (nothing system-wide): a JDK 21 (Temurin), the SDK command-line tools, platform-tools (adb), platform 35, build-tools
+# 36.1, NDK 30 (Gradle: android/gradlew fetches it).
 # --emulator also: the emulator, an Android 15 arm64 system image (native on Apple Silicon Macs) and a virtual device
 # "PrimeRecomp" (8 GB RAM, 32 GB storage, host GPU); start it with tools/android/emulator.sh.
 # Windows (MSYS2 shell), macOS, Linux. bash 3.2 compatible. See docs/android.md.
@@ -16,7 +17,6 @@ get() { [ -s "$A/dl/$2" ] || { curl -fL --retry 3 -o "$A/dl/$2.part" "$1" && mv 
 EXT=tar.gz; [ $OS = windows ] && EXT=zip
 get "https://api.adoptium.net/v3/binary/latest/21/ga/$OS/$JARCH/jdk/hotspot/normal/eclipse" "jdk21-$OS-$JARCH.$EXT"
 get "https://dl.google.com/android/repository/commandlinetools-$CLT-16111833_latest.zip" "cmdline-tools-$CLT.zip"
-get "https://services.gradle.org/distributions/gradle-8.14.3-bin.zip" gradle.zip
 if [ ! -d "$A/jdk" ]; then
     rm -rf "$A/jdk.tmp" && mkdir "$A/jdk.tmp"
     if [ $EXT = zip ]; then unzip -q "$A/dl/jdk21-$OS-$JARCH.zip" -d "$A/jdk.tmp"
@@ -28,9 +28,6 @@ fi
 if [ ! -d "$A/sdk/cmdline-tools/latest" ]; then
     mkdir -p "$A/sdk/cmdline-tools" && unzip -q "$A/dl/cmdline-tools-$CLT.zip" -d "$A/sdk/cmdline-tools"
     mv "$A/sdk/cmdline-tools/cmdline-tools" "$A/sdk/cmdline-tools/latest"
-fi
-if [ ! -d "$A/gradle" ]; then
-    rm -rf "$A/gradle.tmp" && unzip -q "$A/dl/gradle.zip" -d "$A/gradle.tmp" && mv "$A"/gradle.tmp/* "$A/gradle" && rmdir "$A/gradle.tmp"
 fi
 export JAVA_HOME="$A/jdk" PATH="$A/jdk/bin:$PATH"
 

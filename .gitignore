@@ -23,6 +23,11 @@ __pycache__/
 /private/
 .venv/
 
-# Android: Gradle caches and the SDK path file (tools/android/apk.sh)
+# Android: Gradle caches, the SDK path file (tools/android/apk.sh), Android Studio's project files
 android/.gradle/
 android/local.properties
+android/.idea/
+android/.kotlin/
+*.iml
+tools/android/primerecomp.log
+tools/android/logcat.txt

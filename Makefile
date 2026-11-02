@@ -89,15 +89,20 @@ else ifeq ($(PLATFORM),android)
 # The runtime is libmain.so, which SDL's Java activity loads and calls SDL_main in (tools/android/apk.sh packages
 # it); the game code library links against it for the runtime functions it calls (the Linux build's -rdynamic).
 ANDROID_API ?= 30  # (Android 11: memfd_create)
-NDK      ?= $(lastword $(sort $(wildcard build/android/sdk/ndk/*)))
+# (the newest NDK in the SDK tools/android/env.sh picks: $ANDROID_HOME, setup_sdk.sh's, else Android Studio's)
+NDK      ?= $(lastword $(sort $(wildcard $(firstword $(wildcard $(ANDROID_HOME) build/android/sdk \
+                $(HOME)/Library/Android/sdk $(HOME)/Android/Sdk $(subst \,/,$(LOCALAPPDATA))/Android/Sdk))/ndk/*)))
 NDKHOST  := $(if $(filter MINGW% MSYS%,$(UNAME)),windows-x86_64,$(if $(filter Darwin,$(UNAME)),darwin-x86_64,linux-x86_64))
 CC       := $(NDK)/toolchains/llvm/prebuilt/$(NDKHOST)/bin/clang --target=aarch64-linux-android$(strip $(ANDROID_API)) -fPIC
 CXX      := $(NDK)/toolchains/llvm/prebuilt/$(NDKHOST)/bin/clang++ --target=aarch64-linux-android$(strip $(ANDROID_API)) -fPIC
 EXE      := $(B)/libmain.so
 DEPINC   := -Ibuild/android/deps/include
-OSFLAGS  := -Wno-format  # (%llx for uint64_t, which is unsigned long here: the same size)
-LDFLAGS  := -shared -fuse-ld=lld -Wl,-soname,libmain.so -Lbuild/android/deps/lib -lSDL3 -lavformat -lavcodec -lavutil \
-            -lswscale -lvulkan -lshaderc_combined -llog -landroid -lm -ldl
+OSFLAGS  := -Wno-format -Wno-nullability-completeness  # (%llx for uint64_t: unsigned long here, the same size; VMA)
+# (--no-undefined: a missing symbol fails here, not as a dlopen error on the device. Vulkan: the API 33 stub, the
+# first with the 1.3 functions the renderer calls - the manifest requires Vulkan 1.3, which only Android 13+ reports)
+LDFLAGS  := -shared -fuse-ld=lld -Wl,-soname,libmain.so -Wl,--no-undefined -Lbuild/android/deps/lib -lSDL3 -lavformat -lavcodec -lavutil \
+            -lswscale -lshaderc_shared -llog -landroid -lm -ldl \
+            $(NDK)/toolchains/llvm/prebuilt/$(NDKHOST)/sysroot/usr/lib/aarch64-linux-android/33/libvulkan.so
 BACKEND_SRC := $(wildcard runtime/nvn/vulkan/*.c) $(wildcard runtime/nvn/vulkan/*.cpp)
 BACKEND_OBJ := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(BACKEND_SRC)))
 IMGUI_OBJ += $(B)/imgui/imgui_impl_vulkan.o
