@@ -19,6 +19,17 @@ run() {  # image, command...: the checkout mounted at /src
     podman run --rm --arch "${img##*:}" -v "$PWD:/src" -w /src -e SYSROOT=/src/build/linux/aarch64/sysroot "$img" "$@"
 }
 
+# an arm64 machine (an Apple Silicon Mac's podman VM, an ARM Linux box) builds the aarch64 AppImage natively, all in
+# the arm64 container: no sysroot, no emulation
+if [ "$ARCH" = aarch64 ] && [ "$(podman info --format '{{.Host.Arch}}')" = arm64 ]; then
+    ARM=$(image arm64)
+    run "$ARM" tools/linux/gen_helper.sh aarch64
+    run "$ARM" tools/linux/package.sh aarch64
+    # (package.sh put the Linux zig in build/zig, which a Mac's own app bundles: the Mac's back, from the download cache)
+    if [ "$(uname -s)" = Darwin ]; then tools/fetch_zig.sh >/dev/null; fi
+    exit 0
+fi
+
 AMD=$(image amd64)
 if [ "$ARCH" = aarch64 ]; then
     ARM=$(image arm64)

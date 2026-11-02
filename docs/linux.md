@@ -105,8 +105,12 @@ keeps its own `generated-aarch64/` and `build/aarch64/`. Distributions that name
 Needs podman, and for aarch64 QEMU user emulation with binfmt (`sudo apt install podman qemu-user qemu-user-binfmt`).
 
     make appimage                # this machine's arch -> build/dist/PrimeRecomp-<version>-linux-<arch>.AppImage
-    make appimage ARCH=aarch64   # cross-compiled from x86-64
+    make appimage ARCH=aarch64   # cross-compiled from x86-64 (natively on an arm64 machine, below)
     make appimages               # both
+
+On an arm64 machine the aarch64 AppImage is built natively, all in the arm64 container (no sysroot, no QEMU). That
+includes an Apple Silicon Mac: `brew install podman`, `podman machine init --cpus 12 --memory 16384 --now`, then
+`tools/linux/appimage.sh aarch64` from the checkout (in your home folder, which the podman VM shares).
 
 Everything is built in Ubuntu 22.04 containers (`tools/linux/Containerfile`), so the result runs on glibc 2.35+:
 SDL3, an LGPL-only FFmpeg (only the movie codecs, as on Windows / macOS), and shaderc from pinned sources
