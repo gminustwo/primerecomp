@@ -25,7 +25,7 @@ PC, with Vulkan for the graphics. No emulator runs.
 
 ![Samus at the Landing Site on Tallon IV](docs/landing_site.jpg)
 
-## Status: v0.0.4
+## Status: v0.0.6
 
 ## Features
 
@@ -39,6 +39,8 @@ PC, with Vulkan for the graphics. No emulator runs.
 - 30, 60 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
 - Steam Deck presets
 - Gyro aiming with controllers that have one
+- Wii Remote + Nunchuk: point at the screen to aim, with the buttons laid out like Metroid Prime: Trilogy (a Mayflash
+  DolphinBar or the PC's Bluetooth; F1 menu, Controls tab: Wii Remote)
 - Rumble with a strength setting, and HD rumble: the game's own two-tone vibration, as a Switch plays it, on a
   Switch Pro Controller or a single Joy-Con, and on a DualSense's haptics over USB (F1 menu, Audio tab)
 - Stick dead zones, with a picture of where each stick rests, and flick stick: push the right stick out to face that
@@ -60,7 +62,6 @@ PC, with Vulkan for the graphics. No emulator runs.
 
 ## Future work
 
-- Adding Wiimote support
 - Adding VR support
 
 > [!WARNING]
@@ -71,6 +72,18 @@ PC, with Vulkan for the graphics. No emulator runs.
 > - Lava rising animation appears in Transport Tunnel A in magmoor when it shouldn't
 >
 > Found something else? See [Bugs and feature requests](#bugs-and-feature-requests).
+
+**New in v0.0.6: dead zones, flick stick, weapon FOV and smoother doors.** Stick dead zones, flick stick, stronger
+rumble (with a strength setting, and HD rumble on Switch controllers and a DualSense), a field of view for the arm
+cannon apart from the view's, and mouse aim that reaches the screen a frame sooner. Doors hitch less: the shaders the
+game is waiting for are built first, and a new room's textures are prepared on other threads. Running jumps at 120 fps
+go as far as at 60. Also new: Pre-load shaders (Video tab), Cheats -> Upgrades, texture mods (Video tab: Mods);
+copying a save file works, and setup no longer keeps a second 6.8 GB copy of the game data.
+
+**New in v0.0.5: Wii Remote, HDR and button icons.** Play with a Wii Remote and Nunchuk, pointing at the screen to
+aim; HDR on HDR displays; the game's button prompts drawn for your controller (Xbox, PlayStation, keyboard and mouse
+or Wii Remote); and a Cheats tab (infinite energy, missiles and power bombs, a hint timer, L3 to show the next hint).
+The Ruined Courtyard's water is back.
 
 **New in v0.0.4: smoother doors.** Going through a door used to freeze the game for up to half a second while the
 next room's textures were decoded on the CPU. They're now decoded on the graphics card, and lighting and texture
@@ -129,7 +142,7 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 
 ### Windows
 
-1. Download `PrimeRecomp-v0.0.4-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
+1. Download `PrimeRecomp-v0.0.6-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
    extract it somewhere you can write to (e.g. Documents or a games folder - not Program Files).
 2. Run `primerecomp.exe`. The start screen asks for your game files: choose the folder that holds `exefs` and
    `romfs`, then **Set up**. It copies what it needs and recompiles the game on your PC. This happens once and
@@ -142,7 +155,7 @@ from a short note of where that folder is (`%LOCALAPPDATA%\PrimeRecomp\copies.tx
 
 ### macOS (Apple Silicon)
 
-1. Download `PrimeRecomp-v0.0.3-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
+1. Download `PrimeRecomp-v0.0.6-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
    it and drag **PrimeRecomp** onto **Applications**.
 2. PrimeRecomp isn't notarized by Apple, so macOS won't open it as downloaded. Open Terminal once and run:
 
@@ -161,7 +174,7 @@ appears, MoltenVK compiles its shader for Metal, which can show as a brief hitch
 
 ### Linux
 
-1. Download `PrimeRecomp-v0.0.4-linux-x86_64.AppImage` from
+1. Download `PrimeRecomp-v0.0.6-linux-x86_64.AppImage` from
    [Releases](https://github.com/gminustwo/primerecomp/releases) and make it executable (`chmod +x`, or in your file
    manager: Properties -> Permissions -> executable).
 2. Run it. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs`, **Set up**, then
@@ -246,7 +259,7 @@ builds the AppImage in an Ubuntu 22.04 container (from Windows, that works insid
 [docs/macos.md](docs/macos.md) - `make deps`, `make gen-helper` and `tools/fetch_zig.sh` once, then `make app` builds
 `build/PrimeRecomp.app`, the same Vulkan renderer on MoltenVK, and `make dmg` the release disk image.
 
-Developer notes: [PROGRESS.md](PROGRESS.md) (history) and [HANDOFF.md](HANDOFF.md) (current state). Link's
+Developer notes are in the commit messages. Link's
 Awakening's game code (its patches, its memory hooks, the randomizer, cheats and cosmetics) has been removed; LAS
 Recomp's developer names (the `LARECOMP_*` test variables, some internal symbols) are kept on purpose, so fixes
 still move between the two projects easily.
