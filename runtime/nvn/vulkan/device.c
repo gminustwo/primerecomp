@@ -926,6 +926,11 @@ void ui_window_init(void) {
             setenv("VK_DRIVER_FILES", icd, 1);
     }
 #endif
+#ifdef __ANDROID__
+    // landscape only (either way up), as the manifest says: SDL otherwise turns a resizable window's activity to any
+    // orientation, and a phone held upright rendered the game letterboxed in a 1080x2400 swapchain
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) FATAL("SDL_Init: %s\n", SDL_GetError());
     int win_w = 1280, win_h = 720;
     if (getenv("LARECOMP_WINDOW")) sscanf(getenv("LARECOMP_WINDOW"), "%dx%d", &win_w, &win_h);

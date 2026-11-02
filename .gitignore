@@ -22,3 +22,12 @@ __pycache__/
 # MPR Recomp: game files, keys and everything derived from them
 /private/
 .venv/
+
+# Android: Gradle caches, the SDK path file (tools/android/apk.sh), Android Studio's project files
+android/.gradle/
+android/local.properties
+android/.idea/
+android/.kotlin/
+*.iml
+tools/android/primerecomp.log
+tools/android/logcat.txt
