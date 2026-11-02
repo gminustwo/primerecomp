@@ -58,7 +58,33 @@ bool gamelib_present(const char *game_dir) {
     return false;
 }
 
+#ifdef __ANDROID__
+// Android mounts the shared storage (the data root, Android/data/<package>/files) without exec: the library is loaded
+// from a copy in the app's private folder, made again when its size or time differs.
+#include <SDL3/SDL_system.h>
+#include <sys/stat.h>
+static const char *private_copy(const char *path) {
+    static char out[1100];
+    const char *dir = SDL_GetAndroidInternalStoragePath();
+    struct stat a, b;
+    if (!dir || stat(path, &a) != 0) return path;
+    snprintf(out, sizeof out, "%s/%s", dir, GAMELIB_NAME);
+    if (stat(out, &b) == 0 && b.st_size == a.st_size && b.st_mtime >= a.st_mtime) return out;
+    FILE *in = fopen(path, "rb"), *o = fopen(out, "wb");
+    bool ok = in && o;
+    static char buf[1 << 20];
+    for (size_t n; ok && (n = fread(buf, 1, sizeof buf, in)) > 0;) ok = fwrite(buf, 1, n, o) == n;
+    if (in) fclose(in);
+    if (o && fclose(o) != 0) ok = false;
+    LOG("[gamelib] %s -> %s: %s\n", path, out, ok ? "copied" : "copy failed");
+    return ok ? out : path;
+}
+#endif
+
 static const GameLibTables *open_lib(const char *path) {
+#ifdef __ANDROID__
+    path = private_copy(path);
+#endif
 #ifdef _WIN32
     HMODULE h = LoadLibraryA(path);
     if (!h) { snprintf(g_error, sizeof g_error, "can't load %s (error %lu)", path, GetLastError()); return NULL; }
