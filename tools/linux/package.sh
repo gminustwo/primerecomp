@@ -79,16 +79,21 @@ fetch() {  # url sha256 file
     [ -f "build/linux/src/$3" ] || { curl -fsSL -o "build/linux/src/$3.part" "$1" && mv "build/linux/src/$3.part" "build/linux/src/$3"; }
     echo "$2  build/linux/src/$3" | sha256sum -c --quiet
 }
-fetch https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage \
-      ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0 appimagetool-x86_64.AppImage
+TOOL=appimagetool-$(uname -m).AppImage  # (the container's own arch: x86_64, or aarch64 in a native arm64 build)
+case $(uname -m) in
+    x86_64) fetch https://github.com/AppImage/appimagetool/releases/download/1.9.1/$TOOL \
+                  ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0 "$TOOL" ;;
+    aarch64) fetch https://github.com/AppImage/appimagetool/releases/download/1.9.1/$TOOL \
+                   f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158 "$TOOL" ;;
+esac
 case $ARCH in
     x86_64) fetch https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64 \
                   2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d runtime-x86_64 ;;
     aarch64) fetch https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-aarch64 \
                    00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444 runtime-aarch64 ;;
 esac
-chmod +x build/linux/src/appimagetool-x86_64.AppImage
+chmod +x "build/linux/src/$TOOL"
 mkdir -p build/dist && rm -f "$OUT"
-APPIMAGE_EXTRACT_AND_RUN=1 ARCH=$ARCH build/linux/src/appimagetool-x86_64.AppImage --no-appstream \
+APPIMAGE_EXTRACT_AND_RUN=1 ARCH=$ARCH "build/linux/src/$TOOL" --no-appstream \
     --runtime-file "build/linux/src/runtime-$ARCH" "$APPDIR" "$OUT"
 ls -la "$OUT"
