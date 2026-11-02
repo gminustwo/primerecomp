@@ -5,7 +5,13 @@
 #include <string.h>
 #include <sys/random.h>
 
-#if !__GLIBC_PREREQ(2, 38)
+#ifdef __GLIBC__
+#define GLIBC_BEFORE(major, minor) (!__GLIBC_PREREQ(major, minor))
+#else
+#define GLIBC_BEFORE(major, minor) 0  // (Android's bionic has them all)
+#endif
+
+#if GLIBC_BEFORE(2, 38)
 static inline size_t strlcpy(char *d, const char *s, size_t n) {
     size_t len = strlen(s);
     if (n) {
@@ -22,7 +28,7 @@ static inline size_t strlcat(char *d, const char *s, size_t n) {
 }
 #endif
 
-#if !__GLIBC_PREREQ(2, 36)
+#if GLIBC_BEFORE(2, 36)
 static inline uint32_t arc4random(void) {
     uint32_t v = 0;
     while (getrandom(&v, sizeof v, 0) != sizeof v) {}

@@ -26,6 +26,13 @@ B        ?= build/$(ARCH)
 endif
 GENSIMD  := --simd $(if $(filter aarch64,$(ARCH)),asm,c)
 endif
+# Android (arm64-v8a): `make PLATFORM=android` (MSYS2 shell on Windows, or Linux / macOS), with the SDK, NDK and
+# libraries of tools/android/build_deps.sh under build/android. AArch64 code generation as on Linux aarch64.
+ifeq ($(PLATFORM),android)
+GEN      := generated-aarch64
+B        ?= build/android/build
+GENSIMD  := --simd asm
+endif
 
 # B: build dir. MACOS_MIN: oldest macOS to run on (default: this one). DEPS: prefix with SDL3 / FFmpeg / the Vulkan
 # stack instead of Homebrew's (make deps). `make app` sets all three (build/mac15, 15.0, build/deps); plain `make` on
@@ -46,8 +53,9 @@ GENFLAGS := -O1 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibi
 # the app itself holds none of it
 GEN_SRC  := $(wildcard $(GEN)/main/*.c) $(wildcard $(GEN)/sdk/*.c)
 GEN_OBJ  := $(patsubst %.c,$(B)/obj/%.o,$(patsubst $(GEN)/%,%,$(GEN_SRC))) $(B)/obj/tools/gamelib_entry.o
+PLATSRC  := $(if $(filter android,$(PLATFORM)),linux,$(PLATFORM))  # (Android: the Linux layer, with its #ifdefs)
 RT_SRC   := $(wildcard runtime/*.c) $(wildcard runtime/hle/*.c) $(wildcard runtime/services/*.c) \
-            $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(PLATFORM).c \
+            $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(strip $(PLATSRC)).c \
             $(if $(filter windows,$(PLATFORM)),,runtime/platform/posix.c)  # (what macOS and Linux share)
 RT_HDRS  := $(wildcard runtime/*.h) $(wildcard runtime/platform/*.h) $(wildcard runtime/nvn/*.h) \
             $(wildcard runtime/nvn/maxwell/*.h) $(wildcard runtime/nvn/vulkan/*.h) $(wildcard runtime/ui/*.h)
@@ -77,6 +85,26 @@ UIFLAGS  := -x c++ $(OSFLAGS)  # the .mm UI sources are plain C++
 GAMELIB  := $(B)/primegame.dylib
 GAMELIB_LDFLAGS := -dynamiclib -undefined dynamic_lookup  # (the runtime functions it calls: the app's own)
 GAMELIB_SHARED := -shared -Wl,-undefined,dynamic_lookup  # (the same, for the start screen's build: zig cc)
+else ifeq ($(PLATFORM),android)
+# The runtime is libmain.so, which SDL's Java activity loads and calls SDL_main in (tools/android/apk.sh packages
+# it); the game code library links against it for the runtime functions it calls (the Linux build's -rdynamic).
+ANDROID_API ?= 30  # (Android 11: memfd_create)
+NDK      ?= $(lastword $(sort $(wildcard build/android/sdk/ndk/*)))
+NDKHOST  := $(if $(filter MINGW% MSYS%,$(UNAME)),windows-x86_64,$(if $(filter Darwin,$(UNAME)),darwin-x86_64,linux-x86_64))
+CC       := $(NDK)/toolchains/llvm/prebuilt/$(NDKHOST)/bin/clang --target=aarch64-linux-android$(strip $(ANDROID_API)) -fPIC
+CXX      := $(NDK)/toolchains/llvm/prebuilt/$(NDKHOST)/bin/clang++ --target=aarch64-linux-android$(strip $(ANDROID_API)) -fPIC
+EXE      := $(B)/libmain.so
+DEPINC   := -Ibuild/android/deps/include
+OSFLAGS  := -Wno-format  # (%llx for uint64_t, which is unsigned long here: the same size)
+LDFLAGS  := -shared -fuse-ld=lld -Wl,-soname,libmain.so -Lbuild/android/deps/lib -lSDL3 -lavformat -lavcodec -lavutil \
+            -lswscale -lvulkan -lshaderc_combined -llog -landroid -lm -ldl
+BACKEND_SRC := $(wildcard runtime/nvn/vulkan/*.c) $(wildcard runtime/nvn/vulkan/*.cpp)
+BACKEND_OBJ := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(BACKEND_SRC)))
+IMGUI_OBJ += $(B)/imgui/imgui_impl_vulkan.o
+UIFLAGS  := -x c++ $(OSFLAGS)  # the .mm UI sources are plain C++
+GAMELIB  := $(B)/primegame.so
+GAMELIB_LDFLAGS := -shared -fuse-ld=lld $(EXE)
+GAMELIB_SHARED := -shared
 else ifeq ($(PLATFORM),linux)
 EXE      := $(B)/primerecomp
 DEPINC   := $(if $(DEPS),-I$(DEPS)/include)

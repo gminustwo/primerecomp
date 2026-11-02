@@ -1,5 +1,8 @@
 // LAS Recomp entry: load modules, set up the kernel, run nn::init::Start on the main thread.
 #include <SDL3/SDL.h>
+#ifdef __ANDROID__
+#include <SDL3/SDL_main.h>  // (main is SDL_main: SDL's Java activity calls it in libmain.so)
+#endif
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -40,8 +43,14 @@ static void rtld_fini(Cpu *c) { (void)c; }  // after nnMain returns: the process
 
 // Claim the guest address range before anything else can map there. The host allocator places
 // regions at random addresses in the same window; on a collision, re-exec for a fresh layout.
+// Android: the app's process is forked from the zygote with its libraries already mapped, and can't re-exec - the
+// range is claimed as this library loads, and a collision is reported by main (what holds the range: the log).
+static bool g_guest_reserved __attribute__((unused));  // (read on Android only)
 __attribute__((constructor(101))) static void reserve_guest_space(void) {
-    if (plat_reserve_guest(GUEST_LO, GUEST_HI)) { plat_guest_shared(HEAP_BASE, HEAP_BASE + HEAP_MAX); return; }
+    if (plat_reserve_guest(GUEST_LO, GUEST_HI)) { g_guest_reserved = true; plat_guest_shared(HEAP_BASE, HEAP_BASE + HEAP_MAX); return; }
+#ifdef __ANDROID__
+    return;
+#endif
     const char *tries = getenv("LARECOMP_REEXEC");
     int n = tries ? atoi(tries) : 0;
     if (n >= 20) {
@@ -200,6 +209,8 @@ int main(int argc, char **argv) {
     const char *os = "Windows";
 #elif defined(__APPLE__)
     const char *os = "macOS";
+#elif defined(__ANDROID__)
+    const char *os = "Android";
 #else
     const char *os = "Linux";
 #endif
@@ -209,6 +220,19 @@ int main(int argc, char **argv) {
     const char *arch = "x86-64";
 #endif
     LOG("[version] PrimeRecomp %s (%s, %s)\n", rt_version(), os, arch);  // (bug reports: tools/log_triage.py)
+#ifdef __ANDROID__
+    if (!g_guest_reserved) {  // (no re-exec here: what took the range, then out)
+        FILE *m = fopen("/proc/self/maps", "r");
+        char line[512];
+        while (m && fgets(line, sizeof line, m)) {
+            unsigned long long a = 0, b = 0;
+            if (sscanf(line, "%llx-%llx", &a, &b) == 2 && a < GUEST_HI && b > GUEST_LO) LOG("[guest] taken: %s", line);
+        }
+        if (m) fclose(m);
+        FATAL("guest address range %llx-%llx is not free in this process\n", GUEST_LO, GUEST_HI);
+    }
+    skip_launcher = true;  // (for now: the start screen's setup builds the game code, which a phone can't)
+#endif
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
     for (bool title = !skip_launcher;;) {
         if (title) {  // start screen (runtime/ui/launcher.mm): game files setup, seed choice, settings

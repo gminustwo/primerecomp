@@ -1,0 +1,36 @@
+plugins {
+    id 'com.android.application'
+}
+
+// SDL's Java side (SDLActivity and its helpers) straight from the SDL3 source tools/android/build_deps.sh unpacks;
+// the native libraries and assets are staged by tools/android/apk.sh (build/android/jniLibs, build/android/assets)
+def staged = file('../../build/android')
+def sdlJava = file("${staged}/src/SDL3-3.4.18/android-project/app/src/main/java")
+
+android {
+    namespace = 'io.github.primerecomp'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'io.github.primerecomp'
+        minSdk 30
+        targetSdk 35
+        versionCode 4
+        versionName '0.0.4'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    sourceSets.main {
+        java.srcDirs += [sdlJava]
+        jniLibs.srcDirs = ["${staged}/jniLibs"]
+        assets.srcDirs = ["${staged}/assets"]
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug  // (sideloaded test builds: the SDK's debug key)
+        }
+    }
+    packagingOptions {
+        jniLibs { keepDebugSymbols += ['**/*.so'] }  // (stripped by apk.sh already: keep Gradle from doing it again)
+    }
+    lint { abortOnError false }
+}
