@@ -1,8 +1,9 @@
 # PrimeRecomp on Android (experimental)
 
-**Status:** the Android build (arm64-v8a, Android 11+) compiles and packages, but hasn't run anywhere yet. The first
-target is an emulator on an Apple Silicon Mac, then Snapdragon (Adreno) devices. Expect it not to boot the first time:
-the log says why.
+**Status:** the Android build (arm64-v8a; Vulkan 1.3, so Android 13+ in practice) reaches the title screen in the
+Android 15 emulator on an Apple Silicon Mac (v0.0.6: 40+ fps through the emulator's GPU forwarding, the game at full
+speed). Not tried yet: real phones (Snapdragon / Adreno first), playing past the title screen. Expect a phone not to
+boot the first time: the log says why.
 
 What's there: the runtime as `libmain.so` in an APK (SDL3's Java activity around it), with SDL3, FFmpeg and shaderc
 built for Android. What isn't: the start screen's setup (it builds the game code with zig, which a phone can't run) -
@@ -11,11 +12,22 @@ controller or, in an emulator, the keyboard).
 
 ## Building (Windows: MSYS2 UCRT64 shell; macOS / Linux: a terminal)
 
-Everything goes under `build/android` (nothing system-wide, about 5 GB):
+With **Android Studio** (2026.2 or newer): in its SDK Manager, install Android SDK Platform 35 and, under SDK Tools,
+NDK (Side by side) 30. The scripts use its SDK, NDK and JDK (`tools/android/env.sh`; `ANDROID_HOME` / `JAVA_HOME`
+pick others):
 
-    tools/android/setup_sdk.sh           # JDK 21, Android SDK + NDK 30, Gradle  (--emulator: also the emulator, below)
     tools/android/build_deps.sh          # SDL3, shaderc, FFmpeg for arm64-v8a  (build/android/deps)
-    tools/android/apk.sh                 # -> build/android/PrimeRecomp-<version>-android.apk  (17 MB, no game code)
+    tools/android/apk.sh                 # -> build/android/PrimeRecomp-<version>-android.apk  (no game code)
+
+`apk.sh` builds the runtime (`libmain.so`), stages it with the libraries and assets in `build/android`, and runs
+Gradle (`android/gradlew`). After it has run once, `android/` also opens as a project in Android Studio: Build >
+Generate App Bundles or APKs > Build APK(s) packages the staged libraries again, and Run installs it on a device or
+emulator. Rebuild the native code with `apk.sh` (Android Studio doesn't compile it). The version comes from the PC
+builds' (`runtime/ui/launcher.mm`).
+
+Without Android Studio, everything can go under `build/android` instead (nothing system-wide, about 5 GB): run
+`tools/android/setup_sdk.sh` first (JDK 21, the SDK command-line tools, platform 35, NDK 30; `--emulator`: also the
+emulator, below), then the two commands above.
 
 The game code, from your own game files' `exefs` (the AArch64 generator mode, as on Linux aarch64 and macOS):
 

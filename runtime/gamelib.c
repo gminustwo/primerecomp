@@ -107,7 +107,12 @@ bool gamelib_load(const char *game_dir, char *why, size_t why_size) {
     static bool tried;
     if (!tried) {
         tried = true;
+#ifdef __ANDROID__  // (no start screen setup on a phone yet: the library is built on a computer, docs/android.md)
+        snprintf(g_error, sizeof g_error, "the game code hasn't been copied over: build primegame.so on a computer and "
+                 "put it in %s with the game files (docs/android.md, tools/android/deploy.sh)", game_dir);
+#else
         snprintf(g_error, sizeof g_error, "the game code hasn't been built: set up the game files on the start screen");
+#endif
         char c[3][1100];
         int n = candidates(game_dir, c);
         const char *env = getenv("LARECOMP_GAME_LIB");
