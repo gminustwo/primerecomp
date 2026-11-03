@@ -35,7 +35,7 @@ enum { HDR_PEAK_MIN = 400, HDR_PEAK_MAX = 4000, HDR_PAPER_MIN = 80, HDR_PAPER_MA
 // System language served to the game (runtime/services/am.c GetDesiredLanguage, services/hid_set.c GetLanguageCode):
 // the game picks its text language from it, as it would from the Switch's own system setting. LANG_AUTO follows the
 // host locale ($LC_ALL / $LC_MESSAGES / $LANG); the rest are the codes of the languages the game has text for.
-enum { LANG_AUTO = 0, N_LANGUAGES = 12 };
+enum { LANG_AUTO = 0, N_LANGUAGES = 11 };  // (an ini's language not among them - an older version's "ru" - is Auto)
 extern const char *const g_language_codes[N_LANGUAGES];  // what the game is told: "ja", "en-US", "es", ...
 extern const char *const g_language_names[N_LANGUAGES];  // for the menu ("Auto", "Japanese", ..., "Spanish")
 
