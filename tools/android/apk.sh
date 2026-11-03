@@ -11,7 +11,7 @@ cd "$(dirname "$0")/../.."
 VERSION=$(sed -n 's/^#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)  # (as android/app/build.gradle)
 
 tools/android/build_deps.sh  # (quick when built: it skips each part whose output exists)
-make PLATFORM=android NDK="$NDK" -j"$(getconf _NPROCESSORS_ONLN)" build/android/build/libmain.so
+make PLATFORM=android NDK="$NDK" -j"${JOBS:-$(getconf _NPROCESSORS_ONLN)}" build/android/build/libmain.so  # (JOBS=<n>)
 
 # native libraries (stripped: libmain.so carries 100+ MB of debug info - the unstripped one stays in build/android/build
 # for ndk-stack / addr2line on a crash's offsets)

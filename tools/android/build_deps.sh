@@ -10,7 +10,7 @@ API=${API:-29}
 P=$A/deps
 S=$A/src
 mkdir -p "$P/lib" "$P/include" "$S"
-JOBS=$(getconf _NPROCESSORS_ONLN)
+JOBS=${JOBS:-$(getconf _NPROCESSORS_ONLN)}  # (JOBS=<n>: fewer at once)
 if [ $HOST = windows-x86_64 ]; then
     NDKBUILD() { "$(cygpath -u "${SYSTEMROOT:-C:\Windows}")/System32/cmd.exe" //c "$(cygpath -w "$NDK/ndk-build.cmd")" "$@" || exit 1; }
 else
