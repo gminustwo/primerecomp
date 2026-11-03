@@ -154,6 +154,7 @@ static void application_functions(Service *s, IpcReq *req, IpcResp *resp) {
     case 21: {  // GetDesiredLanguage: the game's text language (settings: runtime/settings.c, "language")
         char lang[8] = {0};
         snprintf(lang, sizeof lang, "%s", settings_language());
+        LOG("[am] GetDesiredLanguage: %s\n", lang);  // (bug reports: the game's text language)
         memcpy(resp->data, lang, 8);
         resp_size(resp, 8);
         break;

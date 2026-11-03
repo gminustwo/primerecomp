@@ -68,13 +68,16 @@ static int res_snap(int lines) {
     return best;
 }
 
-// The game's own text languages: its RomFS carries these per region (regionUS/USen|USes|USfr, regionEU/EUen|EUes|...,
-// regionJP/JPja, regionKR/KRkr, regionTW/TWch, regionCN/CNch), and the game picks one from the system language it
-// reads back (runtime/services/am.c), exactly as it does on the console. Codes as the Switch reports them.
-const char *const g_language_codes[N_LANGUAGES] = {"auto", "ja", "en-US", "es", "fr", "de", "it", "nl", "ru", "ko",
-                                                   "zh-CN", "zh-TW"};
+// The game's own text languages, as the Switch codes them: the game picks its text and region from the language it
+// reads back (runtime/services/am.c; its table: COsContext::COsContext). That table also knows Portuguese, Russian
+// and "zh-TW" (the Switch's older Taiwanese, a language of its own there), but the game has no text for them: told
+// either of the last two it crashed building the HUD (CHudVisorBeamMenuMP1, its visor menu's text pane not there;
+// issue #21). Its Traditional Chinese is "zh-Hant". A console only ever reports one of the game's own languages
+// (GetDesiredLanguage chooses among them), so these are the ones offered: each loads a save.
+const char *const g_language_codes[N_LANGUAGES] = {"auto", "ja", "en-US", "es", "fr", "de", "it", "nl", "ko",
+                                                   "zh-CN", "zh-Hant"};
 const char *const g_language_names[N_LANGUAGES] = {"Auto", "Japanese", "English", "Spanish", "French", "German",
-                                                   "Italian", "Dutch", "Russian", "Korean", "Chinese (Simplified)",
+                                                   "Italian", "Dutch", "Korean", "Chinese (Simplified)",
                                                    "Chinese (Traditional)"};
 
 // LANG_AUTO: the host's own language (LANG=es_ES.UTF-8 -> es), en-US when it is none of the game's. Linux only:
@@ -90,11 +93,11 @@ static const char *host_language(void) {
     char l[8] = {0};
     size_t n = 0;
     for (const char *p = e; *p && *p != '.' && *p != '@' && *p != '_' && n < sizeof l - 1; p++) l[n++] = *p;
-    static const struct { const char *loc, *code; } map[] = {{"ja", "ja"}, {"ko", "ko"}, {"ru", "ru"}, {"nl", "nl"},
-                                                             {"de", "de"}, {"it", "it"}, {"fr", "fr"}, {"es", "es"}};
+    static const struct { const char *loc, *code; } map[] = {{"ja", "ja"}, {"ko", "ko"}, {"nl", "nl"}, {"de", "de"},
+                                                             {"it", "it"}, {"fr", "fr"}, {"es", "es"}};
     for (size_t i = 0; i < sizeof map / sizeof *map; i++)
         if (!strcmp(l, map[i].loc)) return map[i].code;
-    if (!strcmp(l, "zh")) return e[n] == '_' && e[n + 1] == 'T' ? "zh-TW" : "zh-CN";  // (TW / HK: traditional)
+    if (!strcmp(l, "zh")) return e[n] == '_' && (e[n + 1] == 'T' || e[n + 1] == 'H') ? "zh-Hant" : "zh-CN";  // (TW / HK)
     return "en-US";
 }
 
@@ -235,6 +238,7 @@ void settings_load(void) {
         }
         else if (!strcmp(key, "language")) {  // ("auto" or one of the game's codes; anything else: auto)
             g_settings.language = LANG_AUTO;
+            if (!strcmp(val, "zh-TW")) strcpy(val, "zh-Hant");  // (an older version's Traditional Chinese)
             for (int i = 1; i < N_LANGUAGES; i++)
                 if (!strcmp(val, g_language_codes[i])) g_settings.language = i;
         }
