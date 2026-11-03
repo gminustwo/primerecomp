@@ -199,7 +199,7 @@ int rt_skip_cinematics(void) {  // (also CCameraManager::CheckForCinematicSkip: 
 // handing back. The camera already made keeps its own (CGameCameraMP1: +0x25c the FOV now, +0x280 / +0x284 an
 // interpolation's start / target, +0x278 its time left, +0x270 bit 0 "changed"): that one is set as well while it's
 // the current camera and not interpolating, unless the game aimed it somewhere of its own.
-#define FP_FOV_DEFAULT 0x70020e7a70ull
+#define FP_FOV_DEFAULT (MAIN_BASE + 0x20e7a70)
 static uint64_t g_player_seen;  // the frame the player last updated (rt_player_frame; 0: not yet)
 
 int rt_fov(void) {  // (LARECOMP_FOV: test override)
@@ -216,7 +216,7 @@ bool game_in_play(void) {
     return g_player_seen && vk_frame_counter() <= g_player_seen + 2;
 }
 
-#define GUEST_PTR_OK(p) ((p) >= 0x7000000000ull && (p) < 0x7f00000000ull && !((p) & 7))
+#define GUEST_PTR_OK(p) ((p) >= GUEST_LO && (p) < GUEST_HI && !((p) & 7))
 
 // The in-game GUI's screen (NInGameGuiStatesMP1::EInGameGuiState; 0: no game running). CInGameGuiManagerMP1 keeps the
 // screen it's on or going to at +0x2e4 and the one before at +0x2e0 (BeginStateTransition; IsGamePaused: either

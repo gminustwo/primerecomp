@@ -15,25 +15,35 @@ void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 #define FATAL(...) (fprintf(stderr, "FATAL: " __VA_ARGS__), rt_fatal_trace())
 
 // ---- address space layout (guest addresses == host addresses)
-// macOS reserves 0x2_0000_0000-0x70_0000_0000, and guest addresses must fit in 39 bits, so the
-// guest lives in a 12.5 GB window at 0x70_0000_0000 claimed at startup (see main.c).
-#define GUEST_LO     0x7000000000ull
-#define GUEST_HI     0x7320000000ull
-#define MAIN_BASE    0x7000000000ull
-#define SDK_BASE     0x7006000000ull   // (main is ~75 MB in memory: past LA's 0x7004000000)
+// The guest lives in a 12.5 GB window claimed at startup (see main.c); guest addresses must fit in 39 bits. macOS
+// reserves 0x2_0000_0000-0x70_0000_0000, so on a computer the window is at 0x70_0000_0000. Android: a phone with a
+// 39-bit address space (512 GB) has its system libraries mapped down from 0x80_0000_0000 through all of that before
+// the app starts (issue #20), so there it is at 0x10_0000_0000. The game code is generated for the window it runs in
+// (the Makefile's GUEST_WINDOW, which matches this; runtime/gamelib.c refuses a library made for another).
+#ifndef GUEST_WINDOW
+#ifdef __ANDROID__
+#define GUEST_WINDOW 0x1000000000ull
+#else
+#define GUEST_WINDOW 0x7000000000ull
+#endif
+#endif
+#define GUEST_LO     GUEST_WINDOW
+#define GUEST_HI     (GUEST_WINDOW + 0x320000000ull)
+#define MAIN_BASE    GUEST_WINDOW
+#define SDK_BASE     (GUEST_WINDOW + 0x6000000ull)   // (main is ~75 MB in memory: past LA's sdk at main + 0x4000000)
 // The code modules, in Horizon's load (and symbol lookup) order. subsdk0 (nnMedia, the movie:: library) is not
-// loaded: movie:: is host code on FFmpeg (runtime/hle/movie.c), as in LAS Recomp; 0x7005000000 is kept for it.
+// loaded: movie:: is host code on FFmpeg (runtime/hle/movie.c), as in LAS Recomp; main + 0x5000000 is kept for it.
 #define GAME_NMODULES 2
 #define GAME_MODULES {{"main", MAIN_BASE}, {"sdk", SDK_BASE}}
-#define HLE_BASE     0x7080000000ull   // fake addresses for host-implemented functions
+#define HLE_BASE     (GUEST_WINDOW + 0x80000000ull)   // fake addresses for host-implemented functions
 #define HLE_SIZE     0x0000100000ull
-#define TLS_BASE     0x7090000000ull
+#define TLS_BASE     (GUEST_WINDOW + 0x90000000ull)
 #define TLS_SIZE     0x0000100000ull
-#define HLE_HEAP     0x7092000000ull   // guest-visible memory owned by host code
+#define HLE_HEAP     (GUEST_WINDOW + 0x92000000ull)   // guest-visible memory owned by host code
 #define HLE_HEAP_SIZE 0x000E000000ull
-#define ALIAS_BASE   0x7100000000ull   // alias region (svcMapMemory targets)
+#define ALIAS_BASE   (GUEST_WINDOW + 0x100000000ull)  // alias region (svcMapMemory targets)
 #define ALIAS_SIZE   0x0100000000ull
-#define HEAP_BASE    0x7240000000ull
+#define HEAP_BASE    (GUEST_WINDOW + 0x240000000ull)
 #define HEAP_MAX     0x00D0000000ull   // 3.25 GB
 
 // ---- loader.c

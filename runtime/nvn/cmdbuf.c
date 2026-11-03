@@ -341,7 +341,7 @@ static void trace_draw(Cpu *c, uint64_t count) {
     if (n++ > 40) return;
     LOG("[trace] draw count %llu lr %llx chain:", (unsigned long long)count, (unsigned long long)c->x[30]);
     uint64_t fp = c->x[29];
-    for (int i = 0; i < 14 && fp >= 0x7000000000ull && fp < 0x8000000000ull && (fp & 7) == 0; i++) {
+    for (int i = 0; i < 14 && fp >= GUEST_LO && fp + 16 <= GUEST_HI && (fp & 7) == 0; i++) {
         uint64_t next = *(uint64_t *)(uintptr_t)fp, lr = *(uint64_t *)(uintptr_t)(fp + 8);
         LOG(" %llx", (unsigned long long)lr);
         if (next <= fp) break;
