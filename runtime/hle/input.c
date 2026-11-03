@@ -255,8 +255,46 @@ static void note_family(void) {
     if (f != pad_family) LOG("[input] controller family: %s\n", f == 1 ? "Xbox" : f == 2 ? "PlayStation" : "Nintendo / other");
     pad_family = f;
 }
+#ifdef __ANDROID__
+// SDL's own mapping for a controller it has no entry for (SDL_CreateMappingForAndroidGamepad) gives it trigger axes only
+// when it reports six axes or more. One with digital triggers - KEYCODE_BUTTON_L2 / R2, SDL's buttons 15 and 16 there
+// (a Switch Pro Controller, many Bluetooth pads) - got no LT / RT at all: they did nothing. They join its mapping as the
+// triggers (fully pressed or not), for the game, the menu and the controls screen alike.
+static bool mapping_uses_button(const char *m, int b) {
+    char key[8];
+    snprintf(key, sizeof key, ":b%d", b);
+    for (const char *s = strstr(m, key); s; s = strstr(s + 1, key))
+        if (s[strlen(key)] == ',' || !s[strlen(key)]) return true;
+    return false;
+}
+static void android_digital_triggers(SDL_Gamepad *p) {
+    SDL_Joystick *j = SDL_GetGamepadJoystick(p);
+    if (!j || SDL_GamepadHasAxis(p, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) || SDL_GamepadHasAxis(p, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) ||
+        SDL_GetNumJoystickButtons(j) < 17)
+        return;
+    char *m = SDL_GetGamepadMapping(p);
+    if (!m) return;
+    if (!mapping_uses_button(m, 15) && !mapping_uses_button(m, 16)) {
+        size_t n = strlen(m) + 40;
+        char *with = SDL_malloc(n);
+        if (with) {
+            snprintf(with, n, "%s%slefttrigger:b15,righttrigger:b16,", m, *m && m[strlen(m) - 1] != ',' ? "," : "");
+            if (SDL_AddGamepadMapping(with) >= 0) LOG("[input] digital triggers: L2 / R2 (buttons 15 / 16) as LT / RT\n");
+            else LOG("[input] digital triggers not mapped: %s\n", SDL_GetError());
+            SDL_free(with);
+        }
+    }
+    SDL_free(m);
+}
+#endif
 static void log_pad(void) {
     if (!pad) return;
+#ifdef __ANDROID__
+    android_digital_triggers(pad);
+    char *m = SDL_GetGamepadMapping(pad);  // (what SDL made of the controller: bug reports)
+    LOG("[input] mapping: %s\n", m ? m : "none");
+    SDL_free(m);
+#endif
     SDL_PropertiesID p = SDL_GetGamepadProperties(pad);
     LOG("[input] gamepad: %s (rumble %s)\n", SDL_GetGamepadName(pad),
         SDL_GetBooleanProperty(p, SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false) ? "yes" : "no");
