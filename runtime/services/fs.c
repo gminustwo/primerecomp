@@ -11,6 +11,7 @@
 
 #include "../hle.h"
 #include "../ipc.h"
+#include "../nxpkg.h"
 #include "../romfs_build.h"
 
 #define FS_PATH_NOT_FOUND MAKE_RESULT(2, 1)
@@ -24,11 +25,13 @@ const char *g_save_dir = "save";
 // The game reads its data as one raw RomFS image. It's served from the player's romfs/ folder: the header and tables
 // laid out in memory (runtime/romfs_build.c), each file's bytes read from its own file, the gaps between files zeros -
 // no image file on disk, so the game data isn't kept twice (issues #11, #15: setup kept romfs/ and the romfs.bin built
-// from it, 6.8 GB each; as LAS Recomp has done since its Beta 5). A romfs.bin from an older version is used only
-// when the folder isn't there.
+// from it, 6.8 GB each; as LAS Recomp has done since its Beta 5). Set up from a game package (NSP / XCI), there's no
+// folder: the image is read from the package itself, decrypted as it's read (romfs.src, where the folder would be,
+// says where: runtime/nxpkg.c). A romfs.bin from an older version is used only when neither is there.
 static RomfsLayout g_base;
 static bool g_base_open;
-static int g_base_fd = -1;  // (an older version's romfs.bin)
+static int g_base_fd = -1;   // (an older version's romfs.bin)
+static NxRomfs *g_base_pkg;  // (the game package)
 static pthread_mutex_t g_base_lock = PTHREAD_MUTEX_INITIALIZER;
 #define BASE_FDS 32  // files kept open (macOS allows 256 open files by default)
 static struct { int file, fd; uint64_t used; } g_base_fds[BASE_FDS];
@@ -47,6 +50,7 @@ static int base_file_fd(int i) {  // (g_base_lock held)
 }
 
 static uint64_t base_size(void) {
+    if (g_base_pkg) return nx_romfs_size(g_base_pkg);
     if (g_base_fd >= 0) {
         struct stat sb;
         fstat(g_base_fd, &sb);
@@ -57,6 +61,12 @@ static uint64_t base_size(void) {
 
 // n bytes of the base image at off (past its end: zeros)
 static ssize_t base_pread(void *dst_, uint64_t n, uint64_t off) {
+    if (g_base_pkg) {  // (past its end: zeros, as the folder's)
+        ssize_t got = nx_romfs_pread(g_base_pkg, dst_, n, off);
+        if (got < 0) { LOG("[fs] can't read the game package at %llx\n", (unsigned long long)off); return -1; }
+        memset((uint8_t *)dst_ + got, 0, n - (uint64_t)got);
+        return (ssize_t)n;
+    }
     if (g_base_fd >= 0) return pread(g_base_fd, dst_, n, (off_t)off);
     uint8_t *dst = dst_;
     memset(dst, 0, n);
@@ -96,6 +106,8 @@ static void base_close(void) {
     romfs_layout_free(&g_base);
     if (g_base_fd >= 0) close(g_base_fd);
     g_base_fd = -1;
+    nx_romfs_close(g_base_pkg);
+    g_base_pkg = NULL;
     g_base_open = false;
 }
 
@@ -126,6 +138,10 @@ static void base_open(void) {
                 close(fd);
             }
         }
+    } else if (snprintf(path, sizeof path, "%s.src", g_romfs_dir), stat(path, &sb) == 0) {  // set up from a package
+        g_base_pkg = nx_romfs_open(path, why, sizeof why);
+        if (!g_base_pkg) FATAL("cannot read the game data: %s (set up the game files on the start screen)\n", why);
+        LOG("[fs] romfs: read from the game package (%s, %.1f GB)\n", path, nx_romfs_size(g_base_pkg) / 1e9);
     } else {
         snprintf(path, sizeof path, "%s.bin", g_romfs_dir);  // (an older version's image)
         g_base_fd = open(path, O_RDONLY);
