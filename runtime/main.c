@@ -231,6 +231,7 @@ int main(int argc, char **argv) {
         if (m) fclose(m);
         FATAL("guest address range %llx-%llx is not free in this process\n", GUEST_LO, GUEST_HI);
     }
+    LOG("[guest] window %llx-%llx\n", GUEST_LO, GUEST_HI);
     skip_launcher = true;  // (for now: the start screen's setup builds the game code, which a phone can't)
 #endif
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)

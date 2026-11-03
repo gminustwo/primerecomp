@@ -29,9 +29,20 @@ endif
 # Android (arm64-v8a): `make PLATFORM=android` (MSYS2 shell on Windows, or Linux / macOS), with the SDK, NDK and
 # libraries of tools/android/build_deps.sh under build/android. AArch64 code generation as on Linux aarch64.
 ifeq ($(PLATFORM),android)
-GEN      := generated-aarch64
+GEN      := generated-android
 B        ?= build/android/build
 GENSIMD  := --simd asm
+GUEST_WINDOW ?= 0x1000000000
+endif
+# The guest's address window (runtime/rt.h GUEST_WINDOW, which says why Android's differs): the game code is generated
+# for it. GUEST_WINDOW=<address> builds another one (with its own B and GEN), a test of that on a computer.
+GUEST_WINDOW ?= 0x7000000000
+SDK_BASE := $(shell printf '0x%x' $$(( $(GUEST_WINDOW) + 0x6000000 )))
+GENPY    := gen.py
+ifneq ($(GUEST_WINDOW),0x7000000000)
+WINDOWFLAG := -DGUEST_WINDOW=$(GUEST_WINDOW)ull
+# (gen.py's patches are keyed by their addresses in the computers' window: it moves them)
+GENPY    := gen_window.py
 endif
 
 # B: build dir. MACOS_MIN: oldest macOS to run on (default: this one). DEPS: prefix with SDL3 / FFmpeg / the Vulkan
@@ -157,11 +168,16 @@ endif
 GAMELIB_SRCS := tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/patches.py \
                 tools/simd_c.py tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
                 runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h
+ifneq ($(WINDOWFLAG),)
+# (another guest window: libraries for different windows get different ids)
+GAMELIB_SRCS += tools/gen_window.py
+GENFLAGS += $(WINDOWFLAG)
+endif
 GAMELIB_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
 
 RT_OBJ   := $(patsubst runtime/%.c,$(B)/rt/%.o,$(RT_SRC))
-RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(DEPINC) $(OSFLAGS)
-CXXFLAGS := -O2 -g -std=c++17 -I$(IMGUI) -I$(IMGUI)/backends -Iruntime -Iruntime/nvn $(DEPINC)
+RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(DEPINC) $(OSFLAGS) $(WINDOWFLAG)
+CXXFLAGS := -O2 -g -std=c++17 -I$(IMGUI) -I$(IMGUI)/backends -Iruntime -Iruntime/nvn $(DEPINC) $(WINDOWFLAG)
 
 all: $(EXE) $(if $(GEN_SRC),$(GAMELIB))
 
@@ -226,8 +242,8 @@ $(B)/imgui/imgui_impl_%.o: $(IMGUI)/backends/imgui_impl_%.cpp
 PY := $(firstword $(wildcard tools/venv/bin/python) $(wildcard tools/venv/Scripts/python.exe))
 
 gen:
-	cd tools && ../$(PY) gen.py sdk ../extracted/exefs/sdk 0x7006000000 ../$(GEN)/sdk --hle ../runtime/hle/hle_symbols.txt $(GENSIMD)
-	cd tools && ../$(PY) gen.py main ../extracted/exefs/main 0x7000000000 ../$(GEN)/main $(GENSIMD)
+	cd tools && ../$(PY) $(GENPY) sdk ../extracted/exefs/sdk $(SDK_BASE) ../$(GEN)/sdk --hle ../runtime/hle/hle_symbols.txt $(GENSIMD)
+	cd tools && ../$(PY) $(GENPY) main ../extracted/exefs/main $(GUEST_WINDOW) ../$(GEN)/main $(GENSIMD)
 
 gen-objs: $(GEN_OBJ)
 

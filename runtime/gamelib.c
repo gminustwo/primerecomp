@@ -100,6 +100,14 @@ static const GameLibTables *open_lib(const char *path) {
         snprintf(g_error, sizeof g_error, "%s was built for another version", path);
         return NULL;  // (left loaded: nothing of it runs)
     }
+    // generated for this build's guest window (rt.h GUEST_WINDOW): each module's functions start just past its base
+    static const struct { const char *name; uint64_t base; } mods[] = GAME_MODULES;
+    for (uint32_t m = 0; m < t->nmods && m < GAME_NMODULES; m++)
+        if (*t->counts[m] && t->addrs[m][0] - mods[m].base >= 0x1000000) {
+            snprintf(g_error, sizeof g_error, "%s was generated for the guest window at %llx, this build's is at %llx",
+                     path, (unsigned long long)(t->addrs[m][0] & ~0xFFFFFFFull), (unsigned long long)GUEST_WINDOW);
+            return NULL;
+        }
     return t;
 }
 

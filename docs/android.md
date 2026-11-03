@@ -29,15 +29,17 @@ Without Android Studio, everything can go under `build/android` instead (nothing
 `tools/android/setup_sdk.sh` first (JDK 21, the SDK command-line tools, platform 35, NDK 30; `--emulator`: also the
 emulator, below), then the two commands above.
 
-The game code, from your own game files' `exefs` (the AArch64 generator mode, as on Linux aarch64 and macOS):
+The game code, from your own game files' `exefs` (the AArch64 generator mode, as on Linux aarch64 and macOS, but for
+Android's guest window at `0x10_0000_0000` - below):
 
     cd tools
-    ./venv/bin/python gen.py sdk  <exefs>/sdk  0x7006000000 ../generated-aarch64/sdk --hle ../runtime/hle/hle_symbols.txt --simd asm
-    ./venv/bin/python gen.py main <exefs>/main 0x7000000000 ../generated-aarch64/main --simd asm
+    ./venv/bin/python gen_window.py sdk  <exefs>/sdk  0x1006000000 ../generated-android/sdk --hle ../runtime/hle/hle_symbols.txt --simd asm
+    ./venv/bin/python gen_window.py main <exefs>/main 0x1000000000 ../generated-android/main --simd asm
     cd .. && make PLATFORM=android build/android/build/primegame.so   # (+ .id)
 
 (Windows: `./venv/Scripts/python`. On a Mac set up for the macOS version, `<exefs>` is
-`~/Library/Application Support/io.github.primerecomp/extracted/exefs`.)
+`~/Library/Application Support/io.github.primerecomp/extracted/exefs`. A `primegame.so` made for v0.0.6, at
+`0x70_0000_0000` in `generated-aarch64`, isn't loaded any more: the log says so; make it again as above.)
 
 ## Running
 
@@ -69,8 +71,10 @@ The keyboard works as on the PC (the emulator passes it through); a controller u
 
 ## What the first runs will tell
 
-- **The guest address range**: the game's memory is a fixed 12.5 GB window at `0x7000000000`. On a PC the program
-  re-executes itself until it gets it; an Android app can't, so if something already sits there the log says
+- **The guest address range**: the game's memory is a fixed 12.5 GB window, at `0x10_0000_0000` on Android
+  (`0x70_0000_0000` on a computer). A phone with a 39-bit address space (512 GB) has its system libraries all through
+  `0x70_0000_0000` before the app starts - v0.0.6 stopped there on a POCO F5 (issue #20). On a PC the program
+  re-executes itself until it gets its window; an Android app can't, so if something already sits there the log says
   `FATAL: guest address range ... is not free` with what holds it (`[guest] taken:` lines).
 - **Vulkan**: `[vk]` lines name the device and what it lacks (the emulator's, then each phone's driver).
 - **Crashes**: `logcat.txt` has the native backtrace; `build/android/build/libmain.so` and `primegame.so` keep their

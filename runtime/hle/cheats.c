@@ -7,7 +7,7 @@
 #include "../hle.h"
 #include "../settings.h"
 
-#define GUEST_PTR_OK(p) ((p) >= 0x7000000000ull && (p) < 0x7f00000000ull && !((p) & 7))
+#define GUEST_PTR_OK(p) ((p) >= GUEST_LO && (p) < GUEST_HI && !((p) & 7))
 
 // The player's state (CPlayerStateMP1): the game state (gpGameState, CGameStateMP1) holds it at +0x20 as an rc_ptr
 // (CGameStateMP1::GetPlayerState). In it: +0x00 bit 0 alive (CPlayerStateMP1::Kill clears it), +0x0c the energy
@@ -41,7 +41,7 @@ static void refill(uint64_t ps, int item) {
 // instead of Samus' own. The hit still lands - the flash, the sound, the knockback - and her energy stays where it was,
 // even for a hit bigger than it. Everything else that asks (the HUD, ApplyDamage before and after) gets her own.
 // cheats_frame also keeps the energy full, for anything that takes it off some other way.
-#define APPLY_LOCAL_DAMAGE_RET 0x7000c62dd4ull  // (ApplyLocalDamage, just after its call to the damagee's HealthInfo)
+#define APPLY_LOCAL_DAMAGE_RET (MAIN_BASE + 0xc62dd4)  // (ApplyLocalDamage, just after its call to the damagee's HealthInfo)
 static GuestFn g_health_info;
 static float *g_stand_in;  // (guest memory: the game writes the reduced energy there)
 
@@ -183,7 +183,7 @@ static void hint_frame(uint64_t gs) {
 // suit, 21 gravity, 22 varia, 23 phazon, 24 energy tanks, 26 an energy refill, 28 wavebuster, 29..40 the artifacts.
 // LARECOMP_SET_ITEMS=<frame>:<item>=<capacity>[,<item>=<capacity>...] (test): those asked for at that frame.
 enum { ITEMS = 41 };
-#define ITEM_MAX_TABLE 0x7001d208acull  // (CPlayerStateMP1::GetItemMax: the most of each item, 250 missiles ...)
+#define ITEM_MAX_TABLE (MAIN_BASE + 0x1d208ac)  // (CPlayerStateMP1::GetItemMax: the most of each item, 250 missiles ...)
 #define COUNTED_ITEMS 0x1ffe1008490ull  // (IncrPickUp's: missiles, power bombs, charge beam, space jump, tanks, artifacts)
 static _Atomic int g_item_want[ITEMS];  // a capacity asked for, + 1 (0: none)
 static bool g_items_seen;               // a game has been in play since this boot (the menu may show its items)
