@@ -19,8 +19,8 @@ CPU). Set it up once in Desktop Mode; play it from Game Mode afterwards:
    game for the Deck; that takes several minutes. Your copied game files can be deleted afterwards.
 4. Add it to Steam: Steam (desktop) -> Games -> Add a Non-Steam Game to My Library -> Browse, set the file type to
    "All Files", pick the AppImage. It then shows up in Game Mode.
-5. In Game Mode the Deck's controls arrive as Steam's Xbox controller. Open the PrimeRecomp menu with L3+R3 (press
-   both sticks) -> Controls -> Face buttons -> Xbox, so the button marked A is A.
+5. In Game Mode the Deck's controls arrive as Steam's Xbox controller: A confirms in menus, and in play the bottom
+   button (A) jumps, as on a Switch. The PrimeRecomp menu opens with L3+R3 (press both sticks).
 
 To keep those 8 GB on the SD card instead, move `~/.local/share/primerecomp` there before the setup and leave a
 link in its place (`ln -s /run/media/deck/<card name>/primerecomp ~/.local/share/primerecomp`). The folder picker is a
@@ -74,7 +74,7 @@ DualSense), Switch Pro / Joy-Con, 8BitDo and other pads through the kernel's dri
 game runs. For SDL's own drivers (rumble, LEDs and gyro on PlayStation / Switch pads) the user needs access to
 `/dev/hidraw*`, which most distributions give with Steam's udev rules (`steam-devices`, or Steam installed); without
 them the controller still works through the kernel driver. Started from Steam with Steam Input on, the game sees
-Steam's virtual Xbox controller (F1 / L3+R3 -> Controls -> Face buttons: the Xbox layout puts A on the bottom button).
+Steam's virtual Xbox controller (its A confirms in menus).
 
 If the AppImage won't start with a FUSE error, install your distribution's `fuse3` package (the AppImage runtime
 needs `fusermount3`), or run it as `./PrimeRecomp-...-linux-x86_64.AppImage --appimage-extract-and-run`.

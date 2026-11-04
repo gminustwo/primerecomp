@@ -196,11 +196,10 @@ your distribution's `fuse3` package. More in [docs/linux.md](docs/linux.md).
    Do this in Desktop Mode: the file picker is a desktop file dialog.
 3. Add it to Steam: Games -> Add a Non-Steam Game to My Library -> Browse (set the file type to "All Files") -> the
    AppImage. It then starts from Game Mode.
-4. In the game, press both sticks in to open PrimeRecomp's menu and set Controls -> Face buttons to **Xbox**, so the
-   Deck's A button is A.
-5. The first start on a Deck picks PrimeRecomp's **steady 30 fps** preset (1280 x 720, full game speed). The menu's
-   Video tab has it and a **60 fps** preset (960 x 540 scaled up with AMD FSR 1) under "Steam Deck" (pick one there
-   after updating from v0.0.2); turn on **Show FPS** to see which one holds where you play.
+4. The first start on a Deck picks PrimeRecomp's **steady 30 fps** preset (1280 x 720, full game speed). PrimeRecomp's
+   menu (press both sticks in) has it on the Video tab and a **60 fps** preset (960 x 540 scaled up with AMD FSR 1)
+   under "Steam Deck" (pick one there after updating from v0.0.2); turn on **Show FPS** to see which one holds where
+   you play.
 
 The setup puts about 8 GB in `~/.local/share/primerecomp`; [docs/linux.md](docs/linux.md#steam-deck) shows how to
 keep it on the SD card instead.
@@ -228,9 +227,11 @@ you start the new version (several minutes; longer on a Steam Deck). Nothing nee
 ## Controls
 
 A controller works out of the box (Xbox, PlayStation, Switch Pro, Steam Controller, Steam Deck and others), using
-the game's own Dual Stick layout. The face buttons follow the Switch's layout (A on the right) until you switch
-PrimeRecomp's menu -> Controls -> Face buttons to Xbox (A at the bottom). With a controller that has a gyro you
-can use the game's Pointer / Hybrid motion aiming (pause, Options -> Controls -> Control Scheme).
+the game's own Dual Stick layout. In menus the button marked A (Cross) confirms and B (Circle) goes back, on any
+controller. In play the face buttons sit where a Switch controller's do: the bottom one jumps (A on an Xbox
+controller, Cross on a PlayStation one, B on a Switch one) and the right one shoots; PrimeRecomp's menu -> Controls
+rebinds them. With a controller that has a gyro you can use the game's Pointer / Hybrid motion aiming (pause,
+Options -> Controls -> Control Scheme).
 
 Keyboard and mouse play like a PC shooter:
 

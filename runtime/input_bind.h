@@ -1,7 +1,8 @@
 // Control remapping (runtime/hle/bindings.c): which controller button / key drives each Switch input. Edited from
 // the in-game menu's Controls tab and the start screen (runtime/ui/controls_ui.mm), saved in primerecomp.ini.
-// Menus (the overlay, the start screen) never use these: they keep the fixed default layout (only the face layout
-// moves their A / B), so no binding can lock the player out.
+// Menus (the overlay, the start screen, the game's own while it isn't in play) never use the face buttons' bindings:
+// those go by the controller's own labels there (bind_face_label: A confirms, B goes back, on any controller), so no
+// binding can lock the player out.
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
@@ -57,7 +58,8 @@ bool bind_capture_event(const SDL_Event *e);
 // Last change for the UI: 0 none, 1 set, 2 swapped (with *other), 3 cancelled, 4 timed out, 5 reset; *serial bumps
 int bind_last_result(int *dev, int *slot, int *other, int *serial);
 
-// primerecomp.ini: bind_pad_<input> / bind_key_<input> (only the ones that differ from the defaults are written)
+// primerecomp.ini: bind_pad_<input> / bind_key_<input> (only the ones that differ from the defaults are written; an
+// older file's "face_layout = xbox" comes first: then the bind_pad_* lines are read with the face buttons swapped back)
 bool bind_settings_load(const char *key, const char *val);
 void bind_settings_save(FILE *f);
 
@@ -66,12 +68,14 @@ int bind_slot_from_name(const char *name);
 int bind_pad_from_name(const char *name);
 
 
-// Face layout (g_settings.face_layout, FACE_*): set swaps the face buttons in the current bindings (and the defaults
-// they're compared with); load (primerecomp.ini) sets the layout's defaults, before the bind_pad_* lines. face_host: a
-// controller button as the Nintendo layout sees it (the menus' confirm / back go through it).
-void bind_set_face_layout(int layout);
-void bind_load_face_layout(int layout);
-int bind_face_host(int host);
+// The face buttons in menus: by what they're labelled on the controller, not where they sit - the button marked A
+// (Cross) is A, B (Circle) is B, X (Square) is X, Y (Triangle) is Y. On an Xbox or PlayStation controller A is the
+// bottom one, on a Switch controller the right one. In play they go through the bindings above instead (by position
+// by default, as on a Switch: the bottom one jumps). host: a controller button; which: the controller it came from
+// (0: the game's - runtime/hle/input.c). BIND_A .. BIND_Y, or -1 for a button that isn't a face button.
+int bind_face_label(uint32_t which, int host);
+// The face button labelled as Switch input `slot` (BIND_A .. BIND_Y) on the game's controller
+int bind_label_host(int slot);
 
 #ifdef __cplusplus
 }

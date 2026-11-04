@@ -5,8 +5,9 @@
 // table below, from the game's own files), and glyph_redraw has it drawn again (runtime/nvn/glyph_art.c) with what
 // the player presses for that Switch button - through their bindings (runtime/hle/bindings.c): an Xbox controller's
 // button, a PlayStation controller's, a Switch controller's (the game's own icon unless rebound), the key or mouse
-// button, or the Wii Remote's (runtime/hle/input.c's layout for it). Auto follows whatever was used last. Nothing of
-// the game's is changed: only the images it uploads.
+// button, or the Wii Remote's (runtime/hle/input.c's layout for it). In the game's menus (not in play) A / B / X / Y
+// are the face buttons labelled so, and Esc is B - as input.c takes them there. Auto follows whatever was used last.
+// Nothing of the game's is changed: only the images it uploads.
 #include <SDL3/SDL.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -153,19 +154,43 @@ static int resolve_set(void) {
 int glyphs_current(void) { return g_set; }
 uint32_t glyph_generation(void) { return g_gen; }
 
-void glyphs_frame(void) {  // what the icons depend on: the set, the bindings, the mouse aim; changed -> redraw
+// What each Switch button is pressed with now (glyphs_frame), on a controller and with keys: its binding - but in
+// the game's menus (game_in_play false: runtime/hle/input.c's menu face buttons and menu keys) A / B / X / Y are the
+// controller's face buttons labelled so (bind_label_host), and a key that means another button there (Space: A)
+// shows the menu key that means this one instead (Esc for B).
+static int16_t g_pad_now[BIND_PAD_COUNT], g_key_now[BIND_PAD_COUNT];
+static _Atomic bool g_now_set;  // (before the first glyphs_frame an icon stays the game's; that frame redraws it)
+
+void glyphs_frame(void) {  // what the icons depend on: the set, the bindings, menu or play; changed -> redraw
+    extern bool game_in_play(void);   // runtime/hle/game.c
+    extern int input_menu_key(int sc);  // runtime/hle/input.c
     static uint64_t sig;
     int set = resolve_set();
+    bool menu = !game_in_play();
+    int16_t pad_now[BIND_PAD_COUNT], key_now[BIND_PAD_COUNT];
+    for (int i = 0; i < BIND_PAD_COUNT; i++) {
+        pad_now[i] = menu && i <= BIND_Y ? (int16_t)bind_label_host(i) : g_bind_pad[i];
+        int k = g_bind_key[i];
+        if (menu && input_menu_key(k) >= 0 && input_menu_key(k) != i) {
+            k = 0;  // (none: the game's own icon)
+            for (int sc = 1; sc < SDL_SCANCODE_COUNT && !k; sc++)
+                if (input_menu_key(sc) == i) k = sc;
+        }
+        key_now[i] = (int16_t)k;
+    }
     uint64_t h = 0xcbf29ce484222325ull;
 #define MIX(v) (h = (h ^ (uint64_t)(v)) * 0x100000001b3ull)
     MIX(set);
-    for (int i = 0; i < BIND_PAD_COUNT; i++) MIX(g_bind_pad[i]);
-    for (int i = 0; i < BIND_KEY_COUNT; i++) MIX(g_bind_key[i]);
+    for (int i = 0; i < BIND_PAD_COUNT; i++) MIX(pad_now[i]), MIX(key_now[i]);
+    for (int i = BIND_PAD_COUNT; i < BIND_KEY_COUNT; i++) MIX(g_bind_key[i]);
 #undef MIX
     if (h != sig) {
-        if (sig && log_on()) LOG("[glyphs] button icons: %s\n", k_set_names[set]);
+        if (sig && log_on()) LOG("[glyphs] button icons: %s%s\n", k_set_names[set], menu ? " (menus)" : "");
         sig = h;
         g_set = set;
+        memcpy(g_pad_now, pad_now, sizeof pad_now);
+        memcpy(g_key_now, key_now, sizeof key_now);
+        g_now_set = true;
         g_gen++;
     }
 }
@@ -272,12 +297,12 @@ static bool icon_spec(const GameIcon *ic, int set, GaSpec *s) {
     // is let go)
     if (ic->shape == GA_STICK) {
         if (set != ICONS_KEYBOARD) return false;
-        if (ic->extra == 1) return key_symbol(s, g_bind_key[ic->input]);  // (pressing it in)
+        if (ic->extra == 1) return key_symbol(s, g_key_now[ic->input]);  // (pressing it in)
         if (ic->input == BIND_LSTICK) keys4(s, BIND_LS_UP, BIND_LS_LEFT, BIND_LS_DOWN, BIND_LS_RIGHT);
         else keys4(s, BIND_RS_UP, BIND_RS_LEFT, BIND_RS_DOWN, BIND_RS_RIGHT);
         return true;
     }
-    if (set == ICONS_KEYBOARD) return key_symbol(s, g_bind_key[ic->input]);
+    if (set == ICONS_KEYBOARD) return key_symbol(s, g_key_now[ic->input]);
     if (set == ICONS_WII) {  // (input.c wiimote_buttons: + = X, 2 = Plus, 1 = Minus, C = Y, Z = ZL; A and B are
                              // themselves; L, R and ZR have nothing)
         const char *w = ic->input == BIND_X ? "+" : ic->input == BIND_Y ? "C" : ic->input == BIND_ZL ? "Z" :
@@ -287,7 +312,7 @@ static bool icon_spec(const GameIcon *ic, int set, GaSpec *s) {
         text(s, w);
         return true;
     }
-    int host = g_bind_pad[ic->input];
+    int host = g_pad_now[ic->input];
     if (ic->shape == GA_DOTS) {  // the face buttons' dots: the bound button's place lit
         int dir = host == SDL_GAMEPAD_BUTTON_SOUTH ? GD_DOWN : host == SDL_GAMEPAD_BUTTON_EAST ? GD_RIGHT :
                   host == SDL_GAMEPAD_BUTTON_WEST ? GD_LEFT : host == SDL_GAMEPAD_BUTTON_NORTH ? GD_UP : -1;
@@ -342,7 +367,7 @@ static const uint8_t *font(void) {  // Baloo 2 SemiBold (the menus' font, shippe
 }
 
 bool glyph_redraw(int id, uint8_t *lin, uint32_t w, uint32_t h) {
-    if (id < 0 || id >= N_ICONS) return false;
+    if (id < 0 || id >= N_ICONS || !g_now_set) return false;
     const GameIcon *ic = &k_icons[id];
     GaSpec s;
     int set = g_set;
