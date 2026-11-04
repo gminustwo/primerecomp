@@ -103,14 +103,17 @@ static ImGuiKey key_from_scancode(SDL_Scancode sc) {
     }
 }
 
-// A confirms, B goes back: by position in the Nintendo layout (right / bottom), in the Xbox one by the labels
-// (bottom / right) - Controls tab "Face buttons" (bind_face_host).
-static ImGuiKey key_from_pad(Uint8 b) {
-    switch (bind_face_host(b)) {
-    case SDL_GAMEPAD_BUTTON_EAST: return ImGuiKey_GamepadFaceDown;   // activate
-    case SDL_GAMEPAD_BUTTON_SOUTH: return ImGuiKey_GamepadFaceRight; // cancel / back
-    case SDL_GAMEPAD_BUTTON_NORTH: return ImGuiKey_GamepadFaceUp;
-    case SDL_GAMEPAD_BUTTON_WEST: return ImGuiKey_GamepadFaceLeft;
+// A confirms, B goes back: the face buttons by the controller's own labels (bind_face_label) - bottom / right on an
+// Xbox or PlayStation controller, right / bottom on a Switch controller.
+static ImGuiKey key_from_pad(SDL_JoystickID which, Uint8 b) {
+    switch (bind_face_label(which, b)) {
+    case BIND_A: return ImGuiKey_GamepadFaceDown;   // activate
+    case BIND_B: return ImGuiKey_GamepadFaceRight;  // cancel / back
+    case BIND_X: return ImGuiKey_GamepadFaceUp;
+    case BIND_Y: return ImGuiKey_GamepadFaceLeft;
+    default: break;
+    }
+    switch (b) {
     case SDL_GAMEPAD_BUTTON_DPAD_UP: return ImGuiKey_GamepadDpadUp;
     case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return ImGuiKey_GamepadDpadDown;
     case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return ImGuiKey_GamepadDpadLeft;
@@ -202,7 +205,7 @@ bool menu_handle_event(const SDL_Event *e) {
             return true;
         }
         if (!capturing()) return false;
-        ImGuiKey k = key_from_pad(e->gbutton.button);
+        ImGuiKey k = key_from_pad(e->gbutton.which, e->gbutton.button);
         if (k != ImGuiKey_None) { QEvent q = {}; q.kind = QEvent::KEY; q.key = k; q.down = down; push(q); }
         return true;
     }
