@@ -751,7 +751,7 @@ static bool menu_item(const char *label, bool enabled, bool *hovered = NULL, con
 }
 
 // Controllers, as in the in-game menu (runtime/ui/menu.mm): read straight from SDL; A confirms, B goes back (the face
-// buttons by the controller's own labels: bind_face_label); d-pad / left stick move.
+// buttons as the Face buttons setting has them: bind_face_label); d-pad / left stick move.
 // (ImGui's own SDL gamepad handling is switched off: it used the Xbox layout and, per the user, didn't work on the
 // start screen.)
 static ImGuiKey launcher_pad_key(SDL_JoystickID which, Uint8 b) {

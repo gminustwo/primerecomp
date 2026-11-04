@@ -6,7 +6,7 @@
 // the player presses for that Switch button - through their bindings (runtime/hle/bindings.c): an Xbox controller's
 // button, a PlayStation controller's, a Switch controller's (the game's own icon unless rebound), the key or mouse
 // button, or the Wii Remote's (runtime/hle/input.c's layout for it). In the game's menus (not in play) A / B / X / Y
-// are the face buttons labelled so, and Esc is B - as input.c takes them there. Auto follows whatever was used last.
+// are the face buttons labelled so (Face buttons: Labels), and Esc is B - as input.c takes them there. Auto follows whatever was used last.
 // Nothing of the game's is changed: only the images it uploads.
 #include <SDL3/SDL.h>
 #include <stdatomic.h>
@@ -156,7 +156,7 @@ uint32_t glyph_generation(void) { return g_gen; }
 
 // What each Switch button is pressed with now (glyphs_frame), on a controller and with keys: its binding - but in
 // the game's menus (game_in_play false: runtime/hle/input.c's menu face buttons and menu keys) A / B / X / Y are the
-// controller's face buttons labelled so (bind_label_host), and a key that means another button there (Space: A)
+// controller's face buttons labelled so (bind_label_host; Face buttons: Labels), and a key that means another button there (Space: A)
 // shows the menu key that means this one instead (Esc for B).
 static int16_t g_pad_now[BIND_PAD_COUNT], g_key_now[BIND_PAD_COUNT];
 static _Atomic bool g_now_set;  // (before the first glyphs_frame an icon stays the game's; that frame redraws it)
@@ -169,7 +169,8 @@ void glyphs_frame(void) {  // what the icons depend on: the set, the bindings, m
     bool menu = !game_in_play();
     int16_t pad_now[BIND_PAD_COUNT], key_now[BIND_PAD_COUNT];
     for (int i = 0; i < BIND_PAD_COUNT; i++) {
-        pad_now[i] = menu && i <= BIND_Y ? (int16_t)bind_label_host(i) : g_bind_pad[i];
+        pad_now[i] = menu && g_settings.face_buttons == FACE_LABELS && i <= BIND_Y ? (int16_t)bind_label_host(i)
+                                                                                    : g_bind_pad[i];
         int k = g_bind_key[i];
         if (menu && input_menu_key(k) >= 0 && input_menu_key(k) != i) {
             k = 0;  // (none: the game's own icon)
