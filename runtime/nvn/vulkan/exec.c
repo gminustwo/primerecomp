@@ -3716,8 +3716,12 @@ static bool pause_fill(void) {
 // HUD. The layer's own draws come out stretched across the wider layer; boxing the mesh that brings it in squeezes it
 // back into the 16:9 middle, in place and in shape (unboxed it sat at the window's far right, stretched). A
 // full-screen quad reading a same-size target is the scene's composite instead (left alone), and a presented target
-// is never a layer (a mesh reading the scene - a distortion effect - would have boxed it).
-static bool ui_boxed(Prog *pr, CmdRec *r) {
+// is never a layer (a mesh reading the scene - a distortion effect - would have boxed it). So is a mesh from one side of
+// the screen to the other (spans_screen): the X-ray visor's picture is the scene copied into a target of its own, drawn
+// back over the window as 84 triangles from edge to edge (with a 1120x630 depth image of its own) - taken for a layer,
+// the X-ray view sat in the 16:9 middle and the scene without it showed at the sides.
+static bool spans_screen(Prog *pr, CmdRec *r, bool indexed);
+static bool ui_boxed(Prog *pr, CmdRec *r, bool indexed) {
     if (!(fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor && st.rt.color[0] &&
           renderer_texture_presented(st.rt.color[0])))
         return false;
@@ -3758,9 +3762,17 @@ static bool ui_boxed(Prog *pr, CmdRec *r) {
         if (scaled && t->width == rt->width && t->height == rt->height) {
             TexBackend *tb = (TexBackend *)t->backend;
             if (tb && !tb->ui_layer && !tb->presented && r->x[2] > 6) {
-                tb->ui_layer = true;
-                LOG("[wide] %ux%u target @%llx is a UI layer (a %llu-vertex mesh lays it over the HUD): boxed\n",
-                    t->width, t->height, (unsigned long long)t->addr, (unsigned long long)r->x[2]);
+                if (!spans_screen(pr, r, indexed)) {
+                    tb->ui_layer = true;
+                    LOG("[wide] %ux%u target @%llx is a UI layer (a %llu-vertex mesh lays it over the HUD): boxed\n",
+                        t->width, t->height, (unsigned long long)t->addr, (unsigned long long)r->x[2]);
+                } else {
+                    static uint64_t said;  // (the last one logged)
+                    if (said != t->addr)
+                        LOG("[wide] %ux%u target @%llx drawn across the screen (a %llu-vertex mesh): fills the window\n",
+                            t->width, t->height, (unsigned long long)t->addr, (unsigned long long)r->x[2]);
+                    said = t->addr;
+                }
             }
             if (!tb || !tb->ui_layer) reads_scene = true;
         }
@@ -3960,6 +3972,25 @@ static bool cpu_vs_x(const CpuVs *c, uint32_t v, uint32_t n, float *x) {
     if (!maxwell_vsim_run(c->pr->vsim, (const float (*)[4])at, c->cb, c->cbsz, p) || !(p[3] > 0)) return false;
     *x = p[0] / p[3];
     return true;
+}
+
+// The draw reaches both sides of its 16:9 box (its viewport the whole target, its vertices' x through its vertex shader
+// at -1 and 1; up to 1024 of them looked at); false when its vertex shader can't be run here (ui_boxed)
+static bool spans_screen(Prog *pr, CmdRec *r, bool indexed) {
+    const NvnTexture *rt = st.rt.color[0];
+    if (!(st.viewport[0][0] == 0 && st.viewport[0][1] == 0 && st.viewport[0][2] >= rt->width && st.viewport[0][3] >= rt->height))
+        return false;
+    CpuVs c;
+    if (!cpu_vs_init(&c, pr, r, indexed)) return false;
+    uint32_t count = (uint32_t)r->x[2];
+    float lo = 1e30f, hi = -1e30f, x;
+    for (uint32_t j = 0, step = count > 1024 ? count / 1024 : 1; j < count; j += step) {
+        uint32_t v = cpu_vs_index(&c, j);
+        if (c.ib && v == c.restart) continue;
+        if (!cpu_vs_x(&c, v, 0, &x)) return false;
+        lo = fminf(lo, x), hi = fmaxf(hi, x);
+    }
+    return lo <= -0.99f && hi >= 0.99f;
 }
 
 // Ultrawide HUD (Video tab "HUD position"): in play, the HUD's pieces at the sides of its 16:9 box go out toward the
@@ -4290,7 +4321,7 @@ static void draw_(CmdRec *r, bool indexed) {
     // window's edge (shader.h ShaderKey.x_mode bit 2) - the scan visor's dimmed ring then reaches the window's sides
     // with its lens still round. Not for everything boxed: the visor's corner brackets touch the box's edge too, and
     // smeared out to the window's (badly at 32:9). (Variant still compiling: plain boxing.)
-    bool boxed = ui_boxed(pr, r), edge = false;
+    bool boxed = ui_boxed(pr, r, indexed), edge = false;
     // HUD pieces at the box's sides go to the window's (hud_side): the whole draw (hud_dx: the box's shift), or its
     // triangles or instances in parts (hud_split). The helmet's frame is stretched sideways across the HUD's span
     // instead (hud_k): the visor's rim, the bar across the top and the curves at the bottom - a 7314-vertex model the
