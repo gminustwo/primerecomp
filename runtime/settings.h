@@ -18,6 +18,10 @@ extern const int g_res_lines[N_RES_LINES];
 extern const char *const g_res_names[N_RES_LINES];
 enum { UPSCALE_BILINEAR = 0, UPSCALE_FSR1 = 2 /* AMD FSR 1 */ };  // (1: LAS Recomp's MetalFX)
 enum { AA_OFF = 0, AA_SMAA = 1 };
+// Face buttons (runtime/input_bind.h): Labels = menus by the controller's labels (A confirms on any controller), play
+// by the bindings (by position); Nintendo = by position everywhere, as on a Switch; Xbox = A at the bottom everywhere
+// (the bindings swapped: runtime/hle/bindings.c)
+enum { FACE_LABELS = 0, FACE_NINTENDO = 1, FACE_XBOX = 2, FACE_COUNT };
 enum { FOV_GAME = 55, FOV_MIN = 45, FOV_MAX = 90 };
 // Cheats tab "Hint timer": the waits it offers, seconds (0 = the game's own timing; then 1 s, 30 s, 1..30 minutes)
 enum { N_HINT_WAITS = 33 };
@@ -89,6 +93,8 @@ typedef struct {
     bool steam_controller_direct;  // (settings file only) SDL's own Steam Controller driver, for its gyro without
                                    // Steam Input (the window code sets SDL_HINT_JOYSTICK_HIDAPI_STEAM)
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language
+    int face_buttons;    // FACE_*: what A / B / X / Y are in menus and in play (set through bind_set_face_buttons: it
+                         // swaps the bindings going to or from Xbox)
     int button_icons;    // ICONS_* (runtime/glyphs.h): the game's button prompts drawn as this controller's, or Auto:
                          // whichever was used last (runtime/hle/glyphs.c)
     bool menu_tip_seen;  // the start screen's one-time "how to open the menu" note was shown (first PLAY ever)

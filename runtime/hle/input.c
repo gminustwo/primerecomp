@@ -152,13 +152,13 @@ bool input_raw_sticks(float out[4]) {
 
 SDL_Gamepad *input_gamepad(void) { return host_test ? NULL : pad; }  // (bindings.c: its button labels)
 
-// Menu face buttons: in the game's menus - while it isn't in play (game_in_play: the title screen, the pause menu,
-// the map, its messages, cutscenes) - the four face buttons go by the controller's labels (bindings.c
-// bind_face_label), not their bindings: the button marked A (Cross) confirms and B (Circle) goes back on any
-// controller - the bottom / right one on an Xbox or PlayStation controller, the right / bottom one on a Switch
-// controller - and X / Y are the ones marked so. In play they're their bindings (by position by default: the bottom
-// one jumps on every controller). As with the menu keys, a button keeps the meaning it was pressed with until it's
-// let go (A starting the game isn't also a jump).
+// Menu face buttons (Face buttons: Labels, the default): in the game's menus - while it isn't in play (game_in_play:
+// the title screen, the pause menu, the map, its messages, cutscenes) - the four face buttons go by the controller's
+// labels (bindings.c bind_face_label), not their bindings: the button marked A (Cross) confirms and B (Circle) goes
+// back on any controller - the bottom / right one on an Xbox or PlayStation controller, the right / bottom one on a
+// Switch controller - and X / Y are the ones marked so. In play they're their bindings (by position by default: the
+// bottom one jumps on every controller). As with the menu keys, a button keeps the meaning it was pressed with until
+// it's let go (A starting the game isn't also a jump). Nintendo / Xbox: the bindings everywhere, as before.
 static uint8_t pad_menu[4];  // SDL_GAMEPAD_BUTTON_SOUTH, EAST, WEST, NORTH: pressed in a menu
 static uint32_t pad_was;
 
@@ -174,7 +174,7 @@ static void recompute_pad(void) {
     uint32_t pressed = host & ~pad_was, menu_held = 0;
     pad_was = host;
     for (int f = 0; f < 4; f++) {
-        if (pressed >> f & 1) pad_menu[f] = !game_in_play();
+        if (pressed >> f & 1) pad_menu[f] = g_settings.face_buttons == FACE_LABELS && !game_in_play();
         if ((host >> f & 1) && pad_menu[f]) menu_held |= 1u << f;
     }
     uint64_t b = 0;

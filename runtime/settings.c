@@ -229,6 +229,16 @@ void settings_load(void) {
         else if (!strcmp(key, "upscaler")) g_settings.upscaler = !strcmp(val, "bilinear") ? UPSCALE_BILINEAR : UPSCALE_FSR1;  // (fsr1, LAS's metalfx)
         else if (!strcmp(key, "aniso")) { int a = atoi(val); g_settings.aniso = a >= 16 ? 16 : a >= 8 ? 8 : a >= 4 ? 4 : a >= 2 ? 2 : 0; }
         else if (!strcmp(key, "antialias")) g_settings.antialias = !strcmp(val, "off") ? AA_OFF : AA_SMAA;  // ("fxaa": SMAA now)
+        // (before the bind_pad_* lines, which settings_save writes last: they're the differences from its defaults)
+        else if (!strcmp(key, "face_buttons")) {  // (anything else: labels)
+            int m = FACE_LABELS;
+            for (int i = 0; i < FACE_COUNT; i++)
+                if (!strcmp(val, g_face_names[i])) m = i;
+            bind_load_face_buttons(m);
+        }
+        // (v0.0.6 and older: "face_layout = nintendo" was its default, written by every save - the labels now; its
+        // "xbox", chosen, stays)
+        else if (!strcmp(key, "face_layout")) { if (!strcmp(val, "xbox")) bind_load_face_buttons(FACE_XBOX); }
         else if (!strcmp(key, "button_icons")) {  // (anything else: auto)
             g_settings.button_icons = ICONS_AUTO;
             for (int i = 0; i < ICONS_COUNT; i++)
@@ -308,6 +318,8 @@ void settings_save(void) {
     else if (g_settings.res_mode == RES_Q50) fprintf(f, "resolution = 50%%\n");
     else if (g_settings.res_mode == RES_FIXED) fprintf(f, "resolution = %dp\n", g_settings.res_lines);
     else fprintf(f, "resolution = match\n");
+    fprintf(f, "face_buttons = %s\n", g_face_names[g_settings.face_buttons >= 0 && g_settings.face_buttons < FACE_COUNT
+                                                         ? g_settings.face_buttons : FACE_LABELS]);
     fprintf(f, "button_icons = %s\n", g_icons_names[g_settings.button_icons >= 0 && g_settings.button_icons < ICONS_COUNT
                                                          ? g_settings.button_icons : ICONS_AUTO]);
     fprintf(f, "language = %s\n", g_language_codes[g_settings.language > LANG_AUTO && g_settings.language < N_LANGUAGES

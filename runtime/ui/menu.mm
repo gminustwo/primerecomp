@@ -103,8 +103,8 @@ static ImGuiKey key_from_scancode(SDL_Scancode sc) {
     }
 }
 
-// A confirms, B goes back: the face buttons by the controller's own labels (bind_face_label) - bottom / right on an
-// Xbox or PlayStation controller, right / bottom on a Switch controller.
+// A confirms, B goes back: the face buttons as the Face buttons setting has them (bind_face_label; by default the
+// controller's own labels - bottom / right on an Xbox or PlayStation controller, right / bottom on a Switch one).
 static ImGuiKey key_from_pad(SDL_JoystickID which, Uint8 b) {
     switch (bind_face_label(which, b)) {
     case BIND_A: return ImGuiKey_GamepadFaceDown;   // activate
