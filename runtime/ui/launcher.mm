@@ -750,16 +750,19 @@ static bool menu_item(const char *label, bool enabled, bool *hovered = NULL, con
     return clicked;
 }
 
-// Controllers, as in the in-game menu (runtime/ui/menu.mm): read straight from SDL; A confirms, B goes back (the right
-// / bottom face buttons, or bottom / right with the Xbox face layout: bind_face_host); d-pad / left stick move.
+// Controllers, as in the in-game menu (runtime/ui/menu.mm): read straight from SDL; A confirms, B goes back (the face
+// buttons by the controller's own labels: bind_face_label); d-pad / left stick move.
 // (ImGui's own SDL gamepad handling is switched off: it used the Xbox layout and, per the user, didn't work on the
 // start screen.)
-static ImGuiKey launcher_pad_key(Uint8 b) {
-    switch (bind_face_host(b)) {
-    case SDL_GAMEPAD_BUTTON_EAST: return ImGuiKey_GamepadFaceDown;   // A: activate
-    case SDL_GAMEPAD_BUTTON_SOUTH: return ImGuiKey_GamepadFaceRight; // B: back
-    case SDL_GAMEPAD_BUTTON_NORTH: return ImGuiKey_GamepadFaceUp;
-    case SDL_GAMEPAD_BUTTON_WEST: return ImGuiKey_GamepadFaceLeft;
+static ImGuiKey launcher_pad_key(SDL_JoystickID which, Uint8 b) {
+    switch (bind_face_label(which, b)) {
+    case BIND_A: return ImGuiKey_GamepadFaceDown;   // activate
+    case BIND_B: return ImGuiKey_GamepadFaceRight;  // back
+    case BIND_X: return ImGuiKey_GamepadFaceUp;
+    case BIND_Y: return ImGuiKey_GamepadFaceLeft;
+    default: break;
+    }
+    switch (b) {
     case SDL_GAMEPAD_BUTTON_DPAD_UP: return ImGuiKey_GamepadDpadUp;
     case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return ImGuiKey_GamepadDpadDown;
     case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return ImGuiKey_GamepadDpadLeft;
@@ -788,7 +791,7 @@ static bool launcher_pad_event(const SDL_Event &e) {
         io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
         return true;
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP: {
-        ImGuiKey k = launcher_pad_key(e.gbutton.button);
+        ImGuiKey k = launcher_pad_key(e.gbutton.which, e.gbutton.button);
         if (k != ImGuiKey_None) io.AddKeyEvent(k, e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
         return true;
     }

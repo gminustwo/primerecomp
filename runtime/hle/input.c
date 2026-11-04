@@ -2,7 +2,8 @@
 //
 // All go through the player's bindings (runtime/hle/bindings.c, defaults there: keyboard and mouse as a PC shooter,
 // WASD, the mouse aiming (runtime/hle/game.c mouse aim), clicks to shoot and lock on; controller by position,
-// Switch A = east).
+// Switch A = east) - except in the game's menus, where Enter / Esc and the controller's face buttons by their labels
+// confirm and go back (menu keys, menu face buttons below).
 #include <SDL3/SDL.h>
 #include <ctype.h>
 #include <math.h>
@@ -64,6 +65,7 @@ static int menu_key(int sc) {
     }
 }
 static int bound_held(int sc) { return held_key(sc) && !(key_menu[sc] && menu_key(sc) >= 0); }
+int input_menu_key(int sc) { return sc > 0 && sc < BIND_KEY_HOST_COUNT ? menu_key(sc) : -1; }  // (glyphs.c)
 
 // Through the bindings (runtime/hle/bindings.c: g_bind_key), read on every key event, so a rebind applies at once.
 static void recompute_keyboard(void) {
@@ -148,6 +150,18 @@ bool input_raw_sticks(float out[4]) {
     return true;
 }
 
+SDL_Gamepad *input_gamepad(void) { return host_test ? NULL : pad; }  // (bindings.c: its button labels)
+
+// Menu face buttons: in the game's menus - while it isn't in play (game_in_play: the title screen, the pause menu,
+// the map, its messages, cutscenes) - the four face buttons go by the controller's labels (bindings.c
+// bind_face_label), not their bindings: the button marked A (Cross) confirms and B (Circle) goes back on any
+// controller - the bottom / right one on an Xbox or PlayStation controller, the right / bottom one on a Switch
+// controller - and X / Y are the ones marked so. In play they're their bindings (by position by default: the bottom
+// one jumps on every controller). As with the menu keys, a button keeps the meaning it was pressed with until it's
+// let go (A starting the game isn't also a jump).
+static uint8_t pad_menu[4];  // SDL_GAMEPAD_BUTTON_SOUTH, EAST, WEST, NORTH: pressed in a menu
+static uint32_t pad_was;
+
 // Controller buttons (and the triggers as buttons) -> Switch buttons through g_bind_pad; the sticks stay the sticks.
 static void recompute_pad(void) {
     uint32_t host = test_pad;
@@ -157,9 +171,17 @@ static void recompute_pad(void) {
         if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 16000) host |= 1u << PADB_LTRIGGER;
         if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 16000) host |= 1u << PADB_RTRIGGER;
     }
+    uint32_t pressed = host & ~pad_was, menu_held = 0;
+    pad_was = host;
+    for (int f = 0; f < 4; f++) {
+        if (pressed >> f & 1) pad_menu[f] = !game_in_play();
+        if ((host >> f & 1) && pad_menu[f]) menu_held |= 1u << f;
+    }
     uint64_t b = 0;
     for (int i = 0; i < BIND_PAD_COUNT; i++)
-        if (g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT && (host >> g_bind_pad[i] & 1)) b |= 1ull << i;
+        if (g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT && ((host & ~menu_held) >> g_bind_pad[i] & 1)) b |= 1ull << i;
+    for (int f = 0; f < 4; f++)
+        if (menu_held >> f & 1) b |= 1ull << bind_face_label(0, f);
     pad_buttons = b;
     if (!pad || host_test) {  // (a test's resting stick: through the dead zone as a real one)
         raw_rx = test_rx, raw_ry = test_ry;
@@ -298,6 +320,9 @@ static void log_pad(void) {
     SDL_PropertiesID p = SDL_GetGamepadProperties(pad);
     LOG("[input] gamepad: %s (rumble %s)\n", SDL_GetGamepadName(pad),
         SDL_GetBooleanProperty(p, SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false) ? "yes" : "no");
+    static const char *const side[4] = {"bottom", "right", "left", "top"};  // (SDL_GAMEPAD_BUTTON_SOUTH ...)
+    LOG("[input] menus: A (confirm) is its %s face button, B (back) its %s one; in play the bindings\n",
+        side[bind_label_host(BIND_A) & 3], side[bind_label_host(BIND_B) & 3]);
 }
 // The open controller's SDL_GamepadType, -1 for none (runtime/hle/glyphs.c: which button icons Auto shows);
 // LARECOMP_PAD_TYPE pretends as for input_pad_family
