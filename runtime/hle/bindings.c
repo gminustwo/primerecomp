@@ -7,12 +7,14 @@
 
 #include "../hle.h"
 #include "../input_bind.h"
+#include "../settings.h"
 
 _Static_assert(PADB_LTRIGGER == SDL_GAMEPAD_BUTTON_COUNT, "trigger pseudo-buttons follow SDL's buttons");
 _Static_assert(BIND_MOUSE_LEFT == SDL_SCANCODE_COUNT, "mouse buttons follow SDL's scancodes");
 
 // Defaults: by position, as on a Switch controller (east = A, south = B, north = X, west = Y: the bottom button
-// jumps on every controller; menus go by the labels instead, bind_face_label), triggers = ZL / ZR;
+// jumps on every controller; the menus go by the labels, bind_face_label; Face buttons: Xbox swaps them), triggers =
+// ZL / ZR;
 // keyboard and mouse as a PC shooter, for the game's Dual Stick scheme: WASD move, the mouse aims (runtime/hle/game.c
 // mouse aim; the arrows turn), left click shoots (ZR), right click locks on / scans (ZL), Space jumps (B), F fires a
 // missile (R), Left Ctrl morphs (Y), Q / E / R / T the Combat / Scan / Thermal / X-Ray visors (d-pad up / right /
@@ -32,15 +34,26 @@ _Static_assert(BIND_MOUSE_LEFT == SDL_SCANCODE_COUNT, "mouse buttons follow SDL'
 static const int16_t k_def_pad[BIND_PAD_COUNT] = DEF_PAD, k_def_key[BIND_KEY_COUNT] = DEF_KEY;
 int16_t g_bind_pad[BIND_PAD_COUNT] = DEF_PAD, g_bind_key[BIND_KEY_COUNT] = DEF_KEY;
 
+const char *const g_face_names[FACE_COUNT] = {"labels", "nintendo", "xbox"};
+
 // The game's controller (runtime/hle/input.c: none in a scripted run) and its SDL_GamepadType (LARECOMP_PAD_TYPE's
 // pretend one too)
 extern SDL_Gamepad *input_gamepad(void);
 extern int input_pad_type(void);
 
+static int xbox_place(int host) {  // the Xbox controller's: A at the bottom, B on the right, X on the left, Y on top
+    return host == SDL_GAMEPAD_BUTTON_SOUTH ? BIND_A : host == SDL_GAMEPAD_BUTTON_EAST ? BIND_B :
+           host == SDL_GAMEPAD_BUTTON_WEST ? BIND_X : BIND_Y;
+}
+
 int bind_face_label(uint32_t which, int host) {
     if (host != SDL_GAMEPAD_BUTTON_SOUTH && host != SDL_GAMEPAD_BUTTON_EAST && host != SDL_GAMEPAD_BUTTON_WEST &&
         host != SDL_GAMEPAD_BUTTON_NORTH)
         return -1;
+    if (g_settings.face_buttons == FACE_NINTENDO)  // by position on every controller, as on a Switch
+        return host == SDL_GAMEPAD_BUTTON_EAST ? BIND_A : host == SDL_GAMEPAD_BUTTON_SOUTH ? BIND_B :
+               host == SDL_GAMEPAD_BUTTON_NORTH ? BIND_X : BIND_Y;
+    if (g_settings.face_buttons == FACE_XBOX) return xbox_place(host);
     // the controller's own labels (SDL knows them by its type, or its mapping's "face:" for look-alikes); a test's
     // events (no controller of their own) and LARECOMP_PAD_TYPE: the type's
     static int pretend = -1;
@@ -55,9 +68,7 @@ int bind_face_label(uint32_t which, int host) {
     case SDL_GAMEPAD_BUTTON_LABEL_B: case SDL_GAMEPAD_BUTTON_LABEL_CIRCLE: return BIND_B;
     case SDL_GAMEPAD_BUTTON_LABEL_X: case SDL_GAMEPAD_BUTTON_LABEL_SQUARE: return BIND_X;
     case SDL_GAMEPAD_BUTTON_LABEL_Y: case SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE: return BIND_Y;
-    default:  // (unlabelled: as an Xbox controller, as most PC controllers are)
-        return host == SDL_GAMEPAD_BUTTON_SOUTH ? BIND_A : host == SDL_GAMEPAD_BUTTON_EAST ? BIND_B :
-               host == SDL_GAMEPAD_BUTTON_WEST ? BIND_X : BIND_Y;
+    default: return xbox_place(host);  // (unlabelled: as an Xbox controller, as most PC controllers are)
     }
 }
 
@@ -69,8 +80,8 @@ int bind_label_host(int slot) {
     return k_def_pad[slot];
 }
 
-// The Controls tab's former "Face buttons: Xbox" swapped south <-> east and west <-> north in the bindings (and the
-// defaults they were saved against)
+// Face buttons: Xbox swaps south <-> east and west <-> north, in the defaults and in whatever the player has bound, so
+// A is the bottom button in play too (it shoots) and the menus confirm with it.
 static int face_swap(int host) {
     switch (host) {
     case SDL_GAMEPAD_BUTTON_SOUTH: return SDL_GAMEPAD_BUTTON_EAST;
@@ -79,6 +90,23 @@ static int face_swap(int host) {
     case SDL_GAMEPAD_BUTTON_NORTH: return SDL_GAMEPAD_BUTTON_WEST;
     default: return host;
     }
+}
+
+static int16_t def_pad(int slot) {
+    return (int16_t)(g_settings.face_buttons == FACE_XBOX ? face_swap(k_def_pad[slot]) : k_def_pad[slot]);
+}
+
+void bind_set_face_buttons(int mode) {
+    if (mode < 0 || mode >= FACE_COUNT || mode == g_settings.face_buttons) return;
+    if ((mode == FACE_XBOX) != (g_settings.face_buttons == FACE_XBOX))
+        for (int i = 0; i < BIND_PAD_COUNT; i++) g_bind_pad[i] = (int16_t)face_swap(g_bind_pad[i]);
+    g_settings.face_buttons = mode;
+    LOG("[input] face buttons: %s\n", g_face_names[mode]);
+}
+
+void bind_load_face_buttons(int mode) {
+    g_settings.face_buttons = mode >= 0 && mode < FACE_COUNT ? mode : FACE_LABELS;
+    for (int i = 0; i < BIND_PAD_COUNT; i++) g_bind_pad[i] = def_pad(i);
 }
 
 static const char *const k_ini[BIND_KEY_COUNT] = {
@@ -165,21 +193,22 @@ int bind_label_family(void) {
     SDL_JoystickID *ids = SDL_GetGamepads(&n);
     if (ids && n > 0) t = SDL_GetGamepadTypeForID(ids[0]);
     SDL_free(ids);
+    if (n <= 0 && g_settings.face_buttons == FACE_XBOX) return 1;  // (no controller: the names the chosen layout uses)
     return t == SDL_GAMEPAD_TYPE_XBOX360 || t == SDL_GAMEPAD_TYPE_XBOXONE ? 1 :
            t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5 ? 2 : 0;
 }
 
 static void result(int kind, int dev, int slot, int other);
 
-void bind_reset(int dev) {
-    if (dev == BIND_DEV_PAD) memcpy(g_bind_pad, k_def_pad, sizeof g_bind_pad);
+void bind_reset(int dev) {  // (the controller's: those of the face buttons setting)
+    if (dev == BIND_DEV_PAD) for (int i = 0; i < BIND_PAD_COUNT; i++) g_bind_pad[i] = def_pad(i);
     else memcpy(g_bind_key, k_def_key, sizeof g_bind_key);
     LOG("[input] %s bindings reset to the defaults\n", dev == BIND_DEV_PAD ? "controller" : "keyboard");
     result(5, dev, -1, -1);
 }
 
 bool bind_is_default_slot(int dev, int slot) {
-    return dev == BIND_DEV_PAD ? g_bind_pad[slot] == k_def_pad[slot] : g_bind_key[slot] == k_def_key[slot];
+    return dev == BIND_DEV_PAD ? g_bind_pad[slot] == def_pad(slot) : g_bind_key[slot] == k_def_key[slot];
 }
 
 bool bind_is_default(int dev) {
@@ -295,19 +324,9 @@ bool bind_capture_event(const SDL_Event *e) {
 // "bind_keys = fps" comes before the bind_key_* lines: keyboard bindings saved before the shooter layout (Link's
 // Awakening's K/J/L/I era) aren't loaded - those players start on the new defaults.
 static bool keys_fps;
-// "face_layout = xbox" (older versions' Controls tab "Face buttons: Xbox", written ahead of the bind_pad_* lines): those
-// were saved against swapped defaults - read back swapped, they're the same bindings with the face buttons by position
-// again (the bottom one jumps), and the next save writes them against these defaults.
-static bool face_xbox;
 
 bool bind_settings_load(const char *key, const char *val) {
     if (!strcmp(key, "bind_keys")) { keys_fps = !strcmp(val, "fps"); return true; }
-    if (!strcmp(key, "face_layout")) {
-        face_xbox = !strcmp(val, "xbox");
-        if (face_xbox) LOG("[input] face_layout = xbox (an older setting): its controller bindings read with the face "
-                           "buttons by position again\n");
-        return true;
-    }
     bool pad = !strncmp(key, "bind_pad_", 9), kb = !strncmp(key, "bind_key_", 9);
     if (!pad && !kb) return false;
     if (kb && !keys_fps) {
@@ -319,7 +338,7 @@ bool bind_settings_load(const char *key, const char *val) {
         if (strcmp(key + 9, k_ini[i])) continue;
         if (pad) {
             for (int h = 0; h < PADB_HOST_COUNT; h++)
-                if (!strcmp(val, k_pad_ini[h])) g_bind_pad[i] = (int16_t)(face_xbox ? face_swap(h) : h);
+                if (!strcmp(val, k_pad_ini[h])) g_bind_pad[i] = (int16_t)h;
         } else {
             int sc = strcmp(val, "none") ? bind_key_from_name(val) : 0;
             if (sc || !strcmp(val, "none")) g_bind_key[i] = (int16_t)sc;
@@ -330,7 +349,7 @@ bool bind_settings_load(const char *key, const char *val) {
 
 void bind_settings_save(FILE *f) {
     for (int i = 0; i < BIND_PAD_COUNT; i++)
-        if (g_bind_pad[i] != k_def_pad[i] && g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT)
+        if (g_bind_pad[i] != def_pad(i) && g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT)
             fprintf(f, "bind_pad_%s = %s\n", k_ini[i], k_pad_ini[g_bind_pad[i]]);
     fprintf(f, "bind_keys = fps\n");
     for (int i = 0; i < BIND_KEY_COUNT; i++)

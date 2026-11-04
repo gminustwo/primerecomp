@@ -230,7 +230,8 @@ A controller works out of the box (Xbox, PlayStation, Switch Pro, Steam Controll
 the game's own Dual Stick layout. In menus the button marked A (Cross) confirms and B (Circle) goes back, on any
 controller. In play the face buttons sit where a Switch controller's do: the bottom one jumps (A on an Xbox
 controller, Cross on a PlayStation one, B on a Switch one) and the right one shoots; PrimeRecomp's menu -> Controls
-rebinds them. With a controller that has a gyro you can use the game's Pointer / Hybrid motion aiming (pause,
+rebinds them. Its Face buttons setting also has the earlier layouts: **Nintendo** (by position everywhere, A on the
+right in menus too) and **Xbox** (A at the bottom everywhere: it confirms and shoots). With a controller that has a gyro you can use the game's Pointer / Hybrid motion aiming (pause,
 Options -> Controls -> Control Scheme).
 
 Keyboard and mouse play like a PC shooter:
