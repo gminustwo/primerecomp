@@ -22,13 +22,15 @@
 #include "../settings.h"
 
 // The game's prompt icons: FNV-1a (64-bit) of level 0 as linear BC7 blocks (1296 bytes), the icon's shape, the
-// Switch input it shows (BIND_*: a stick's own entry for its stick), and for the face buttons' dots the one lit, for
-// a stick whether it's the press (1). From the game's paks (GuiSysMP1, PreloadFrontEndMPT, UI_FrontEnd,
+// Switch input it shows (BIND_*: a stick's own entry for its stick), and for the four dots - the d-pad, drawn as a
+// Joy-Con's four buttons (the visors: "Use [up] or ZR / A to return to the Combat Visor"; issue #32, they were taken
+// for the face buttons, so keys showed X for d-pad up and Enter for right) - the one lit, for a stick whether it's
+// the press (1). From the game's paks (GuiSysMP1, PreloadFrontEndMPT, UI_FrontEnd,
 // DuplicateData). Its other 36 x 36 images (the map's legend, arrows, the stick-rotate icon) aren't buttons.
 typedef struct { uint64_t hash; uint8_t shape; int8_t input; int8_t extra; } GameIcon;
 static const GameIcon k_icons[] = {
     {0x00cd94c75c5e7bc1ull, GA_TRIGGER, BIND_ZR, 0},  // red
-    {0x07611242e899b58full, GA_DOTS, BIND_B, GD_DOWN},  // red
+    {0x07611242e899b58full, GA_DOTS, BIND_DOWN, GD_DOWN},  // red
     {0x0831a6decb6409dbull, GA_STICK, BIND_RSTICK, 0},  // blue
     {0x09f2ee2416abe8bcull, GA_STICK, BIND_RSTICK, 0},  // blue
     {0x100ee24bbaac7ba7ull, GA_CIRCLE, BIND_PLUS, 0},  // gold
@@ -44,7 +46,7 @@ static const GameIcon k_icons[] = {
     {0x3d3c04f4c075e30full, GA_CIRCLE, BIND_B, 0},  // gold
     {0x3d92c915b782b3ecull, GA_TRIGGER, BIND_ZL, 0},  // gold
     {0x3e2dae0dbde0bf64ull, GA_STICK, BIND_LSTICK, 0},  // blue
-    {0x417a8036c1355aabull, GA_DOTS, BIND_Y, GD_LEFT},  // red
+    {0x417a8036c1355aabull, GA_DOTS, BIND_LEFT, GD_LEFT},  // red
     {0x44026fdd80a4796dull, GA_STICK, BIND_LSTICK, 0},  // red
     {0x443f50443fc20f3bull, GA_CIRCLE, BIND_A, 0},  // blue
     {0x46367daae070346cull, GA_STICK, BIND_RSTICK, 0},  // red
@@ -52,14 +54,14 @@ static const GameIcon k_icons[] = {
     {0x4a097e2e28720a99ull, GA_CIRCLE, BIND_X, 0},  // red
     {0x4c78e77035db04faull, GA_STICK, BIND_LSTICK, 0},  // red
     {0x4d3a8ac05ec5c7d0ull, GA_CIRCLE, BIND_MINUS, 0},  // gold
-    {0x4fae82d2c180214full, GA_DOTS, BIND_A, GD_RIGHT},  // blue
-    {0x529423f3dcb45d36ull, GA_DOTS, BIND_Y, GD_LEFT},  // blue
-    {0x55050f284c260bd8ull, GA_DOTS, BIND_B, GD_DOWN},  // blue
+    {0x4fae82d2c180214full, GA_DOTS, BIND_RIGHT, GD_RIGHT},  // blue
+    {0x529423f3dcb45d36ull, GA_DOTS, BIND_LEFT, GD_LEFT},  // blue
+    {0x55050f284c260bd8ull, GA_DOTS, BIND_DOWN, GD_DOWN},  // blue
     {0x5b696a7b1b6a66c4ull, GA_STICK, BIND_RSTICK, 0},  // red
     {0x5d805ef9d2841e9eull, GA_STICK, BIND_LSTICK, 0},  // blue
     {0x5e97df6473cf1114ull, GA_STICK, BIND_LSTICK, 0},  // red
-    {0x62564d472a9d68d2ull, GA_DOTS, BIND_X, GD_UP},  // red
-    {0x63b80b88962e7a7dull, GA_DOTS, BIND_A, GD_RIGHT},  // red
+    {0x62564d472a9d68d2ull, GA_DOTS, BIND_UP, GD_UP},  // red
+    {0x63b80b88962e7a7dull, GA_DOTS, BIND_RIGHT, GD_RIGHT},  // red
     {0x683aa4b551a67980ull, GA_STICK, BIND_LSTICK, 0},  // blue
     {0x689d4a34210cf50bull, GA_STICK, BIND_RSTICK, 1},  // blue
     {0x68d0ddc5e4f8981cull, GA_STICK, BIND_RSTICK, 0},  // blue
@@ -101,7 +103,7 @@ static const GameIcon k_icons[] = {
     {0xe7feb0e2aaf0c2d0ull, GA_CIRCLE, BIND_PLUS, 0},  // blue
     {0xe9cc0f5563dfe35dull, GA_CIRCLE, BIND_B, 0},  // red
     {0xea261c1e13dfd631ull, GA_CIRCLE, BIND_Y, 0},  // blue
-    {0xefeb938a6eae4566ull, GA_DOTS, BIND_X, GD_UP},  // blue
+    {0xefeb938a6eae4566ull, GA_DOTS, BIND_UP, GD_UP},  // blue
     {0xf22c90a21a406f15ull, GA_STICK, BIND_RSTICK, 0},  // blue
     {0xf3c490cc45ca69d4ull, GA_STICK, BIND_LSTICK, 0},  // red
     {0xfa88849fde76f4b1ull, GA_STICK, BIND_LSTICK, 0},  // red
@@ -156,8 +158,9 @@ uint32_t glyph_generation(void) { return g_gen; }
 
 // What each Switch button is pressed with now (glyphs_frame), on a controller and with keys: its binding - but in
 // the game's menus (game_in_play false: runtime/hle/input.c's menu face buttons and menu keys) A / B / X / Y are the
-// controller's face buttons labelled so (bind_label_host; Face buttons: Labels), and a key that means another button there (Space: A)
-// shows the menu key that means this one instead (Esc for B).
+// controller's face buttons labelled so (bind_label_host; Face buttons: Labels), and a button a menu key means shows
+// that key (Enter A, Esc B, Q / E the pause screen's pages - L / R -, the arrows the d-pad: issue #32, Shift / F were
+// shown for the pages); of the rest, one whose key means another button there (Space: A) shows none (the game's own).
 static int16_t g_pad_now[BIND_PAD_COUNT], g_key_now[BIND_PAD_COUNT];
 static _Atomic bool g_now_set;  // (before the first glyphs_frame an icon stays the game's; that frame redraws it)
 
@@ -167,16 +170,20 @@ void glyphs_frame(void) {  // what the icons depend on: the set, the bindings, m
     static uint64_t sig;
     int set = resolve_set();
     bool menu = !game_in_play();
+    static int menu_for[BIND_PAD_COUNT];  // the first menu key meaning each button (Enter before Space: their scancodes)
+    static bool menu_for_set;
+    if (!menu_for_set) {
+        menu_for_set = true;
+        for (int sc = SDL_SCANCODE_COUNT - 1; sc > 0; sc--)
+            if (input_menu_key(sc) >= 0 && input_menu_key(sc) < BIND_PAD_COUNT) menu_for[input_menu_key(sc)] = sc;
+    }
     int16_t pad_now[BIND_PAD_COUNT], key_now[BIND_PAD_COUNT];
     for (int i = 0; i < BIND_PAD_COUNT; i++) {
         pad_now[i] = menu && g_settings.face_buttons == FACE_LABELS && i <= BIND_Y ? (int16_t)bind_label_host(i)
                                                                                     : g_bind_pad[i];
         int k = g_bind_key[i];
-        if (menu && input_menu_key(k) >= 0 && input_menu_key(k) != i) {
-            k = 0;  // (none: the game's own icon)
-            for (int sc = 1; sc < SDL_SCANCODE_COUNT && !k; sc++)
-                if (input_menu_key(sc) == i) k = sc;
-        }
+        if (menu && menu_for[i]) k = menu_for[i];
+        else if (menu && input_menu_key(k) >= 0) k = 0;  // (none: the game's own icon)
         key_now[i] = (int16_t)k;
     }
     uint64_t h = 0xcbf29ce484222325ull;
@@ -304,22 +311,26 @@ static bool icon_spec(const GameIcon *ic, int set, GaSpec *s) {
         return true;
     }
     if (set == ICONS_KEYBOARD) return key_symbol(s, g_key_now[ic->input]);
-    if (set == ICONS_WII) {  // (input.c wiimote_buttons: + = X, 2 = Plus, 1 = Minus, C = Y, Z = ZL; A and B are
-                             // themselves; L, R and ZR have nothing)
+    if (set == ICONS_WII) {  // (input.c wiimote_buttons: + = X, 2 = Plus, 1 = Minus, C = Y, Z = ZL; A, B and the
+                             // d-pad are themselves; L, R and ZR have nothing)
+        if (ic->shape == GA_DOTS) { s->sym = GS_DPAD, s->dir = ic->extra; return true; }  // (the remote's cross)
         const char *w = ic->input == BIND_X ? "+" : ic->input == BIND_Y ? "C" : ic->input == BIND_ZL ? "Z" :
                         ic->input == BIND_A ? "A" : ic->input == BIND_B ? "B" : ic->input == BIND_PLUS ? "2" :
                         ic->input == BIND_MINUS ? "1" : NULL;
-        if (!w || (ic->shape != GA_DOTS && !strcmp(w, k_switch_label[ic->input]))) return false;
+        if (!w || !strcmp(w, k_switch_label[ic->input])) return false;
         text(s, w);
         return true;
     }
     int host = g_pad_now[ic->input];
-    if (ic->shape == GA_DOTS) {  // the face buttons' dots: the bound button's place lit
-        int dir = host == SDL_GAMEPAD_BUTTON_SOUTH ? GD_DOWN : host == SDL_GAMEPAD_BUTTON_EAST ? GD_RIGHT :
-                  host == SDL_GAMEPAD_BUTTON_WEST ? GD_LEFT : host == SDL_GAMEPAD_BUTTON_NORTH ? GD_UP : -1;
-        if (dir == ic->extra) return false;
-        if (dir >= 0) { s->sym = GS_DOT, s->dir = dir; return true; }
-        pad_symbol(s, host, set);
+    if (ic->shape == GA_DOTS) {  // the d-pad as a Joy-Con's four buttons, the one meant lit
+        int dir = host == SDL_GAMEPAD_BUTTON_DPAD_UP ? GD_UP : host == SDL_GAMEPAD_BUTTON_DPAD_DOWN ? GD_DOWN :
+                  host == SDL_GAMEPAD_BUTTON_DPAD_LEFT ? GD_LEFT : host == SDL_GAMEPAD_BUTTON_DPAD_RIGHT ? GD_RIGHT : -1;
+        if (set == ICONS_SWITCH && dir >= 0) {  // (rebound to another direction: that one lit)
+            if (dir == ic->extra) return false;
+            s->sym = GS_DOT, s->dir = dir;
+            return true;
+        }
+        pad_symbol(s, host, set);  // (an Xbox / PlayStation d-pad, or the button it's bound to)
         return true;
     }
     pad_symbol(s, host, set);
@@ -335,6 +346,9 @@ static uint64_t fnv(const uint8_t *p, uint64_t n) {
 }
 
 int glyph_match(uint32_t w, uint32_t h, uint32_t format, uint32_t levels, const uint8_t *lin, uint64_t size) {
+    if (w == 36 && h == 36 && (format != 0x4E || levels != 1 || size != 1296) && log_on())
+        LOG("[glyphs] a 36 x 36 image not checked: format %#x, %u levels, %llu bytes\n", format, levels,
+            (unsigned long long)size);
     if (format != 0x4E || w != 36 || h != 36 || levels != 1 || size != 1296) return -1;  // (BC7 sRGB, 36 x 36)
     uint64_t f = fnv(lin, size);
     int lo = 0, hi = N_ICONS - 1;
