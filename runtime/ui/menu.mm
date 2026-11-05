@@ -26,6 +26,7 @@ void controls_bindings_draw(float scale);  // controls_ui.mm
 #include "../input_bind.h"
 #include "../paths.h"
 #include "../mods.h"
+#include "../hle/atmocheats.h"
 }
 
 // ------------------------------------------------------------------ state shared with the main thread
@@ -808,6 +809,48 @@ static void tab_mods(void) {
     opt_end();
 }
 
+// The emulator mods' Atmosphere cheat files (runtime/hle/atmocheats.c): each cheat switched on / off; master cheats
+// always on; those that can't run here, with why
+static void cheat_files_section(void) {
+    if (ImGui::IsWindowAppearing()) { mods_scan(); atmo_cheats_load(); }  // (the files as they are when the tab opens)
+    opt_section("Cheat files");
+    char how[900];
+    snprintf(how, sizeof how,
+             "Atmosphere cheat files - the cheats made for a modded Switch and the emulators - in an emulator mod's "
+             "cheats folder (Mods tab), named %s for this game (version 1.0.0). Cheats that change memory work; "
+             "those that change the game's code can't, as it's compiled ahead of time here.\n\nNew files are read "
+             "when this tab opens; cheats run 12 times a second while you play.",
+             atmo_cheats_file()[0] ? atmo_cheats_file() : "<build id>.txt");
+    int n = atmo_cheats_count();
+    if (!n) { opt_action("No cheat files in the mods", "", how, false); return; }
+    for (int i = 0; i < n; i++) {
+        AtmoCheat c;
+        if (!atmo_cheat_info(i, &c)) break;
+        char d[1500], label[480];
+        snprintf(label, sizeof label, "%s", c.name);
+        switch (c.kind) {
+        case ATMO_HEADING:
+            opt_disable_next();
+            opt_action(label, "", how, false);
+            continue;
+        case ATMO_MASTER:
+            snprintf(d, sizeof d, "From %s. A master cheat: always on, as on the Switch (the file's {...} entry).\n\n%s",
+                     c.mod, how);
+            opt_disable_next();
+            opt_action(label, "Always", d, false);
+            continue;
+        case ATMO_CODE: case ATMO_UNSUPPORTED:
+            snprintf(d, sizeof d, "From %s. Can't run here: %s.\n\n%s", c.mod, c.note, how);
+            opt_disable_next();
+            opt_action(label, "-", d, false);
+            continue;
+        default:
+            snprintf(d, sizeof d, "From %s.\n\n%s", c.mod, how);
+            if (opt_action(label, c.on ? "On" : "Off", d, false)) { atmo_cheat_set(i, !c.on); settings_save(); }
+        }
+    }
+}
+
 static void tab_cheats(void) {
     opt_begin("##cheats", ImGui::GetFontSize() / 34);
     opt_section("Hints");
@@ -846,6 +889,7 @@ static void tab_cheats(void) {
     opt_toggle("Infinite power bombs", &g_settings.inf_power_bombs, false,
                "Power bombs stay full once you have them.");
     upgrades_section();
+    cheat_files_section();
     opt_end();
 }
 

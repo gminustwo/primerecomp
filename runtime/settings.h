@@ -68,6 +68,7 @@ typedef struct {
     bool dump_textures;  // each texture the game loads written to dump/textures/, named for mods/ (texmods.c)
     char mods_order[2048];     // emulator mods (runtime/mods.c): their folder names, highest priority first, '|' between
     char mods_disabled[2048];  // ... and those switched off, '|' between (a mod in neither: on, below the ordered ones)
+    char cheats_on[4096];      // the mods' Atmosphere cheats switched on (runtime/hle/atmocheats.c): "<mod>/<cheat>", '|'
     bool hdr;            // HDR output when the display takes it (runtime/nvn/vulkan/hdr.c): the game's highlights
                          // past paper white, up to hdr_peak
     int hdr_peak;        // HDR: the display's peak brightness, nits (HDR_PEAK_MIN..MAX)
