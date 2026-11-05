@@ -156,6 +156,8 @@ static bool pace_slow;
 static uint64_t stat_pace_over;
 
 void vk_pace_frame(void) {
+    static __thread bool perf_core;  // (the game's graphics thread, our command translation in it: platform.h)
+    if (!perf_core) perf_core = true, plat_thread_perf_core(PLAT_PERF_RENDER);
     static int on = -1;
     if (on < 0) { const char *e = getenv("LARECOMP_PACE"); on = !e || atoi(e) != 0; }
     static uint64_t last, last_wait;

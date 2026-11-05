@@ -44,6 +44,14 @@ uint64_t plat_now_ns(void);                // monotonic
 void plat_sleep_until_ns(uint64_t t);      // precise wait for plat_now_ns() >= t
 void plat_thread_realtime(uint64_t period_ns);  // periodic timing thread (vsync): don't coalesce its timers
 void plat_thread_background(void);  // work that can wait (shader builds): the game's threads come first
+// The calling thread is one of the frame's critical threads: on Windows, no power throttling (EcoQoS) for it and, on a
+// hybrid CPU, a preference for the performance cores (selected CPU sets; LARECOMP_PCORE=0: off). Elsewhere a no-op.
+enum { PLAT_PERF_GAME, PLAT_PERF_RENDER, PLAT_PERF_VSYNC };
+#ifdef _WIN32
+void plat_thread_perf_core(int role);
+#else
+static inline void plat_thread_perf_core(int role) { (void)role; }
+#endif
 
 // ---- process
 void plat_init(void);                                // first thing in main()

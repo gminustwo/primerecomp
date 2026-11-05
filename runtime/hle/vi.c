@@ -14,6 +14,7 @@ static void *vsync_thread(void *arg) {
     (void)arg;
     const uint64_t period = 16666667;
     plat_thread_realtime(period);
+    plat_thread_perf_core(PLAT_PERF_VSYNC);
     uint64_t next = plat_now_ns();
     for (;;) {
         next += period;

@@ -110,6 +110,8 @@ static _Atomic uint64_t g_update_busy_ns;
 uint64_t game_update_busy_ns(void) { return g_update_busy_ns; }
 
 unsigned rt_frame_step(Cpu *c) {
+    static __thread bool perf_core;  // (the game's update runs on this thread: on a performance core, platform.h)
+    if (!perf_core) perf_core = true, plat_thread_perf_core(PLAT_PERF_GAME);
     {
         extern __thread uint64_t g_blocked_ns;
         static uint64_t last, last_blocked;
