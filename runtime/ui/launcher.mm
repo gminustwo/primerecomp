@@ -760,7 +760,7 @@ static ImGuiKey launcher_pad_key(SDL_JoystickID which, Uint8 b) {
     case BIND_A: return ImGuiKey_GamepadFaceDown;   // activate
     case BIND_B: return ImGuiKey_GamepadFaceRight;  // back
     case BIND_X: return ImGuiKey_GamepadFaceUp;
-    case BIND_Y: return ImGuiKey_GamepadFaceLeft;
+    case BIND_Y: return ImGuiKey_GamepadR3;  // (not FaceLeft: ImGui's window-switching key - menu.mm key_from_pad)
     default: break;
     }
     switch (b) {
