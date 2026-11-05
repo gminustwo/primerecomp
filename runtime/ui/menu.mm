@@ -25,6 +25,7 @@ void input_reset(void);
 void controls_bindings_draw(float scale);  // controls_ui.mm
 #include "../input_bind.h"
 #include "../paths.h"
+#include "../mods.h"
 }
 
 // ------------------------------------------------------------------ state shared with the main thread
@@ -559,31 +560,7 @@ static void tab_display(void) {
                  progs, pipes);
         opt_toggle("Pre-load shaders", &g_settings.preload_shaders, false, d);
     }
-    opt_section("Mods");
-    {   // (runtime/nvn/vulkan/texmods.c)
-        char d[1100];
-        snprintf(d, sizeof d,
-                 "Draws image files from the mods folder in place of the game's own textures: texture packs made for "
-                 "Metroid Prime Remastered. Each file is named after the texture it replaces, the way Dump textures "
-                 "names them (tex_<size>_<name>), in any folders under mods. PNG, or DDS (BC1 to BC7: smaller and "
-                 "faster for big packs); bigger than the original is fine. Packs for the GameCube or Wii game "
-                 "(Dolphin's) don't fit Remastered's models.\n\nFrom the next start. Found: %d replacement texture%s.",
-                 texmods_count(), texmods_count() == 1 ? "" : "s");
-        opt_toggle("Texture mods", &g_settings.texture_mods, true, d);
-        opt_toggle("Dump textures", &g_settings.dump_textures, false,
-                   "For making texture mods: every texture the game loads, as you play, is saved to the dump\\textures "
-                   "folder as a PNG named the way the mods folder wants it. Find the one you want to change, edit it "
-                   "(any size), and put it in mods.\n\nEach texture is saved once; loading is slower while this is on.");
-        if (opt_button("Open the mods folder", "Opens the mods folder, in PrimeRecomp's folder, where texture mods go.")) {
-            char *cwd = SDL_GetCurrentDirectory();
-            char url[1200];
-            snprintf(url, sizeof url, "file:///%s%s", cwd ? cwd : "", texmods_folder());
-            for (char *c = url; *c; c++) if (*c == '\\') *c = '/';
-            SDL_OpenURL(url);
-            SDL_free(cwd);
-        }
-    }
-    // (LAS Recomp's "Remove blur" and "Hide Hero Mode icon" are gone: Link's Awakening only)
+    // (texture mods: the Mods tab; LAS Recomp's "Remove blur" and "Hide Hero Mode icon" are gone: Link's Awakening only)
     // Steam Deck presets (settings.c settings_steam_deck_preset; a Deck's first start takes the 30 fps one)
     opt_section(settings_on_steam_deck() ? "Steam Deck" : "Steam Deck / handhelds");
     if (opt_button("Preset: steady 30 fps",
@@ -742,6 +719,93 @@ static void upgrades_section(void) {
         item_toggle(label, IT_ARTIFACT + i, "One of the twelve Chozo artifacts the Artifact Temple asks for to open "
                                             "the way to the Impact Crater.");
     }
+}
+
+static void open_mods_folder(void) {
+    char *cwd = SDL_GetCurrentDirectory();
+    char url[1200];
+    snprintf(url, sizeof url, "file:///%s%s", cwd ? cwd : "", mods_folder());
+    for (char *c = url; *c; c++) if (*c == '\\') *c = '/';
+    SDL_OpenURL(url);
+    SDL_free(cwd);
+}
+
+// Mods: emulator mods (runtime/mods.c - game files and cheat files made for Ryujinx / yuzu and the Switch, a folder
+// each in mods/: switched on and off, in order) and texture mods (runtime/nvn/vulkan/texmods.c)
+static void tab_mods(void) {
+    if (ImGui::IsWindowAppearing()) mods_scan();  // (the folder as it is when the tab opens)
+    opt_begin("##mods", ImGui::GetFontSize() / 34);
+    opt_section("Emulator mods");
+    static const char *how =
+        "Mods made for the Switch emulators (Ryujinx, yuzu and its successors) or a modded Switch: game file mods from "
+        "GameBanana and similar sites, and Atmosphere cheat files.\n\nTo add one, open the mods folder (below) and "
+        "unpack the mod's archive into a folder of its own there. Its romfs or cheats folder can be right inside that "
+        "folder, or where an archive for the Switch's SD card has it (atmosphere\\contents\\010012101468C000\\romfs); "
+        "PrimeRecomp finds it either way. Mods made for version 1.0.0 of Metroid Prime Remastered.";
+    int n = mods_count(), move_from = -1, move_to = -1;  // (a move: after the rows - the row keeps its id, and the cursor)
+    if (!n) opt_action("No mods in the mods folder", "", how, false);
+    for (int i = 0; i < n; i++) {
+        ModInfo m;
+        if (!mods_info(i, &m)) break;
+        char d[2400], parts[600] = "", value[32];
+        if (m.romfs[0]) {
+            size_t l = strlen(parts);
+            if (m.counted)
+                snprintf(parts + l, sizeof parts - l, "Game files: %d - at the game's last start %d of the game's "
+                         "files replaced, %d added%s.\n", m.romfs_files, m.replaced, m.added,
+                         m.covered ? " (a higher mod has some of the same files: its are used)" : "");
+            else snprintf(parts + l, sizeof parts - l, "Game files: %d.\n", m.romfs_files);
+        }
+        if (m.cheats[0]) {
+            size_t l = strlen(parts);
+            snprintf(parts + l, sizeof parts - l, "Cheat files: %d (switched in the Cheats tab).\n", m.cheat_files);
+        }
+        if (m.exefs[0]) {
+            size_t l = strlen(parts);
+            snprintf(parts + l, sizeof parts - l, "Code patches (.ips, .pchtxt): %d - not used: the game's code is "
+                     "compiled ahead of time, from the game files as they are.\n", m.exefs_files);
+        }
+        snprintf(d, sizeof d, "%s\nA or click: on / off. X (PlayStation: square) or Ctrl+Up: higher; Y (triangle) or "
+                 "Ctrl+Down: lower. When two mods have the same game file, the higher one's is used.\n\nChanges are "
+                 "used from the game's next start (Quit tab: Quit to Start Screen, then PLAY).",
+                 parts);
+        snprintf(value, sizeof value, "%d.  %s", i + 1, m.on ? "On" : "Off");
+        if (opt_action(m.name, value, d, false)) { mods_set_on(i, !m.on); settings_save(); }
+        if (ImGui::IsItemFocused()) {
+            // (X and Y, as key_from_pad has them: GamepadFaceUp / R3. FaceUp is also ImGui's "activate" - it switched
+            // the mod: the row's while it has the cursor)
+            ImGui::SetKeyOwner(ImGuiKey_GamepadFaceUp, ImGui::GetItemID());
+            ImGuiIO &io = ImGui::GetIO();
+            if (io.KeyCtrl)  // (Ctrl+Up / Down move the mod, not the cursor)
+                for (ImGuiKey k : {ImGuiKey_UpArrow, ImGuiKey_DownArrow}) ImGui::SetKeyOwner(k, ImGui::GetItemID());
+            bool up = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow, false));
+            bool down = ImGui::IsKeyPressed(ImGuiKey_GamepadR3, false) || (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow, false));
+            int to = up ? i - 1 : down ? i + 1 : i;
+            if (to != i && to >= 0 && to < n) move_from = i, move_to = to;
+        }
+    }
+    if (move_from >= 0) { mods_move(move_from, move_to); settings_save(); }
+    if (opt_button("Open the mods folder", n ? how : "Opens the mods folder, in PrimeRecomp's folder: where mods go."))
+        open_mods_folder();
+    opt_section("Texture mods");
+    {   // (runtime/nvn/vulkan/texmods.c)
+        char d[1100];
+        snprintf(d, sizeof d,
+                 "Draws image files from the mods folder in place of the game's own textures: texture packs made for "
+                 "Metroid Prime Remastered. Each file is named after the texture it replaces, the way Dump textures "
+                 "names them (tex_<size>_<name>), in any folders under mods. PNG, or DDS (BC1 to BC7: smaller and "
+                 "faster for big packs); bigger than the original is fine. Packs for the GameCube or Wii game "
+                 "(Dolphin's) don't fit Remastered's models.\n\nFrom the next start. Found: %d replacement texture%s.",
+                 texmods_count(), texmods_count() == 1 ? "" : "s");
+        if (opt_toggle("Texture mods", &g_settings.texture_mods, true, d)) settings_save();
+        if (opt_toggle("Dump textures", &g_settings.dump_textures, false,
+                       "For making texture mods: every texture the game loads, as you play, is saved to the "
+                       "dump\\textures folder as a PNG named the way the mods folder wants it. Find the one you want to "
+                       "change, edit it (any size), and put it in mods.\n\nEach texture is saved once; loading is "
+                       "slower while this is on."))
+            settings_save();
+    }
+    opt_end();
 }
 
 static void tab_cheats(void) {
@@ -1105,8 +1169,9 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     // (ids 2-4 were LAS Recomp's Save Editor, Randomizer and Warp, 5 and 6 its Cheats and Gameplay - now Metroid
     // Prime's; ids stay: test hooks)
     // (Cosmetics, id 7: LAS Recomp's tunic / heart colours - nothing to recolour in Metroid Prime, so not shown)
-    static const char *names[] = {"Video", "Audio", "", "", "", "Cheats", "Gameplay", "", "Controls", "Quit"};
-    static const int order[] = {6, 8, 0, 1, 5, 9};  // Gameplay, Controls, Video, Audio, Cheats, Quit
+    // (Mods, id 2: emulator mods and texture mods)
+    static const char *names[] = {"Video", "Audio", "Mods", "", "", "Cheats", "Gameplay", "", "Controls", "Quit"};
+    static const int order[] = {6, 8, 0, 1, 2, 5, 9};  // Gameplay, Controls, Video, Audio, Mods, Cheats, Quit
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT)
         if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
@@ -1192,6 +1257,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case -1: prelaunch(scale); break;
                 case 0: tab_display(); break;
                 case 1: tab_audio(); break;
+                case 2: tab_mods(); break;
                 case 5: tab_cheats(); break;
                 case 6: tab_gameplay(); break;
                 case 8: tab_about(); break;
