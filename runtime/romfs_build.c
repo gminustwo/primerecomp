@@ -285,6 +285,7 @@ static bool copy_dir(Dir *d, const char *dst, uint64_t *done, uint64_t total, vo
 #include "romfs_files.h"
 
 int romfs_game_file_count(void) { return (int)(sizeof k_romfs_files / sizeof *k_romfs_files); }
+const char *romfs_game_file_path(int i) { return i >= 0 && i < romfs_game_file_count() ? k_romfs_files[i].path : NULL; }
 
 int romfs_check_files(const char *dir, int *wrong_size, RomfsCheckFn each, void *ctx) {
     int missing = 0, wrong = 0;

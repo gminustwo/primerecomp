@@ -1,5 +1,6 @@
 #include "settings.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -146,6 +147,8 @@ const char *settings_language_name(void) {
     return "English";
 }
 
+static void log_settings(bool all);
+
 void settings_load(void) {
     static bool loaded;
     if (loaded) return;
@@ -159,6 +162,7 @@ void settings_load(void) {
     }
     if (!f) {  // (a first start: on a Steam Deck its steady 30 fps preset)
         if (settings_on_steam_deck()) settings_steam_deck_preset(30);
+        log_settings(true);
         return;
     }
     char line[4400];  // (mods_order / mods_disabled: lists of folder names)
@@ -278,60 +282,146 @@ void settings_load(void) {
     if (g_settings.hdr_paper < HDR_PAPER_MIN) g_settings.hdr_paper = HDR_PAPER_MIN;
     if (g_settings.hdr_paper > HDR_PAPER_MAX) g_settings.hdr_paper = HDR_PAPER_MAX;
     LOG("[settings] loaded %s\n", SETTINGS_FILE);
+    log_settings(true);
     if (migrated) settings_save();
+}
+
+// The settings as primerecomp.ini has them, written through put: to the file, or to a buffer (Out.s) for the log
+typedef struct { FILE *f; char *s; size_t n, cap; } Out;
+static void put(void *ctx, const char *fmt, ...) {
+    Out *o = ctx;
+    va_list ap;
+    va_start(ap, fmt);
+    if (o->f) vfprintf(o->f, fmt, ap);
+    else if (o->n + 1 < o->cap) {
+        int k = vsnprintf(o->s + o->n, o->cap - o->n, fmt, ap);
+        if (k > 0) o->n = o->n + (size_t)k < o->cap ? o->n + (size_t)k : o->cap - 1;
+    }
+    va_end(ap);
+}
+
+static void write_settings(void *o) {
+    put(o, "# PrimeRecomp settings (edited from the in-game menu: F1, or L3+R3 on a controller)\n");
+    put(o, "aspect = %s\n", g_settings.aspect == ASPECT_ORIGINAL ? "original" : "unlocked");
+    put(o, "hud = %s\n", g_settings.hud == HUD_MIDDLE ? "middle" : g_settings.hud == HUD_21_9 ? "21:9" : "edges");
+    put(o, "pause = %s\n", g_settings.pause == PAUSE_MIDDLE ? "middle" : "fill");
+    put(o, "fullscreen = %d\n", g_settings.fullscreen);
+    put(o, "volume = %.2f\n", g_settings.volume);
+    put(o, "reverb = %d\n", g_settings.reverb);
+    put(o, "rumble = %d\nrumble_strength = %.2f\nhd_rumble = %d\n", g_settings.rumble, g_settings.rumble_strength,
+            g_settings.hd_rumble);
+    put(o, "deadzone_left = %.2f\ndeadzone_right = %.2f\n", g_settings.deadzone[0], g_settings.deadzone[1]);
+    put(o, "movie_audio = %d\n", g_settings.movie_audio);
+    put(o, "show_fps = %d\n", g_settings.show_fps);
+    put(o, "frame_rate = %d\n", g_settings.frame_rate);
+    put(o, "vsync = %d\n", g_settings.vsync);
+    put(o, "preload_shaders = %d\n", g_settings.preload_shaders);
+    put(o, "texture_mods = %d\ndump_textures = %d\n", g_settings.texture_mods, g_settings.dump_textures);
+    if (g_settings.mods_order[0]) put(o, "mods_order = %s\n", g_settings.mods_order);
+    if (g_settings.mods_disabled[0]) put(o, "mods_disabled = %s\n", g_settings.mods_disabled);
+    if (g_settings.cheats_on[0]) put(o, "cheats_on = %s\n", g_settings.cheats_on);
+    put(o, "hdr = %d\nhdr_peak_nits = %d\nhdr_paper_white_nits = %d\n", g_settings.hdr, g_settings.hdr_peak,
+            g_settings.hdr_paper);
+    put(o, "fov = %d\nweapon_fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.weapon_fov,
+            g_settings.skippable_cutscenes, g_settings.gyro);
+    put(o, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
+            g_settings.mouse_invert);
+    put(o, "flick_stick = %d\n", g_settings.flick_stick);
+    put(o, "hint_seconds = %d\nhint_on_l3 = %d\ninfinite_energy = %d\ninfinite_missiles = %d\ninfinite_power_bombs = %d\n",
+            g_settings.hint_seconds, g_settings.hint_on_l3, g_settings.inf_energy, g_settings.inf_missiles,
+            g_settings.inf_power_bombs);
+    put(o, "wiimote = %d\nwiimote_mid = %.4f %.4f\nwiimote_area = %.2f\nwiimote_smooth = %.2f\n", g_settings.wiimote,
+            g_settings.wiimote_mid[0], g_settings.wiimote_mid[1], g_settings.wiimote_area, g_settings.wiimote_smooth);
+    if (g_settings.steam_controller_direct) put(o, "steam_controller_direct = 1\n");  // (written only when set)
+    put(o, "upscaler = %s\n", g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
+    put(o, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");
+    put(o, "aniso = %d\n", g_settings.aniso);
+    if (g_settings.res_mode == RES_DYNAMIC) put(o, "resolution = dynamic\n");
+    else if (g_settings.res_mode == RES_Q75) put(o, "resolution = 75%%\n");
+    else if (g_settings.res_mode == RES_Q25) put(o, "resolution = 25%%\n");
+    else if (g_settings.res_mode == RES_Q50) put(o, "resolution = 50%%\n");
+    else if (g_settings.res_mode == RES_FIXED) put(o, "resolution = %dp\n", g_settings.res_lines);
+    else put(o, "resolution = match\n");
+    put(o, "face_buttons = %s\n", g_face_names[g_settings.face_buttons >= 0 && g_settings.face_buttons < FACE_COUNT
+                                                         ? g_settings.face_buttons : FACE_LABELS]);
+    put(o, "button_icons = %s\n", g_icons_names[g_settings.button_icons >= 0 && g_settings.button_icons < ICONS_COUNT
+                                                         ? g_settings.button_icons : ICONS_AUTO]);
+    put(o, "language = %s\n", g_language_codes[g_settings.language > LANG_AUTO && g_settings.language < N_LANGUAGES
+                                                     ? g_settings.language : LANG_AUTO]);
+    put(o, "menu_tip_seen = %d\n", g_settings.menu_tip_seen);
+    bind_settings_save(put, o);
+}
+
+// The settings in the log (bug reports: what the player had set): all of them once, as "key value" pairs, then each
+// change as it's saved ("[settings] changed: fov 55 -> 90"). Not the window's own bookkeeping (the Wii Remote's
+// calibrated middle, the one-time tip).
+static char g_logged[16384];  // the ini text last logged
+static bool logged_key(const char *key, size_t klen) {
+    static const char *const skip[] = {"wiimote_mid", "menu_tip_seen", "bind_keys"};
+    for (size_t i = 0; i < sizeof skip / sizeof *skip; i++)
+        if (strlen(skip[i]) == klen && !strncmp(key, skip[i], klen)) return false;
+    return true;
+}
+static void settings_text(char *buf, size_t cap) {
+    Out o = {NULL, buf, 0, cap};
+    buf[0] = 0;
+    write_settings(&o);
+}
+// An ini text's next "key = value" line from *at (comments and others skipped): false at the end
+static bool ini_next(const char **at, const char **key, size_t *klen, const char **val, size_t *vlen) {
+    while (**at) {
+        const char *l = *at, *e = strchr(l, '\n');
+        size_t len = e ? (size_t)(e - l) : strlen(l);
+        *at = l + len + (e ? 1 : 0);
+        const char *eq = memchr(l, '=', len);
+        if (l[0] == '#' || !eq || eq - l < 2 || eq[-1] != ' ') continue;
+        *key = l, *klen = (size_t)(eq - l) - 1;
+        *val = eq + 1 < l + len && eq[1] == ' ' ? eq + 2 : eq + 1, *vlen = (size_t)(l + len - *val);
+        return true;
+    }
+    return false;
+}
+// key's value in an ini text, or NULL
+static const char *ini_value(const char *text, const char *key, size_t klen, size_t *vlen) {
+    const char *k, *v;
+    size_t kl;
+    for (const char *at = text; ini_next(&at, &k, &kl, &v, vlen);)
+        if (kl == klen && !strncmp(k, key, klen)) return v;
+    return NULL;
+}
+static void log_settings(bool all) {
+    static char now[sizeof g_logged], out[8192];
+    settings_text(now, sizeof now);
+    size_t n = 0;
+    // all: each setting; else what changed: the keys now (new or another value), then the ones gone (back to their
+    // defaults, as a binding is when it's set back)
+    for (int pass = 0; pass < (all ? 1 : 2); pass++) {
+        const char *text = pass ? g_logged : now, *other = pass ? now : g_logged, *k, *v;
+        size_t kl, vl;
+        for (const char *at = text; ini_next(&at, &k, &kl, &v, &vl) && n + 80 < sizeof out;) {
+            if (!logged_key(k, kl)) continue;
+            size_t ol = 0;
+            const char *ov = all ? NULL : ini_value(other, k, kl, &ol);
+            int w = 0;
+            const char *sep = n ? ", " : "";
+            if (all) w = snprintf(out + n, sizeof out - n, "%s%.*s %.*s", sep, (int)kl, k, (int)vl, v);
+            else if (pass == 0 && (!ov || ol != vl || memcmp(ov, v, vl)))
+                w = snprintf(out + n, sizeof out - n, "%s%.*s %.*s -> %.*s", sep, (int)kl, k, ov ? (int)ol : 7,
+                             ov ? ov : "default", (int)vl, v);
+            else if (pass == 1 && !ov)
+                w = snprintf(out + n, sizeof out - n, "%s%.*s %.*s -> default", sep, (int)kl, k, (int)vl, v);
+            if (w > 0) n = n + (size_t)w < sizeof out ? n + (size_t)w : sizeof out - 1;
+        }
+    }
+    if (n) LOG(all ? "[settings] %s\n" : "[settings] changed: %s\n", out);
+    memcpy(g_logged, now, sizeof g_logged);
 }
 
 void settings_save(void) {
     FILE *f = fopen(SETTINGS_FILE, "w");
     if (!f) { LOG("[settings] cannot write %s\n", SETTINGS_FILE); return; }
-    fprintf(f, "# PrimeRecomp settings (edited from the in-game menu: F1, or L3+R3 on a controller)\n");
-    fprintf(f, "aspect = %s\n", g_settings.aspect == ASPECT_ORIGINAL ? "original" : "unlocked");
-    fprintf(f, "hud = %s\n", g_settings.hud == HUD_MIDDLE ? "middle" : g_settings.hud == HUD_21_9 ? "21:9" : "edges");
-    fprintf(f, "pause = %s\n", g_settings.pause == PAUSE_MIDDLE ? "middle" : "fill");
-    fprintf(f, "fullscreen = %d\n", g_settings.fullscreen);
-    fprintf(f, "volume = %.2f\n", g_settings.volume);
-    fprintf(f, "reverb = %d\n", g_settings.reverb);
-    fprintf(f, "rumble = %d\nrumble_strength = %.2f\nhd_rumble = %d\n", g_settings.rumble, g_settings.rumble_strength,
-            g_settings.hd_rumble);
-    fprintf(f, "deadzone_left = %.2f\ndeadzone_right = %.2f\n", g_settings.deadzone[0], g_settings.deadzone[1]);
-    fprintf(f, "movie_audio = %d\n", g_settings.movie_audio);
-    fprintf(f, "show_fps = %d\n", g_settings.show_fps);
-    fprintf(f, "frame_rate = %d\n", g_settings.frame_rate);
-    fprintf(f, "vsync = %d\n", g_settings.vsync);
-    fprintf(f, "preload_shaders = %d\n", g_settings.preload_shaders);
-    fprintf(f, "texture_mods = %d\ndump_textures = %d\n", g_settings.texture_mods, g_settings.dump_textures);
-    if (g_settings.mods_order[0]) fprintf(f, "mods_order = %s\n", g_settings.mods_order);
-    if (g_settings.mods_disabled[0]) fprintf(f, "mods_disabled = %s\n", g_settings.mods_disabled);
-    if (g_settings.cheats_on[0]) fprintf(f, "cheats_on = %s\n", g_settings.cheats_on);
-    fprintf(f, "hdr = %d\nhdr_peak_nits = %d\nhdr_paper_white_nits = %d\n", g_settings.hdr, g_settings.hdr_peak,
-            g_settings.hdr_paper);
-    fprintf(f, "fov = %d\nweapon_fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.weapon_fov,
-            g_settings.skippable_cutscenes, g_settings.gyro);
-    fprintf(f, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
-            g_settings.mouse_invert);
-    fprintf(f, "flick_stick = %d\n", g_settings.flick_stick);
-    fprintf(f, "hint_seconds = %d\nhint_on_l3 = %d\ninfinite_energy = %d\ninfinite_missiles = %d\ninfinite_power_bombs = %d\n",
-            g_settings.hint_seconds, g_settings.hint_on_l3, g_settings.inf_energy, g_settings.inf_missiles,
-            g_settings.inf_power_bombs);
-    fprintf(f, "wiimote = %d\nwiimote_mid = %.4f %.4f\nwiimote_area = %.2f\nwiimote_smooth = %.2f\n", g_settings.wiimote,
-            g_settings.wiimote_mid[0], g_settings.wiimote_mid[1], g_settings.wiimote_area, g_settings.wiimote_smooth);
-    if (g_settings.steam_controller_direct) fprintf(f, "steam_controller_direct = 1\n");  // (written only when set)
-    fprintf(f, "upscaler = %s\n", g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
-    fprintf(f, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");
-    fprintf(f, "aniso = %d\n", g_settings.aniso);
-    if (g_settings.res_mode == RES_DYNAMIC) fprintf(f, "resolution = dynamic\n");
-    else if (g_settings.res_mode == RES_Q75) fprintf(f, "resolution = 75%%\n");
-    else if (g_settings.res_mode == RES_Q25) fprintf(f, "resolution = 25%%\n");
-    else if (g_settings.res_mode == RES_Q50) fprintf(f, "resolution = 50%%\n");
-    else if (g_settings.res_mode == RES_FIXED) fprintf(f, "resolution = %dp\n", g_settings.res_lines);
-    else fprintf(f, "resolution = match\n");
-    fprintf(f, "face_buttons = %s\n", g_face_names[g_settings.face_buttons >= 0 && g_settings.face_buttons < FACE_COUNT
-                                                         ? g_settings.face_buttons : FACE_LABELS]);
-    fprintf(f, "button_icons = %s\n", g_icons_names[g_settings.button_icons >= 0 && g_settings.button_icons < ICONS_COUNT
-                                                         ? g_settings.button_icons : ICONS_AUTO]);
-    fprintf(f, "language = %s\n", g_language_codes[g_settings.language > LANG_AUTO && g_settings.language < N_LANGUAGES
-                                                     ? g_settings.language : LANG_AUTO]);
-    fprintf(f, "menu_tip_seen = %d\n", g_settings.menu_tip_seen);
-    bind_settings_save(f);
+    Out o = {f};
+    write_settings(&o);
     fclose(f);
+    if (g_logged[0]) log_settings(false);
 }
