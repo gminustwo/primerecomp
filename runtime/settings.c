@@ -161,14 +161,14 @@ void settings_load(void) {
         if (settings_on_steam_deck()) settings_steam_deck_preset(30);
         return;
     }
-    char line[256];
+    char line[4400];  // (mods_order / mods_disabled: lists of folder names)
     bool tip_key = false;
     for (bool first = true; fgets(line, sizeof line, f); first = false) {
         char key[64];
-        char val[128] = "";
+        char val[4200] = "";
         // (a file saved by an editor as "UTF-8 with BOM": the mark hid the first line's key)
         const char *p = first && !memcmp(line, "\xEF\xBB\xBF", 3) ? line + 3 : line;
-        if (sscanf(p, " %63[^= ] = %127[^\n]", key, val) < 1) continue;
+        if (sscanf(p, " %63[^= ] = %4199[^\n]", key, val) < 1) continue;
         // (a hand-edited file's Windows line ends: the file is read as bytes, "original\r" didn't match "original")
         for (size_t n = strnlen(val, sizeof val); n && (val[n - 1] == '\r' || val[n - 1] == ' '); n--) val[n - 1] = 0;
         // (keys only Link's Awakening had - cheats, randomizer, cosmetics... - fall through to the bindings, unread)
@@ -193,6 +193,8 @@ void settings_load(void) {
         else if (!strcmp(key, "preload_shaders")) g_settings.preload_shaders = atoi(val) != 0;
         else if (!strcmp(key, "texture_mods")) g_settings.texture_mods = atoi(val) != 0;
         else if (!strcmp(key, "dump_textures")) g_settings.dump_textures = atoi(val) != 0;
+        else if (!strcmp(key, "mods_order")) snprintf(g_settings.mods_order, sizeof g_settings.mods_order, "%s", val);
+        else if (!strcmp(key, "mods_disabled")) snprintf(g_settings.mods_disabled, sizeof g_settings.mods_disabled, "%s", val);
         else if (!strcmp(key, "hdr")) g_settings.hdr = atoi(val) != 0;
         else if (!strcmp(key, "hdr_peak_nits")) g_settings.hdr_peak = atoi(val);
         else if (!strcmp(key, "hdr_paper_white_nits")) g_settings.hdr_paper = atoi(val);
@@ -297,6 +299,8 @@ void settings_save(void) {
     fprintf(f, "vsync = %d\n", g_settings.vsync);
     fprintf(f, "preload_shaders = %d\n", g_settings.preload_shaders);
     fprintf(f, "texture_mods = %d\ndump_textures = %d\n", g_settings.texture_mods, g_settings.dump_textures);
+    if (g_settings.mods_order[0]) fprintf(f, "mods_order = %s\n", g_settings.mods_order);
+    if (g_settings.mods_disabled[0]) fprintf(f, "mods_disabled = %s\n", g_settings.mods_disabled);
     fprintf(f, "hdr = %d\nhdr_peak_nits = %d\nhdr_paper_white_nits = %d\n", g_settings.hdr, g_settings.hdr_peak,
             g_settings.hdr_paper);
     fprintf(f, "fov = %d\nweapon_fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.weapon_fov,

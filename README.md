@@ -57,7 +57,11 @@ PC, with Vulkan for the graphics. No emulator runs.
   you've seen, and the shaders of the rest of the game that come with PrimeRecomp as a list (hashes and render
   settings only: their code is read from your own game files) - so nothing pops in or hitches the first time it's
   drawn, on a first visit too. The first start takes longer (B / Esc plays at once; the rest loads while you play)
-- Texture mods (F1 menu, Video tab: Mods): image files in the `mods` folder drawn in place of the game's textures -
+- Emulator mods (F1 menu, Mods tab): mods made for Ryujinx / yuzu or a modded Switch - game file (RomFS) mods - in
+  the `mods` folder, a folder each, unpacked as they come (`romfs` right inside, or an SD card's
+  `atmosphere/contents/010012101468C000/romfs`); switched on and off and put in order in the Mods tab (the higher
+  mod's file is used when two have the same one)
+- Texture mods (F1 menu, Mods tab): image files in the `mods` folder drawn in place of the game's textures -
   PNG of any size, or DDS (BC1-BC7) for big packs. Turn on Dump textures to get the game's textures, named the way
   `mods` wants them (`dump\textures\tex_<size>_<name>.png`): edit one and put it in `mods`. Made for Remastered's own
   textures: GameCube / Wii (Dolphin) packs don't fit its models
