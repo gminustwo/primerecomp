@@ -112,6 +112,15 @@ static void base_close(void) {
     g_base_open = false;
 }
 
+// A romfs folder short of the game's files: each one named in the log (issue #34: one 20 files short crashed as the
+// game started, in CPakFile::CheckLoaded, with nothing saying why)
+static void log_odd_file(void *ctx, const char *path, long long have, unsigned long long want) {
+    int *n = ctx;
+    if ((*n)++ >= 40) return;
+    if (have < 0) LOG("[fs] romfs: missing %s\n", path);
+    else LOG("[fs] romfs: %s is %lld bytes, the game's is %llu\n", path, have, want);
+}
+
 static void base_open(void) {
     if (g_base_open) return;
     char path[1100], why[256] = "";
@@ -119,6 +128,12 @@ static void base_open(void) {
     struct stat sb;
     if (stat(path, &sb) == 0 && romfs_layout(g_romfs_dir, &g_base, why, sizeof why)) {
         LOG("[fs] romfs: %d files served from %s\n", g_base.nfiles, g_romfs_dir);
+        int odd = 0, wrong = 0, missing = romfs_check_files(g_romfs_dir, &wrong, log_odd_file, &odd);
+        if (missing)
+            LOG("[fs] romfs: %d of the game's %d files missing - the game can't start without them: set the game "
+                "files up again on the start screen (from a new extract of the game's romfs, or its NSP / XCI)\n",
+                missing, romfs_game_file_count());
+        if (wrong) LOG("[fs] romfs: %d of the game's files at another size than v1.0.0's (changed, or cut short)\n", wrong);
         if (getenv("LARECOMP_ROMFS_VERIFY")) {  // (debug) the served image against a romfs.bin built before, byte for byte
             snprintf(path, sizeof path, "%s.bin", g_romfs_dir);
             int fd = open(path, O_RDONLY);

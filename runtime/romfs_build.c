@@ -282,6 +282,28 @@ static bool copy_dir(Dir *d, const char *dst, uint64_t *done, uint64_t total, vo
     return true;
 }
 
+#include "romfs_files.h"
+
+int romfs_game_file_count(void) { return (int)(sizeof k_romfs_files / sizeof *k_romfs_files); }
+
+int romfs_check_files(const char *dir, int *wrong_size, RomfsCheckFn each, void *ctx) {
+    int missing = 0, wrong = 0;
+    for (int i = 0; i < romfs_game_file_count(); i++) {
+        char p[2048];
+        snprintf(p, sizeof p, "%s/%s", dir, k_romfs_files[i].path);
+        struct stat st;
+        if (stat(p, &st) != 0 || !S_ISREG(st.st_mode)) {
+            missing++;
+            if (each) each(ctx, k_romfs_files[i].path, -1, k_romfs_files[i].size);
+        } else if ((uint64_t)st.st_size != k_romfs_files[i].size) {
+            wrong++;
+            if (each) each(ctx, k_romfs_files[i].path, (long long)st.st_size, k_romfs_files[i].size);
+        }
+    }
+    if (wrong_size) *wrong_size = wrong;
+    return missing;
+}
+
 bool romfs_copy_tree(const char *src, const char *dst, void (*progress)(uint64_t, uint64_t)) {
     Dir *t = scan(src, "", NULL, 0);
     if (!t) return false;

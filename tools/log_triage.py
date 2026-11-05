@@ -66,6 +66,8 @@ NOTABLE = [
     ("frame pacing switched to the game's 30 fps mode", re.compile(r"\[pace\] frames don't fit")),
     ("slow shader builds (stutter)", re.compile(r"\[shader\] slow build")),
     ("settings file could not be written", re.compile(r"\[settings\] cannot write")),
+    ("game files missing from the romfs folder (set them up again)", re.compile(r"\[fs\] romfs: [1-9]\d* of the game's \d+ files missing")),
+    ("game files at another size than v1.0.0's (changed or cut short)", re.compile(r"\[fs\] romfs: \d+ of the game's files at another size")),
     ("developer overrides (LARECOMP_*) in use", re.compile(r"\(LARECOMP_[A-Z_]+\)")),
 ]
 

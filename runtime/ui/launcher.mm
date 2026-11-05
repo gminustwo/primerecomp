@@ -100,9 +100,32 @@ static std::string check_copied_files(const std::string &root) {
     return "Game data missing";
 }
 
-// "" = ready to play, else what is wrong
-static std::string check_game_files(const std::string &root) {
+// The game's own data files all in a romfs folder (runtime/romfs_files.h; 341 stat calls, so not every frame): "" =
+// yes, else how many are missing, with the first few (issue #34: a romfs 20 files short crashed as the game started)
+static std::string missing_game_data(const std::string &romfs) {
+    struct Ctx { std::string names; int n; } c = {"", 0};
+    int missing = romfs_check_files(romfs.c_str(), NULL, [](void *p, const char *path, long long have, unsigned long long) {
+        Ctx *c = (Ctx *)p;
+        if (have >= 0 || c->n++ >= 3) return;
+        c->names += (c->names.empty() ? "" : ", ") + std::string(path);
+    }, &c);
+    if (!missing) return "";
+    return std::to_string(missing) + " of the game's " + std::to_string(romfs_game_file_count()) + " files missing: " +
+           c.names + (missing > 3 ? "..." : "");
+}
+
+static const char *const FILES_INCOMPLETE = "Game files incomplete";  // (check_game_files)
+
+// "" = ready to play, else what is wrong (detail: for FILES_INCOMPLETE, which files)
+static std::string check_game_files(const std::string &root, std::string *detail = NULL) {
     std::string why = check_copied_files(root);
+    if (why.empty() && file_exists(root + "/romfs/Worlds")) {  // (not read from a game package: romfs.src)
+        std::string m = missing_game_data(root + "/romfs");
+        if (!m.empty()) {
+            if (detail) *detail = m;
+            return FILES_INCOMPLETE;
+        }
+    }
     if (why.empty() && !gamelib_present(root.c_str())) return "Game code not built yet";
     return why;
 }
@@ -163,7 +186,8 @@ static void set_failure(int k, const std::string &detail = "") {
         "Choose the folder that holds the game files, or the game's NSP / XCI file.",
         "Make sure there's about 16 GB free and try again.",
         "PrimeRecomp needs version 1.0.0 of the game, without updates.",
-        "Some files are missing. Choose the folder again; if it happens again, copy your extracted game files again.",
+        "Some of the game's files are missing. Extract the game's romfs again (in Ryujinx: right-click the game, "
+        "Extract Data -> RomFS) and choose that folder, or choose the game's NSP / XCI file.",
         "Make sure there's about 2 GB free and try again. If it keeps happening, report it on GitHub.",
         // (issue #8: a romfs alone chosen, "no game files" didn't say what was missing)
         "The game's code is in its exefs folder (main, main.npdm), extracted apart from the romfs: in Ryujinx, "
@@ -373,6 +397,10 @@ static void *extract_thread(void *) {
     std::vector<std::string> pkgs;  // (game packages in the folder)
     bool compressed = false;        // (NSZ / XCZ / loose NCAs there)
     if (src.empty() && check_copied_files(g_root).empty()) {  // copied already (an update needs new game code)
+        {
+            std::string detail;  // (short of files: no use building the game code for them)
+            if (check_game_files(g_root, &detail) == FILES_INCOMPLETE) { set_failure(FAIL_MISSING, detail); goto done; }
+        }
         g_copy_skipped = true;
         if (file_exists(g_root + "/" GAMELIB_NAME ".id")) g_setup_kind = SETUP_UPDATE;  // (else a first setup cut short)
         if (!build_game_code()) goto done;
@@ -413,6 +441,10 @@ static void *extract_thread(void *) {
     }
     if (!build_id_ok(exefs + "/main")) { set_failure(FAIL_VERSION); goto done; }
     {
+        std::string m = missing_game_data(romfs);  // (the chosen romfs short of files: said before copying any)
+        if (!m.empty()) { set_failure(FAIL_MISSING, m); goto done; }
+    }
+    {
         // (the picked folder can't be PrimeRecomp's own copy: setting up again deletes that first)
         char a[4096], b[4096];
         mkdir(g_root.c_str(), 0755);
@@ -444,9 +476,9 @@ static void *extract_thread(void *) {
     }
 check:
     {
-        std::string why = check_game_files(g_root);
+        std::string detail, why = check_game_files(g_root, &detail);
         if (why.empty()) set_job("Game files ready."), rt_note_copy();
-        else set_failure(why.find("version") != std::string::npos ? FAIL_VERSION : FAIL_MISSING);
+        else set_failure(why.find("version") != std::string::npos ? FAIL_VERSION : FAIL_MISSING, detail);
     }
 done:
     pthread_mutex_lock(&g_lock);
@@ -1150,12 +1182,13 @@ extern "C" void launcher_run(const char *root) {
     if (check_copied_files(g_root).empty() && file_exists(g_root + "/romfs.bin") &&
         rt_remove_game_file(g_root.c_str(), "romfs.bin"))
         fprintf(stderr, "[launcher] removed the old game data image (romfs.bin)\n");
-    std::string status = check_game_files(g_root);
+    std::string incomplete, status = check_game_files(g_root, &incomplete);
     if (status.empty()) load_background(), rt_note_copy();
     Page page = status.empty() ? MAIN : SETUP;
     if (status == PKG_MOVED)  // (the game data is read from the package: it isn't where it was)
         set_job("The game package moved or changed", true, "Choose it again where it is now (Or its game package), "
                 "then Set up. Your saves and settings stay.");
+    if (status == FILES_INCOMPLETE) set_failure(FAIL_MISSING, incomplete);  // (not set up by itself: it'd fail the same)
     bool play = false;
     // LARECOMP_LAUNCHER_SHOT=<frame>[:<page>] (test): save build/launcher.png at that frame and exit; page: settings[:<tab>] / askdelete / setup
     long shot_at = getenv("LARECOMP_LAUNCHER_SHOT") ? atol(getenv("LARECOMP_LAUNCHER_SHOT")) : 0, frame = 0;
@@ -1181,7 +1214,8 @@ extern "C" void launcher_run(const char *root) {
     bool autoplay = ap && status.empty() && !(runs && !strcmp(ap, "once"));
     runs++;
     // an update (game files there, the game code not built for this version) or an earlier copy found: set up by itself
-    bool auto_setup = (check_copied_files(g_root).empty() && !status.empty()) || !g_earlier.empty();
+    bool auto_setup = (check_copied_files(g_root).empty() && !status.empty() && status != FILES_INCOMPLETE) ||
+                      !g_earlier.empty();
     if (const char *t = getenv("LARECOMP_LAUNCHER_EXTRACT")) {  // (test) <folder>, or auto: what the start screen
         g_src = strcmp(t, "auto") ? t : "";                     // starts by itself; set the game files up, log, exit
         g_busy = true;
@@ -1504,6 +1538,9 @@ extern "C" void launcher_run(const char *root) {
                 if (src.empty() && !g_earlier.empty())
                     ex_d = "Uses the game files of your earlier copy of PrimeRecomp, in " + g_earlier + " (that copy stays "
                            "as it is), and brings over its saves and settings.";
+                else if (src.empty() && status == FILES_INCOMPLETE)
+                    ex_d = "Choose your game files folder or game package above first: some of the game's files are "
+                           "missing from PrimeRecomp's copy.";
                 else if (src.empty() && check_copied_files(g_root).empty())
                     ex_d = "Recompiles the game for this version of PrimeRecomp. Your game files and saves stay as they are.";
                 if (!job.empty()) ex_d += "\n\n" + job + (job_hint.empty() ? "" : ".\n" + job_hint);
@@ -1536,7 +1573,9 @@ extern "C" void launcher_run(const char *root) {
                         check_left_of_value(keys_v);
                     }
                     opt_section("Set up");
-                    if (busy || (src.empty() && g_earlier.empty() && !check_copied_files(g_root).empty())) opt_disable_next();
+                    if (busy || (src.empty() && g_earlier.empty() &&
+                                 (!check_copied_files(g_root).empty() || status == FILES_INCOMPLETE)))
+                        opt_disable_next();
                     if (opt_action("Set up game files", busy ? "Working..." : "", ex_d.c_str(), true)) {
                         pthread_mutex_lock(&g_lock);
                         g_busy = true;
