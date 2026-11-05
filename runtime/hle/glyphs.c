@@ -130,6 +130,7 @@ static _Atomic uint32_t g_gen = 1;
 static _Atomic int g_set = ICONS_SWITCH;  // the set shown (Auto resolved)
 
 void glyphs_note_device(int dev) { g_dev = dev; }
+int glyphs_last_device(void) { return g_dev; }
 
 // A controller's set: its family's (bindings.c: Xbox, PlayStation); of the rest, a Switch controller keeps the
 // game's own, and an unnamed one (most PC pads) is shown as an Xbox controller
