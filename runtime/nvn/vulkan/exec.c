@@ -609,10 +609,43 @@ VkDescriptorSet vk_alloc_set(VkDescriptorSetLayout layout) {
 // ================================================================== transient memory ring
 // 64 MB host-visible chunks (device-local when the GPU exposes resizable BAR); a chunk is reused once every
 // submission that allocated from it has completed.
+// Without resizable BAR the device-local host-visible memory is a small window (~256 MB), shared with the driver and
+// other programs: LAS Recomp saw two chunks take 128 of an RTX 3080 Ti's 132 MB in use there, and a GTX 1060 stop
+// with "out of device memory" (their issue #45). So a chunk goes into a window (a heap under 1 GB) only while its use
+// stays under half its budget, later ones to system memory (slower for the GPU to read, ~1 ms a frame there); a
+// failed allocation moves the ring to system memory; with no memory left at all, vk_transient waits for a chunk the
+// GPU has finished with - if every chunk is in the work being recorded (a save's load fills 4 or more), it stops
+// with a message. As LAS Recomp's 1f9103d / 519dfe1 / 7069cc5.
+// (test) LARECOMP_VK_RING_FAIL=<n>: device-local allocations fail from chunk n on; LARECOMP_VK_RING_FAIL_ALL=<n>:
+// every allocation does (the wait). LARECOMP_VK_RING_BAR=1: no budget check.
 #define CHUNK_SIZE (64ull << 20)
 typedef struct { VkBuffer buf; VmaAllocation mem; uint8_t *ptr; uint64_t size, used, seq; } Chunk;
 static Chunk *chunks;
 static int nchunks, active = -1;
+
+static void ring_log_memory(const char *why) {
+    const VkPhysicalDeviceMemoryProperties *mp;
+    vmaGetMemoryProperties(g_vk.vma, &mp);
+    VmaBudget bud[VK_MAX_MEMORY_HEAPS];
+    vmaGetHeapBudgets(g_vk.vma, bud);
+    LOG("[vk] memory (%s):", why);
+    for (uint32_t i = 0; i < mp->memoryHeapCount; i++)
+        LOG(" heap %u %s%llu MB: %llu used, budget %llu", i, mp->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT ? "device-local " : "",
+            (unsigned long long)(mp->memoryHeaps[i].size >> 20), (unsigned long long)(bud[i].usage >> 20),
+            (unsigned long long)(bud[i].budget >> 20));
+    LOG("\n");
+}
+
+static VkResult ring_alloc(VkBufferCreateInfo *bi, VmaAllocationCreateInfo *ai, Chunk *c, VmaAllocationInfo *info) {
+    static long fail = -2, fail_all = -2;
+    if (fail == -2) {
+        fail = getenv("LARECOMP_VK_RING_FAIL") ? atol(getenv("LARECOMP_VK_RING_FAIL")) : -1;
+        fail_all = getenv("LARECOMP_VK_RING_FAIL_ALL") ? atol(getenv("LARECOMP_VK_RING_FAIL_ALL")) : -1;
+    }
+    if (fail_all >= 0 && nchunks >= fail_all) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    if (fail >= 0 && nchunks >= fail && ai->usage != VMA_MEMORY_USAGE_AUTO_PREFER_HOST) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    return vmaCreateBuffer(g_vk.vma, bi, ai, &c->buf, &c->mem, info);
+}
 
 static int new_chunk(uint64_t size) {
     chunks = realloc(chunks, (nchunks + 1) * sizeof *chunks);
@@ -624,12 +657,50 @@ static int new_chunk(uint64_t size) {
                                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
     VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO,
                                   .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
-    if (getenv("LARECOMP_VK_RING_SYSMEM")) ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;  // (test: a GPU without resizable BAR)
+    static bool sysmem;  // (the device-local window ran out: system memory from then on)
+    bool spill = false;  // (the window is past half its budget: this chunk in system memory)
+    if (!sysmem && !getenv("LARECOMP_VK_RING_BAR")) {
+        uint32_t type;
+        if (vmaFindMemoryTypeIndexForBufferInfo(g_vk.vma, &bi, &ai, &type) == VK_SUCCESS) {
+            const VkPhysicalDeviceMemoryProperties *mp;
+            vmaGetMemoryProperties(g_vk.vma, &mp);
+            uint32_t heap = mp->memoryTypes[type].heapIndex;
+            VmaBudget bud[VK_MAX_MEMORY_HEAPS];
+            vmaGetHeapBudgets(g_vk.vma, bud);
+            // (only a window: with resizable BAR - or one memory, as on the Steam Deck - the heap is all of video
+            // memory, where a big render target's use past half its budget would move the ring for nothing)
+            spill = (mp->memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+                    mp->memoryHeaps[heap].size < (1ull << 30) && bud[heap].usage + size > bud[heap].budget / 2;
+            static bool logged;
+            if (spill && !logged) {
+                logged = true;
+                LOG("[vk] transient ring: device-local window %llu of %llu MB budget in use: new chunks in system memory\n",
+                    (unsigned long long)(bud[heap].usage >> 20), (unsigned long long)(bud[heap].budget >> 20));
+            }
+        }
+    }
+    if (sysmem || spill || getenv("LARECOMP_VK_RING_SYSMEM")) ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;  // (test: a GPU without resizable BAR)
     VmaAllocationInfo info;
-    VK_CHECK(vmaCreateBuffer(g_vk.vma, &bi, &ai, &c->buf, &c->mem, &info));
+    VkResult r = ring_alloc(&bi, &ai, c, &info);
+    bool moved = false;
+    // (a driver may report the full window as out of host memory too; if memory is really gone, the retry fails as well)
+    if ((r == VK_ERROR_OUT_OF_DEVICE_MEMORY || r == VK_ERROR_OUT_OF_HOST_MEMORY) && ai.usage != VMA_MEMORY_USAGE_AUTO_PREFER_HOST) {
+        LOG("[vk] transient ring: device-local memory full after %d chunks, system memory from now on\n", nchunks);
+        ring_log_memory("ring chunk failed");
+        sysmem = moved = true;
+        ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+        r = ring_alloc(&bi, &ai, c, &info);
+    }
+    if (r != VK_SUCCESS) {  // (system memory too: vk_transient waits for a chunk to come free)
+        LOG("[vk] transient ring: no memory for chunk %d (%llu MB, error %d)\n", nchunks, (unsigned long long)(size >> 20), r);
+        ring_log_memory("ring chunk failed");
+        return -1;
+    }
     c->ptr = info.pMappedData;
     c->size = size;
-    if (!nchunks) {  // where the ring lives: device-local (resizable BAR) or system memory read across PCIe
+    static bool spilled;  // (the first chunk in system memory: logged too)
+    if (!nchunks || moved || (spill && !spilled)) {  // where the ring lives: device-local (resizable BAR) or system memory read across PCIe
+        if (spill) spilled = true;
         VkMemoryPropertyFlags f;
         vmaGetMemoryTypeProperties(g_vk.vma, info.memoryType, &f);
         LOG("[vk] transient ring: memory type %u (%s%s%s)\n", info.memoryType, f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ? "device-local " : "system memory ",
@@ -658,6 +729,17 @@ VkSpan vk_transient(uint64_t size, uint64_t align) {
     for (int i = 0; i < nchunks; i++)
         if (i != active && chunks[i].seq <= done && chunks[i].size >= size) { pick = i; break; }
     if (pick < 0) pick = new_chunk(size > CHUNK_SIZE ? size : CHUNK_SIZE);
+    if (pick < 0) {  // no memory for another chunk: wait for the work already submitted, which frees the chunks only it
+        // used, and take one of those (the recording in progress keeps its own)
+        vk_wait_seq(submit_seq);
+        done = vk_completed_seq();
+        for (int i = 0; i < nchunks; i++)
+            if (i != active && chunks[i].seq <= done && chunks[i].size >= size) { pick = i; break; }
+        if (pick < 0) FATAL("the graphics card ran out of memory for uploads (%llu MB needed, %d chunks in use)\n",
+                            (unsigned long long)(size >> 20), nchunks);
+        static int nlog;
+        if (nlog++ < 5) LOG("[vk] transient ring: reused chunk %d after waiting for the GPU\n", pick);
+    }
     active = pick;
     chunks[pick].used = size;
     chunks[pick].seq = pending;
