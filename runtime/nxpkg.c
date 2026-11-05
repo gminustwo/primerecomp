@@ -339,6 +339,58 @@ static bool file_exists(const char *p) {
     return stat(p, &st) == 0 && !S_ISDIR(st.st_mode);
 }
 
+static bool dir_exists(const char *p) {
+    struct stat st;
+    return stat(p, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+int nx_emu_dirs(NxEmuDir *out, int max) {
+    // Ryujinx keeps its files in one folder (its keys in system/, saves in bis/), yuzu and the projects that carried
+    // it on in theirs (keys/, nand/): in the user's config / data folder
+    static const struct { const char *dir, *name; } EMUS[] = {
+        {"Ryujinx", "Ryujinx"}, {"yuzu", "yuzu"}, {"suyu", "suyu"}, {"sudachi", "Sudachi"},
+        {"citron", "Citron"},   {"eden", "Eden"}, {"torzu", "torzu"}};
+    int n = 0;
+    char p[1100];
+#define ADD(i, ...)                                                                                    \
+    do {                                                                                               \
+        snprintf(p, sizeof p, __VA_ARGS__);                                                            \
+        bool dup = false;                                                                              \
+        for (int k = 0; k < n; k++) dup |= !strcmp(out[k].root, p);                                    \
+        if (n < max && !dup && dir_exists(p)) {                                                        \
+            snprintf(out[n].root, sizeof out[n].root, "%s", p);                                        \
+            snprintf(out[n].name, sizeof out[n].name, "%s", EMUS[i].name);                             \
+            out[n++].ryujinx = (i) == 0;                                                               \
+        }                                                                                              \
+    } while (0)
+    const char *home = getenv("HOME");
+    (void)home;
+#ifdef _WIN32
+    const char *appdata = getenv("APPDATA");
+    if (appdata)
+        for (int i = 0; i < (int)(sizeof EMUS / sizeof *EMUS); i++) ADD(i, "%s\\%s", appdata, EMUS[i].dir);
+#elif defined(__APPLE__)
+    if (home)
+        for (int i = 0; i < (int)(sizeof EMUS / sizeof *EMUS); i++)
+            ADD(i, "%s/Library/Application Support/%s", home, EMUS[i].dir);
+#else
+    const char *cfg = getenv("XDG_CONFIG_HOME"), *data = getenv("XDG_DATA_HOME");
+    if (cfg && *cfg) ADD(0, "%s/Ryujinx", cfg);
+    else if (home) ADD(0, "%s/.config/Ryujinx", home);
+    if (home) {  // (Flatpak: its own config folder)
+        ADD(0, "%s/.var/app/io.github.ryubing.Ryujinx/config/Ryujinx", home);
+        ADD(0, "%s/.var/app/org.ryujinx.Ryujinx/config/Ryujinx", home);
+    }
+    for (int i = 1; i < (int)(sizeof EMUS / sizeof *EMUS); i++) {
+        if (data && *data) ADD(i, "%s/%s", data, EMUS[i].dir);
+        else if (home) ADD(i, "%s/.local/share/%s", home, EMUS[i].dir);
+    }
+    if (home) ADD(1, "%s/.var/app/org.yuzu_emu.yuzu/data/yuzu", home);
+#endif
+#undef ADD
+    return n;
+}
+
 int nx_find_keys(const char *package, char out[][1100], int max) {
     int n = 0;
     char p[1100];
@@ -362,30 +414,12 @@ int nx_find_keys(const char *package, char out[][1100], int max) {
         ADD("%.*s/prod.keys", dl, dir);
         ADD("%.*s/keys.txt", dl, dir);
     }
-    // the emulators' own: Ryujinx keeps its keys in system/, yuzu and the projects that carried it on in keys/
-    static const char *const EMUS[] = {"Ryujinx/system", "yuzu/keys", "suyu/keys", "sudachi/keys", "citron/keys",
-                                       "eden/keys", "torzu/keys"};
+    NxEmuDir emu[16];  // the emulators' own: Ryujinx's in system/, yuzu's and its successors' in keys/
+    for (int i = 0, ne = nx_emu_dirs(emu, 16); i < ne; i++)
+        ADD("%s/%s/prod.keys", emu[i].root, emu[i].ryujinx ? "system" : "keys");
     const char *home = getenv("HOME");
 #ifdef _WIN32
-    const char *appdata = getenv("APPDATA");
-    if (appdata)
-        for (size_t i = 0; i < sizeof EMUS / sizeof *EMUS; i++) ADD("%s/%s/prod.keys", appdata, EMUS[i]);
     if (!home) home = getenv("USERPROFILE");
-#elif defined(__APPLE__)
-    if (home)
-        for (size_t i = 0; i < sizeof EMUS / sizeof *EMUS; i++) ADD("%s/Library/Application Support/%s/prod.keys", home, EMUS[i]);
-#else
-    const char *cfg = getenv("XDG_CONFIG_HOME"), *data = getenv("XDG_DATA_HOME");
-    if (cfg && *cfg) ADD("%s/Ryujinx/system/prod.keys", cfg);
-    else if (home) ADD("%s/.config/Ryujinx/system/prod.keys", home);
-    if (home) {  // (Flatpak: its own config folder)
-        ADD("%s/.var/app/io.github.ryubing.Ryujinx/config/Ryujinx/system/prod.keys", home);
-        ADD("%s/.var/app/org.ryujinx.Ryujinx/config/Ryujinx/system/prod.keys", home);
-    }
-    for (size_t i = 1; i < sizeof EMUS / sizeof *EMUS; i++) {
-        if (data && *data) ADD("%s/%s/prod.keys", data, EMUS[i]);
-        else if (home) ADD("%s/.local/share/%s/prod.keys", home, EMUS[i]);
-    }
 #endif
     if (home) ADD("%s/.switch/prod.keys", home);  // (hactool's)
 #undef ADD

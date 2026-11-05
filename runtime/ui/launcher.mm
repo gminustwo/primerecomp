@@ -35,6 +35,7 @@ extern "C" {
 #include "gamelib.h"
 #include "nxpkg.h"
 #include "romfs_build.h"
+#include "saveimport.h"
 #include "settings.h"
 #include "input_bind.h"
 void controls_bindings_draw(float scale);  // ui/controls_ui.mm
@@ -847,6 +848,167 @@ static void reveal_folder(const std::string &dir) {
 
 static SDL_Window *g_launcher_win;
 static bool g_files_deleted;  // set here: the start screen goes back to setting the game files up
+// Prelaunch, "Saves": where PrimeRecomp's save is, and a save imported from a Switch emulator or a folder
+// (runtime/saveimport.c) - the current one moved aside as a backup, listed with the others to go back to.
+// LARECOMP_LAUNCHER_SHOT=<frame>:askimport (test): the list; :askimport<n> the question for its n-th; :import<n> that
+// one imported, as if Import was chosen.
+static std::string g_save_pick;  // (the folder dialog's pick: SDL calls back on any thread - under g_lock)
+static void SDLCALL picked_save_folder(void *, const char *const *files, int) {
+    if (!files || !files[0]) return;
+    pthread_mutex_lock(&g_lock);
+    g_save_pick = files[0];
+    pthread_mutex_unlock(&g_lock);
+}
+
+static std::string when(long long t) {  // "Feb 6, 2026, 23:00"
+    time_t tt = (time_t)t;
+    struct tm *tm = localtime(&tt);
+    char b[64];
+    if (!tm || !strftime(b, sizeof b, "%b %d, %Y, %H:%M", tm)) return "?";
+    if (b[4] == '0') memmove(b + 4, b + 5, strlen(b + 5) + 1);  // (Feb 6, not Feb 06)
+    return b;
+}
+
+static std::string save_label(const FoundSave &s) {  // "Eden (joe) - Feb 6, 2026, 23:00 - 266 KB"
+    std::string l = !strcmp(s.from, "Backup") ? "Your save before an import" : s.from;
+    if (s.user[0]) l += std::string(" (") + s.user + ")";
+    char sz[32];
+    snprintf(sz, sizeof sz, "%.0f KB", s.bytes / 1024.0 < 1 ? 1 : s.bytes / 1024.0);
+    return l + " - " + when(s.mtime) + " - " + sz;
+}
+
+static bool own_save(void) {  // (PrimeRecomp has a save: what an import moves aside)
+    std::string d = std::string(saves_dir()) + "/save_0";
+    DIR *dir = opendir(d.c_str());
+    bool any = false;
+    struct dirent *e;
+    while (dir && !any && (e = readdir(dir))) any = e->d_name[0] != '.';
+    if (dir) closedir(dir);
+    return any;
+}
+
+static void saves_section(float sc) {
+    static FoundSave found[24], chosen;
+    static int nfound;
+    static std::string result;
+    static bool result_failed, ask, has_own;
+    static const char *shot = getenv("LARECOMP_LAUNCHER_SHOT") ? strchr(getenv("LARECOMP_LAUNCHER_SHOT"), ':') : NULL;
+    static bool shot_list = shot && !strcmp(shot, ":askimport");
+    static int shot_ask = shot && !strncmp(shot, ":askimport", 10) && shot[10] ? atoi(shot + 10) + 1 : 0;
+    static int shot_import = shot && !strncmp(shot, ":import", 7) ? atoi(shot + 7) + 1 : 0;
+    auto do_import = [&] {
+        char backup[1200], msg[600];
+        bool ok = saves_import(&chosen, backup, sizeof backup, msg, sizeof msg);
+        result = msg, result_failed = !ok;
+        if (ok && backup[0]) {
+            const char *base = strrchr(backup, '/');
+            result += std::string(" The save you had is kept (") + (base ? base + 1 : backup) +
+                      "): Import a save lists it as \"Your save before an import\".";
+        }
+    };
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextDisabled("PrimeRecomp's save is in %s", saves_dir());
+    ImGui::PopTextWrapPos();
+    if (ImGui::Button("Show save folder")) {
+        mkdir(saves_dir(), 0755);
+        reveal_folder(saves_dir());
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Import a save...") || shot_list || shot_ask || shot_import) {
+        nfound = saves_find(found, 24);
+        if (shot_ask || shot_import) {  // (test: the n-th found)
+            int k = (shot_ask ? shot_ask : shot_import) - 1;
+            if (k < nfound) {
+                chosen = found[k], has_own = own_save();
+                if (shot_import) do_import();
+                else ask = true;
+            }
+        } else {
+            ImGui::OpenPopup("##importsave");
+        }
+        shot_list = false, shot_ask = shot_import = 0;
+    }
+    {   // a folder picked (Choose a folder): its save, then the question
+        pthread_mutex_lock(&g_lock);
+        std::string pick = g_save_pick;
+        g_save_pick.clear();
+        pthread_mutex_unlock(&g_lock);
+        if (!pick.empty()) {
+            if (saves_from_folder(pick.c_str(), &chosen)) ask = true, has_own = own_save();
+            else result = "No Metroid Prime Remastered save in " + pick + " (its save.bin).", result_failed = true;
+        }
+    }
+    if (!result.empty()) {
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextColored(result_failed ? theme::warn : theme::accent, "%s", result.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    ImVec2 vs = ImGui::GetMainViewport()->Size;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(fminf(760 * sc, vs.x * 0.9f), 0), ImVec2(vs.x * 0.9f, vs.y * 0.85f));
+    if (ImGui::BeginPopupModal("##importsave", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+        ImGui::PushFont(g_font_menu);
+        ImGui::TextColored(theme::heading, "Import a save");
+        ImGui::PopFont();
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + fminf(760 * sc, vs.x * 0.85f));
+        if (!nfound)
+            ImGui::TextDisabled("No Metroid Prime Remastered saves found in Ryujinx, yuzu, suyu, Sudachi, Citron, Eden or "
+                                "torzu.");
+        else
+            ImGui::TextDisabled("Metroid Prime Remastered saves found on this computer, latest first:");
+        ImGui::Spacing();
+        for (int i = 0; i < nfound; i++) {
+            ImGui::PushID(i);
+            if (ImGui::Selectable(save_label(found[i]).c_str())) {
+                chosen = found[i], ask = true, has_own = own_save();
+                ImGui::CloseCurrentPopup();
+            }
+            if (i == 0) ImGui::SetItemDefaultFocus();
+            if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) ImGui::SetItemTooltip("%s", found[i].dir);
+            ImGui::PopID();
+        }
+        ImGui::Spacing();
+        ImGui::TextDisabled("From a Switch (a save backup, such as JKSV's) or a portable emulator: choose its folder.");
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        if (ImGui::Button("Choose a folder...", ImVec2(260 * sc, 0))) {
+            SDL_ShowOpenFolderDialog(picked_save_folder, NULL, g_launcher_win, NULL, false);
+            ImGui::CloseCurrentPopup();
+        }
+        if (!nfound) ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(220 * sc, 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    if (ask) ImGui::OpenPopup("##importask"), ask = false;
+    if (ImGui::BeginPopupModal("##importask", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+        ImGui::PushFont(g_font_menu);
+        ImGui::TextColored(theme::warn, "Import this save?");
+        ImGui::PopFont();
+        ImGui::Text("%s", save_label(chosen).c_str());
+        ImGui::TextDisabled("%s", chosen.dir);
+        ImGui::Spacing();
+        if (has_own) {
+            ImGui::Text("It replaces PrimeRecomp's save - every slot in it.");
+            ImGui::TextDisabled("Yours is kept: moved aside, and listed under Import a save to go back to.");
+        } else {
+            ImGui::Text("PrimeRecomp has no save yet: this becomes it.");
+        }
+        ImGui::Spacing();
+        if (ImGui::Button("Import", ImVec2(220 * sc, 0))) {
+            do_import();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        ImGui::SetItemDefaultFocus();
+        if (ImGui::Button("Cancel", ImVec2(220 * sc, 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
 static void prelaunch_tab(float sc) {
     auto heading = [&](const char *t) {
         ImGui::PushFont(g_font_menu);
@@ -893,6 +1055,10 @@ static void prelaunch_tab(float sc) {
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+    ImGui::Spacing();
+    ImGui::Spacing();
+    heading("Saves");
+    saves_section(sc);
     ImGui::Spacing();
     ImGui::Spacing();
     heading("About");
@@ -995,7 +1161,9 @@ extern "C" void launcher_run(const char *root) {
     long shot_at = getenv("LARECOMP_LAUNCHER_SHOT") ? atol(getenv("LARECOMP_LAUNCHER_SHOT")) : 0, frame = 0;
     if (shot_at) {
         const char *pg = strchr(getenv("LARECOMP_LAUNCHER_SHOT"), ':');
-        if (pg && (!strncmp(pg + 1, "settings", 8) || !strcmp(pg + 1, "askdelete"))) page = SETTINGS, menu_tabs_focus(true);
+        if (pg && (!strncmp(pg + 1, "settings", 8) || !strcmp(pg + 1, "askdelete") || !strncmp(pg + 1, "askimport", 9) ||
+                   !strncmp(pg + 1, "import", 6)))
+            page = SETTINGS, menu_tabs_focus(true);
         if (pg && !strcmp(pg + 1, "setup")) page = SETUP;
         if (const char *p = getenv("LARECOMP_LAUNCHER_PICK")) g_src = p;  // (as if chosen: a folder or a package)
         if (pg && !strncmp(pg + 1, "fail", 4)) page = SETUP, set_failure(atoi(pg + 5));  // (the failure messages)

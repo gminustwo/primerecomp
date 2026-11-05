@@ -25,6 +25,11 @@ int nx_setup(const char *package, const char *keys, const char *out_dir, uint64_
 // yuzu and its successors) and ~/.switch. Up to max paths into out; returns the count.
 int nx_find_keys(const char *package, char out[][1100], int max);
 
+// The Switch emulators' data folders on this computer: Ryujinx's (ryujinx: keys in system/, saves in bis/) and yuzu's
+// and its successors' (keys/, nand/), from the user's config / data folders. Up to max into out; returns the count.
+typedef struct { char name[16]; char root[1100]; bool ryujinx; } NxEmuDir;
+int nx_emu_dirs(NxEmuDir *out, int max);
+
 typedef struct NxRomfs NxRomfs;
 // From a romfs.src written by nx_setup. NULL = missing, or the package moved or changed (why).
 NxRomfs *nx_romfs_open(const char *src_path, char *why, size_t why_size);

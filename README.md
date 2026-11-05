@@ -232,6 +232,14 @@ A new version doesn't need your game files again, and keeps your saves and setti
 When a new version changes how the game is recompiled, the start screen recompiles it once by itself the first time
 you start the new version (several minutes; longer on a Steam Deck). Nothing needs to be chosen or set up again.
 
+### Saves from an emulator or a Switch
+
+On the start screen, **Settings > Prelaunch > Import a save** lists the Metroid Prime Remastered saves that Ryujinx,
+yuzu, suyu, Sudachi, Citron, Eden and torzu keep on this computer, latest first and with the emulator's profile name.
+Choose one to play on from it. For a save backed up from a Switch (JKSV, Checkpoint) or a portable emulator, use
+**Choose a folder...** and pick its folder. The save you had is kept: it's moved aside, and the same list shows it as
+"Your save before an import" so you can go back to it.
+
 ## Controls
 
 A controller works out of the box (Xbox, PlayStation, Switch Pro, Steam Controller, Steam Deck and others), using
@@ -324,6 +332,8 @@ screen.
 - [LAS Recomp](https://github.com/peiikai/LASRecomp) (MIT) and, through it,
   [SuperMarioWonderRecomp](https://github.com/BelmanteGu/SuperMarioWonderRecomp) by BelmanteGu - shaders prepared
   ahead of time from a shipped list of hashes and pipeline states, their code found in the player's own game files
+- [TotK Recomp](https://github.com/valentderah/totk-pc-recomp) by Valiantsin Dzerakh (MIT) - the Atmosphere cheat
+  files' VM (runtime/hle/atmocheats.c) runs the opcodes as its `runtime/cheats.c` does
 - [EoWRecomp](https://github.com/Nycolazs/EoWRecomp) (MIT) - the NSP / XCI reader (runtime/nxpkg.c) is its
   `runtime/nxpkg.c`, ported to Windows with AES-NI (suggested in issue #19)
 - [envytools](https://github.com/envytools/envytools) - NVIDIA GPU documentation used for the shader translator
