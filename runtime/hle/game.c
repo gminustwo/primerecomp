@@ -430,7 +430,13 @@ void rt_debug_autosave(Cpu *c) {
 }
 
 uint64_t g_world_state;  // (the running world's CWorldStateMP1)
-void rt_world_state(Cpu *c) { g_world_state = c->x[0]; }
+// (each gameplay frame: the world state in x0, the current area's id in x1 / x2 - the play log's room,
+// runtime/hle/playlog.c)
+void rt_world_state(Cpu *c) {
+    g_world_state = c->x[0];
+    extern void playlog_area(uint64_t lo, uint64_t hi);
+    playlog_area(c->x[1], c->x[2]);
+}
 
 // ---- (debug) areas
 // An area (a room) is a 16-byte CObjectId (GUID); each one the game loads is logged ("[area] load ..."). Called from
@@ -482,6 +488,10 @@ void rt_player_frame(Cpu *c) {
     g_player_seen = frame;
     static uint64_t logged = ~0ull;
     float *m = player_transform(g_player);
+    if (m) {  // (the play log: runtime/hle/playlog.c)
+        extern void playlog_frame(const float pos[3]);
+        playlog_frame((const float[3]){m[3], m[7], m[11]});
+    }
     if (every > 0 && m && frame % every == 0 && frame != logged) {
         logged = frame;
         LOG("[pos] frame %llu %.2f %.2f %.2f\n", (unsigned long long)frame, m[3], m[7], m[11]);

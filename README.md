@@ -126,7 +126,8 @@ easier to keep track of them there. For a bug, these help the most:
 - **A copy of your save file:** zip up the `save` folder (Windows: in the PrimeRecomp folder; macOS:
   `~/Library/Application Support/io.github.primerecomp/save`; Linux and Steam Deck: `~/.local/share/primerecomp/save`)
 - `primerecomp.log`, if you can, from the folder that holds `save`. It always holds the latest run, and
-  `primerecomp.previous.log` the run before.
+  `primerecomp.previous.log` the run before. It notes your settings and what you change, each room you enter and
+  your items there, so it says where you were when something went wrong (nothing leaves your PC unless you send it).
 
 For a graphics problem, you can also press **F9** at the spot: it saves a capture of that frame in
 `build/f9_<frame>/` in that same folder (zip it up). **F8** notes your position in `positions.txt`.

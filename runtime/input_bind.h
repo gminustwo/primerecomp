@@ -60,7 +60,8 @@ int bind_last_result(int *dev, int *slot, int *other, int *serial);
 
 // primerecomp.ini: bind_pad_<input> / bind_key_<input> (only the ones that differ from the defaults are written)
 bool bind_settings_load(const char *key, const char *val);
-void bind_settings_save(FILE *f);
+// (put: settings.c's writer - the file, or the log's copy of the settings)
+void bind_settings_save(void (*put)(void *ctx, const char *fmt, ...), void *ctx);
 
 // bind_* names (primerecomp.ini): Switch input "a", "zl", "ls_up"... -> slot; controller button "south"... -> PADB value
 int bind_slot_from_name(const char *name);

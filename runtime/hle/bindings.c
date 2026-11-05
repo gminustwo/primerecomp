@@ -347,12 +347,12 @@ bool bind_settings_load(const char *key, const char *val) {
     return true;
 }
 
-void bind_settings_save(FILE *f) {
+void bind_settings_save(void (*put)(void *ctx, const char *fmt, ...), void *ctx) {
     for (int i = 0; i < BIND_PAD_COUNT; i++)
         if (g_bind_pad[i] != def_pad(i) && g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT)
-            fprintf(f, "bind_pad_%s = %s\n", k_ini[i], k_pad_ini[g_bind_pad[i]]);
-    fprintf(f, "bind_keys = fps\n");
+            put(ctx, "bind_pad_%s = %s\n", k_ini[i], k_pad_ini[g_bind_pad[i]]);
+    put(ctx, "bind_keys = fps\n");
     for (int i = 0; i < BIND_KEY_COUNT; i++)
         if (g_bind_key[i] != k_def_key[i])
-            fprintf(f, "bind_key_%s = %s\n", k_ini[i], g_bind_key[i] ? bind_key_label(g_bind_key[i]) : "none");
+            put(ctx, "bind_key_%s = %s\n", k_ini[i], g_bind_key[i] ? bind_key_label(g_bind_key[i]) : "none");
 }

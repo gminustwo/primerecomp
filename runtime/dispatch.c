@@ -249,6 +249,8 @@ void rt_fatal_trace(void) {
             fp = next;
         }
     }
+    extern void playlog_crash_note(void);  // (runtime/hle/playlog.c: where Samus was)
+    playlog_crash_note();
     plat_fatal_notice();
     // our crash handler also catches SIGABRT: without this abort() re-entered it forever (a 5 GB log)
     signal(SIGABRT, SIG_DFL);

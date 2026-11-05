@@ -34,6 +34,7 @@ uint64_t romfs_dir_bytes(const char *dir);
 typedef void (*RomfsCheckFn)(void *ctx, const char *path, long long have, unsigned long long want);
 int romfs_check_files(const char *dir, int *wrong_size, RomfsCheckFn each, void *ctx);
 int romfs_game_file_count(void);  // (341)
+const char *romfs_game_file_path(int i);  // the i-th of them ("Worlds/MP1/!IceWorld/01_Ice_Plaza.pak")
 
 // Copies the folder tree src to dst (hard links where the file system allows: no second copy of 6 GB). progress as
 // above. false = failed.
