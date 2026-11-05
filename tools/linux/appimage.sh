@@ -14,9 +14,10 @@ image() {  # arch -> tag (built once, then cached by podman)
     podman build -q --arch "$1" -t "localhost/primerecomp-build:$1" -f tools/linux/Containerfile tools/linux >/dev/null
     echo "localhost/primerecomp-build:$1"
 }
-run() {  # image, command...: the checkout mounted at /src
+run() {  # image, command...: the checkout mounted at /src (JOBS=<n>: the builds' parallel jobs, default all cores)
     local img=$1; shift
-    podman run --rm --arch "${img##*:}" -v "$PWD:/src" -w /src -e SYSROOT=/src/build/linux/aarch64/sysroot "$img" "$@"
+    podman run --rm --arch "${img##*:}" -v "$PWD:/src" -w /src -e SYSROOT=/src/build/linux/aarch64/sysroot \
+        -e JOBS="${JOBS:-}" "$img" "$@"
 }
 
 # an arm64 machine (an Apple Silicon Mac's podman VM, an ARM Linux box) builds the aarch64 AppImage natively, all in
