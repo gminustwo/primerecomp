@@ -105,12 +105,16 @@ static ImGuiKey key_from_scancode(SDL_Scancode sc) {
 
 // A confirms, B goes back: the face buttons as the Face buttons setting has them (bind_face_label; by default the
 // controller's own labels - bottom / right on an Xbox or PlayStation controller, right / bottom on a Switch one).
+// Y isn't ImGui's GamepadFaceLeft: that's ImGui's window-switching key (NavGamepadMenu), which it reads whoever owns
+// it - a press armed its menu-layer toggle, and the next keyboard key then failed an assert in NavUpdateWindowing
+// (IsKeyDown(ImGuiKey_None)): Y in the menu and then a key on the keyboard ended the game. R3, which ImGui's navigation
+// doesn't use, stands for it (the Mods tab reads it).
 static ImGuiKey key_from_pad(SDL_JoystickID which, Uint8 b) {
     switch (bind_face_label(which, b)) {
     case BIND_A: return ImGuiKey_GamepadFaceDown;   // activate
     case BIND_B: return ImGuiKey_GamepadFaceRight;  // cancel / back
     case BIND_X: return ImGuiKey_GamepadFaceUp;
-    case BIND_Y: return ImGuiKey_GamepadFaceLeft;
+    case BIND_Y: return ImGuiKey_GamepadR3;
     default: break;
     }
     switch (b) {
@@ -184,6 +188,11 @@ bool menu_handle_event(const SDL_Event *e) {
         }
         ImGuiKey k = key_from_scancode(e->key.scancode);
         if (k != ImGuiKey_None) { QEvent q = {}; q.kind = QEvent::KEY; q.key = k; q.down = down; push(q); }
+        // (and the modifier: ImGui's io.KeyCtrl / KeyShift come from these, not from the keys - the Mods tab's
+        // Ctrl+Up / Down, shift-selecting in a text field)
+        ImGuiKey mod = k == ImGuiKey_LeftCtrl || k == ImGuiKey_RightCtrl ? ImGuiMod_Ctrl
+                     : k == ImGuiKey_LeftShift || k == ImGuiKey_RightShift ? ImGuiMod_Shift : ImGuiKey_None;
+        if (mod != ImGuiKey_None) { QEvent q = {}; q.kind = QEvent::KEY; q.key = mod; q.down = down; push(q); }
         return true;
     }
     case SDL_EVENT_TEXT_INPUT:
