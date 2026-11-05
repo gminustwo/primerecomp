@@ -294,7 +294,12 @@ static void waitlist_remove(KThread *t) {
         if (*p == t) { *p = t->wnext; return; }
 }
 
-// Block until wait_kind is cleared by a waker, timeout, or cancel. Caller holds g_klock.
+// Block until wait_kind is cleared by a waker, timeout, or a reboot. Caller holds g_klock.
+// CancelSynchronization doesn't end these waits (mutex, condition variable, address arbiter), as on Horizon: its flag
+// is for the thread's next WaitSynchronization only. Ending them used the flag up there - in Metroid Prime Remastered
+// a thread whose 40 ms WaitSynchronization another thread cancels to wake it early had cancels taken by its mutex
+// waits (10 in 160 s of play), so the wake meant for it could be late (tools/test_condvar.c, adapted from LAS
+// Recomp's 1144aea).
 static uint32_t block_current(int64_t timeout_ns) {
     KThread *t = t_cur;
     struct timespec ts;
@@ -306,13 +311,8 @@ static uint32_t block_current(int64_t timeout_ns) {
             t->wait_result = R_CANCELLED;
             break;
         }
-        if (t->cancel) {
-            t->cancel = false;
-            t->wait_kind = WAIT_NONE;
-            t->wait_result = R_CANCELLED;
-            break;
-        }
         if (!kwait(timeout_ns, &ts)) {
+            if (t->wait_kind == WAIT_NONE) break;  // (woken just as the time ran out: the waker's result stands)
             t->wait_kind = WAIT_NONE;
             t->wait_result = R_TIMEOUT;
             break;
@@ -358,15 +358,11 @@ static uint32_t svc_wait_process_wide_key(uint64_t mutex, uint64_t key, uint32_t
     t->wait_addr = key;
     t->wait_mutex = mutex;
     t->wait_tag = tag;
+    // Timed out: returns without the mutex, as Horizon does - the SDK takes it again itself (nn::os TimedWait calls
+    // the critical section's Enter on 0xEA01, as libnx's condvarWaitTimeout locks it). Taking it here as well left
+    // the thread holding it when Enter ran: Enter found its own handle in the lock word and ArbitrateLock waited on
+    // itself forever (LAS Recomp 8a8f74f, a controller thread's timer wait there).
     uint32_t r = block_current(timeout);
-    if (r != R_OK) {
-        // timed out / cancelled: still must reacquire the mutex
-        if (!mutex_acquire_or_mark(mutex, tag)) {
-            t->wait_kind = WAIT_MUTEX;
-            t->wait_addr = mutex;
-            block_current(-1);
-        }
-    }
     pthread_mutex_unlock(&g_klock);
     return r;
 }
@@ -409,8 +405,11 @@ static uint32_t svc_wait_for_address(uint64_t addr, uint32_t type, int32_t value
     bool wait;
     if (type == ARB_WAIT_LESS) wait = cur < value;
     else if (type == ARB_DEC_WAIT_LESS) {
-        wait = cur < value;
-        if (wait) __atomic_store_n(u32p(addr), (uint32_t)(cur - 1), __ATOMIC_SEQ_CST);
+        // Atomically, as Horizon: the game changes these words in user space (exclusive load / store, no kernel
+        // lock), and a plain store of the value read before overwrote such a change - a lost signal.
+        uint32_t v = (uint32_t)cur;
+        while ((wait = (int32_t)v < value) &&
+               !__atomic_compare_exchange_n(u32p(addr), &v, v - 1, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {}
     } else if (type == ARB_WAIT_EQ) wait = cur == value;
     else { pthread_mutex_unlock(&g_klock); return R_INVALID_ENUM; }
     if (!wait) { pthread_mutex_unlock(&g_klock); return R_INVALID_STATE; }
@@ -422,29 +421,37 @@ static uint32_t svc_wait_for_address(uint64_t addr, uint32_t type, int32_t value
     return r;
 }
 
-static int arbiter_wake(uint64_t addr, int32_t count) {
+static int arbiter_wake(uint64_t addr, int32_t count) {  // (the most urgent waiters first, as Horizon)
     int woken = 0;
-    for (KThread *t = g_waitlist; t; t = t->wnext) {
-        if (count > 0 && woken >= count) break;
-        if (t->wait_kind == WAIT_ARBITER && t->wait_addr == addr) {
-            t->wait_kind = WAIT_NONE;
-            t->wait_result = R_OK;
-            wake(t);
-            woken++;
-        }
+    while (count <= 0 || woken < count) {
+        KThread *best = NULL;
+        for (KThread *t = g_waitlist; t; t = t->wnext)
+            if (t->wait_kind == WAIT_ARBITER && t->wait_addr == addr && (!best || t->prio < best->prio)) best = t;
+        if (!best) break;
+        best->wait_kind = WAIT_NONE;
+        best->wait_result = R_OK;
+        wake(best);
+        woken++;
     }
     return woken;
+}
+
+// The word at addr from `expected` to `desired` if it still holds `expected`, in one compare-and-swap: user space
+// may change it any time. (A read, then a store of the new value, lost such changes: Metroid Prime Remastered
+// signals with "modify by waiting count if equal" thousands of times a minute.)
+static bool arbiter_update(uint64_t addr, int32_t expected, int32_t desired) {
+    uint32_t e = (uint32_t)expected;
+    return __atomic_compare_exchange_n(u32p(addr), &e, (uint32_t)desired, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
 
 static uint32_t svc_signal_to_address(uint64_t addr, uint32_t type, int32_t value, int32_t count) {
     pthread_mutex_lock(&g_klock);
     uint32_t r = R_OK;
-    int32_t cur = (int32_t)__atomic_load_n(u32p(addr), __ATOMIC_SEQ_CST);
     if (type == ARB_SIGNAL) {
         arbiter_wake(addr, count);
     } else if (type == ARB_SIGNAL_INC_EQ) {
-        if (cur != value) r = R_INVALID_STATE;
-        else { __atomic_store_n(u32p(addr), (uint32_t)(cur + 1), __ATOMIC_SEQ_CST); arbiter_wake(addr, count); }
+        if (!arbiter_update(addr, value, value + 1)) r = R_INVALID_STATE;
+        else arbiter_wake(addr, count);
     } else if (type == ARB_SIGNAL_MOD_EQ) {
         int waiting = 0;
         for (KThread *t = g_waitlist; t; t = t->wnext)
@@ -452,8 +459,8 @@ static uint32_t svc_signal_to_address(uint64_t addr, uint32_t type, int32_t valu
         int32_t nv;
         if (count <= 0) nv = waiting > 0 ? value - 2 : value + 1;
         else nv = waiting == 0 ? value + 1 : (waiting <= count ? value - 1 : value);
-        if (cur != value) r = R_INVALID_STATE;
-        else { __atomic_store_n(u32p(addr), (uint32_t)nv, __ATOMIC_SEQ_CST); arbiter_wake(addr, count); }
+        if (!arbiter_update(addr, value, nv)) r = R_INVALID_STATE;
+        else arbiter_wake(addr, count);
     } else {
         r = R_INVALID_ENUM;
     }
@@ -487,9 +494,9 @@ static uint32_t svc_wait_synchronization(uint64_t handles_ptr, int32_t count, in
             if (!o) { r = R_INVALID_HANDLE; goto out; }
             if (o->signaled) { *index = i; r = R_OK; goto out; }
         }
+        if (timeout == 0) { r = R_TIMEOUT; goto out; }  // (before the cancel: a poll leaves it for the next real wait)
         if (t->cancel) { t->cancel = false; r = R_CANCELLED; goto out; }
         if (g_rt_unwind) { r = R_CANCELLED; goto out; }
-        if (timeout == 0) { r = R_TIMEOUT; goto out; }
         t->in_sync_wait = true;
         t->snext = g_syncwaiters;
         g_syncwaiters = t;
