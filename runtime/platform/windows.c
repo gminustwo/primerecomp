@@ -417,7 +417,10 @@ bool plat_remove_tree(const char *dir) {
 }
 
 // (rename() won't replace a file here: the old one stays until the new one takes its name - no moment without either)
-bool plat_replace_file(const char *from, const char *to) { return MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING) != 0; }
+// (write-through: the rename is on the disk when it returns - a save's commit, services/fs.c)
+bool plat_replace_file(const char *from, const char *to) {
+    return MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+}
 
 // End the process at once, skipping DLL teardown (from an atexit handler, after flushing). Exit status 0.
 void plat_terminate(void) { TerminateProcess(GetCurrentProcess(), 0); }
