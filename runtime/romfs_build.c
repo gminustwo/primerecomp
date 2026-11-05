@@ -305,8 +305,23 @@ int romfs_check_files(const char *dir, int *wrong_size, RomfsCheckFn each, void 
 }
 
 bool romfs_copy_tree(const char *src, const char *dst, void (*progress)(uint64_t, uint64_t)) {
+    return romfs_copy_tree_filtered(src, dst, progress, NULL);
+}
+
+bool romfs_copy_tree_filtered(const char *src, const char *dst, void (*progress)(uint64_t, uint64_t),
+                              bool (*keep)(const char *name, bool dir)) {
     Dir *t = scan(src, "", NULL, 0);
     if (!t) return false;
+    if (keep) {  // (the top level's others left out of the tree, freed)
+        int nd = 0, nf = 0;
+        for (int i = 0; i < t->ndirs; i++)
+            if (keep(t->dirs[i]->name, true)) t->dirs[nd++] = t->dirs[i];
+            else free_tree(t->dirs[i]);
+        for (int i = 0; i < t->nfiles; i++)
+            if (keep(t->files[i]->name, false)) t->files[nf++] = t->files[i];
+            else free(t->files[i]->name), free(t->files[i]->path), free(t->files[i]);
+        t->ndirs = nd, t->nfiles = nf;
+    }
     Lists l = {0};
     flatten(t, &l);
     uint64_t total = 0, done = 0;
