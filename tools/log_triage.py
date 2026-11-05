@@ -105,6 +105,18 @@ def parse(text):
         elif ln.startswith("[settings] ") and " GPU: upscaler " in ln:
             r["settings"] = ln.split(" GPU: ", 1)[1]
             r["integrated"] = ln.startswith("[settings] integrated")
+        elif ln.startswith("[settings] aspect "):  # (all of them, "key value, ..." - runtime/settings.c log_settings)
+            kv = dict(p.split(" ", 1) for p in ln[11:].split(", ") if " " in p)
+            keys = [("frame_rate", "{} fps"), ("vsync", "vsync {}"), ("resolution", "resolution {}"),
+                    ("upscaler", "upscaler {}"), ("antialias", "AA {}"), ("aspect", "aspect {}"),
+                    ("fullscreen", "fullscreen {}"), ("hdr", "HDR {}"), ("fov", "FOV {}")]
+            r["settings"] = ", ".join(f.format(kv[k]) for k, f in keys if k in kv)
+        elif ln.startswith("[settings] changed: "):
+            r["changed"] = r.get("changed", 0) + 1
+        elif ln.startswith("[state] frame "):  # (runtime/hle/playlog.c: where Samus was)
+            r["state"] = ln[8:]
+        elif ln.startswith("[state] the last state line: "):
+            r["state"] = ln[29:]
         elif m := re.match(r"^\[vk\] swapchain (\d+x\d+), (\d+) images, (\w+)", ln):
             r["swapchain"] = f"{m.group(1)}, {m.group(3)}"
         elif m := re.match(r"^\[pcore\] CPU (.+?) \((\d+) logical processors", ln):
@@ -188,6 +200,10 @@ def summarise(r):
            "hang": f"hang (the hang report is in the log){': ' + code(r['end_line']) if r['end_line'] else ''}",
            "unknown": "the log stops without an exit line (closed from outside, frozen, or still running when copied)"}[r["end"]]
     out.append(f"- **How the run ended:** {end}")
+    if r.get("state"):
+        out.append(f"- **Last game state:** {code(r['state'], 220)}")
+    if r.get("changed"):
+        out.append(f"- **Settings changed while running:** {r['changed']}x (`[settings] changed:` lines)")
     fs = fps_summary(r["fps"])
     out.append(f"- **Frame rate:** {fs or 'no frame rate lines'}")
     if r["slow"]:
