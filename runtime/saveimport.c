@@ -151,7 +151,7 @@ static void find_yuzu(const char *root, const char *name, FoundSave *out, int *n
     struct dirent *e;
     while ((e = readdir(d))) {
         if (strlen(e->d_name) != 32) continue;
-        char u[1400], t[1500], who[64];
+        char u[1600], t[1700], who[64];
         snprintf(u, sizeof u, "%s/%s", base, e->d_name);
         if (!find_ci(u, TITLE_HEX, t, sizeof t)) continue;
         yuzu_name(root, e->d_name, who, sizeof who);
@@ -239,7 +239,7 @@ static void find_ryujinx(const char *root, const char *name, FoundSave *out, int
         for (int k = 0; !known && k < nindex; k++)
             if (index[k].id == id) memcpy(attr, index[k].attr, sizeof attr), known = true;
         if (!known || le64(attr) != TITLE_ID || (attr[0x20] != 1 && attr[0x20] != 3)) continue;
-        char dir[1500], who[64];
+        char dir[1600], who[64];
         snprintf(dir, sizeof dir, "%s/%s/0", base, e->d_name);
         ryujinx_name(root, attr, who, sizeof who);
         add(out, n, max, name, who, dir);
