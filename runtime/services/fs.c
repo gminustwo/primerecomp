@@ -901,6 +901,63 @@ static Service *open_host_fs(const char *sub) {
     return svc;
 }
 
+// ------------------------------------------------------------------ the game's files, apart from the game's reads
+// A game file's bytes by its romfs path ("Worlds/..."), from wherever the game's data is set up - the romfs folder, or
+// the game package itself (romfs.src) - through handles of their own: the game may be reading at the same time, and
+// its base image is opened only when it starts (runtime/nvn/vulkan/exec.c: the shipped shader list, on the start
+// screen). An older version's romfs.bin isn't read here.
+typedef struct GameFiles { NxRomfs *pkg; } GameFiles;
+
+GameFiles *game_files_open(void) {
+    if (!g_romfs_dir) return NULL;
+    char p[1100], why[256];
+    struct stat sb;
+    GameFiles *g = calloc(1, sizeof *g);
+    snprintf(p, sizeof p, "%s/Worlds", g_romfs_dir);
+    if (stat(p, &sb) == 0) return g;  // (the folder: each file opened as it's read)
+    snprintf(p, sizeof p, "%s.src", g_romfs_dir);
+    if (stat(p, &sb) == 0 && (g->pkg = nx_romfs_open(p, why, sizeof why))) return g;
+    free(g);
+    return NULL;
+}
+
+bool game_files_read(GameFiles *g, const char *path, uint64_t off, void *dst, uint64_t n) {
+    if (g->pkg) {
+        uint64_t at, size;
+        if (!nx_romfs_find(g->pkg, path, &at, &size) || off > size || n > size - off) return false;
+        return nx_romfs_pread(g->pkg, dst, n, at + off) == (ssize_t)n;
+    }
+    char p[1300];
+    snprintf(p, sizeof p, "%s/%s", g_romfs_dir, path);
+    int fd = open(p, O_RDONLY);
+    if (fd < 0) return false;
+    uint64_t done = 0;
+    while (done < n) {
+        ssize_t r = pread(fd, (uint8_t *)dst + done, n - done, (off_t)(off + done));
+        if (r <= 0) break;
+        done += (uint64_t)r;
+    }
+    close(fd);
+    return done == n;
+}
+
+int64_t game_files_size(GameFiles *g, const char *path) {  // -1: no such file
+    if (g->pkg) {
+        uint64_t at, size;
+        return nx_romfs_find(g->pkg, path, &at, &size) ? (int64_t)size : -1;
+    }
+    char p[1300];
+    struct stat sb;
+    snprintf(p, sizeof p, "%s/%s", g_romfs_dir, path);
+    return stat(p, &sb) ? -1 : (int64_t)sb.st_size;
+}
+
+void game_files_close(GameFiles *g) {
+    if (!g) return;
+    nx_romfs_close(g->pkg);
+    free(g);
+}
+
 // ------------------------------------------------------------------ fsp-srv
 SERVICE("fsp-srv", fsp_srv) {
     (void)s;

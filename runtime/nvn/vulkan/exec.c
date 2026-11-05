@@ -17,6 +17,7 @@
 #include "shaders.h"
 #include "vk.h"
 #include "../renderer.h"
+#include "../inflate.h"
 #include "../../settings.h"
 
 static uint64_t stat_draws, stat_skipped, stat_passes, stat_dispatches, stat_wait_ns, stat_flushes, stat_feedback_copies;
@@ -1720,6 +1721,16 @@ typedef struct ProgIn {  // a program's translation inputs
 
 static uint64_t hash_words(uint64_t h, const void *p, size_t n);
 
+// a program's inputs' hash (its ckey): the keys, then each stage's code from its SPH (the 0x30-byte NVN header before
+// it isn't read). The shipped shader list checks the code it finds in the game's files with it (shader_list_seed).
+static uint64_t prog_ckey(const RecProg *r, const uint8_t *const code[3]) {
+    uint64_t h = hash_words(0x243F6A8885A308D3ull, &r->vkey, sizeof r->vkey);
+    h = hash_words(h, &r->fkey, sizeof r->fkey);
+    h = hash_words(h, &r->gs, 4);
+    for (int i = 0; i < r->nstages; i++) h = hash_words(h ^ (uint64_t)r->len[i], code[i] + 0x30, r->len[i] - 0x30);
+    return h ? h : 1;
+}
+
 // inputs (and their hash) of the program get_program is making; ckey 0: a stage too short to translate (not kept)
 static void prog_inputs(ProgIn *in, const uint64_t code[3], const uint64_t cmax[3], const ShaderKey *vkey,
                         const ShaderKey *fkey, bool gs, bool emul, int gs_in) {
@@ -1729,18 +1740,13 @@ static void prog_inputs(ProgIn *in, const uint64_t code[3], const uint64_t cmax[
     in->r.gs = gs, in->r.emul = emul, in->r.gs_in = gs || emul ? (uint8_t)gs_in : 0;
     in->r.nstages = gs || emul ? 3 : 2;
     static const int stage[3] = {STAGE_VERTEX, STAGE_FRAGMENT, STAGE_GEOMETRY};
-    uint64_t h = hash_words(0x243F6A8885A308D3ull, &in->r.vkey, sizeof in->r.vkey);
-    h = hash_words(h, &in->r.fkey, sizeof in->r.fkey);
-    h = hash_words(h, &in->r.gs, 4);
     for (int i = 0; i < in->r.nstages; i++) {
         in->code[i] = (const uint8_t *)(uintptr_t)code[i];
         size_t n = in->code[i] ? maxwell_code_size(in->code[i], cmax[i], stage[i]) : 0;
         if (n <= 0x80) return;
         in->r.len[i] = (uint32_t)n;
-        // (from the SPH: the 0x30-byte NVN header before it isn't read)
-        h = hash_words(h ^ n, in->code[i] + 0x30, n - 0x30);
     }
-    in->r.ckey = h ? h : 1;
+    in->r.ckey = prog_ckey(&in->r, in->code);
 }
 
 static bool prog_inputs_equal(const ProgIn *a, const ProgIn *b) {
@@ -2504,11 +2510,250 @@ static int preload_count(void) {
     return d;
 }
 
+// ---- the shipped shader list (runtime/nvn/shader_list.inc, made by tools/shader_list.py)
+// The programs and pipelines of shader records from earlier runs, without the game's code: for each stage, where its
+// code is in the game's own files instead. Metroid Prime Remastered's shader binaries are in its materials - zlib
+// streams inside the zlib-packed MTRL assets of its .pak files, and in MaterialArchive.arc. At the pre-load's start the
+// ones this player's record doesn't have are added to it, their code inflated from the player's files (the romfs
+// folder or the game package) and checked against the program's hash, so the pre-load builds them too: a first visit
+// anywhere the list covers draws at once, with no pop-in and no build hitch. Once per list (cache/shader_list.done
+// holds its hash). Pipelines are made this device's: depth / stencil and vertex formats as draw_ picks them here (an
+// AMD GPU, the Steam Deck's, has no D24S8: the list's pipelines come from an NVIDIA one), and each with an 8-bit sRGB
+// or 16-bit float target also gets its twin with the other one (HDR on or off: textures.c hdr_target). A program with
+// a geometry shader is taken only by a device that runs it the same way (g_vk.geometry: gs or emul).
+// (test) LARECOMP_NO_SHADER_LIST=1: not used; LARECOMP_SHADER_LIST_AGAIN=1: used again though done.
+static const char shader_list_b64[] =
+#include "../shader_list.inc"
+    ;
+#define LIST_MAGIC 0x4C535250u  // "PRSL"
+#define LIST_VERSION 1
+#define LIST_DONE "cache/shader_list.done"
+typedef struct { uint32_t magic, version, key_size, prog_size, pipe_size, nfiles, nprogs, npipes; } ListHdr;
+typedef struct { uint16_t file, kind; uint32_t outer_size; uint64_t outer_off; uint32_t inner_off, code_off; } ListLoc;
+static atomic_int seed_done, seed_total;  // (the start screen's progress: programs looked at / to look at)
+
+typedef struct GameFiles GameFiles;  // (services/fs.c)
+GameFiles *game_files_open(void);
+bool game_files_read(GameFiles *g, const char *path, uint64_t off, void *dst, uint64_t n);
+int64_t game_files_size(GameFiles *g, const char *path);
+void game_files_close(GameFiles *g);
+
+static uint8_t *b64_decode(const char *s, size_t *n) {
+    size_t len = strlen(s), k = 0;
+    uint8_t *out = malloc(len / 4 * 3 + 3);
+    uint32_t acc = 0;
+    int bits = 0;
+    for (size_t i = 0; i < len; i++) {
+        char c = s[i];
+        int v = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52
+              : c == '+' ? 62 : c == '/' ? 63 : -1;
+        if (v < 0) continue;  // ('=' padding)
+        acc = acc << 6 | (uint32_t)v, bits += 6;
+        if (bits >= 8) bits -= 8, out[k++] = (uint8_t)(acc >> bits);
+    }
+    *n = k;
+    return out;
+}
+
+static bool format_has(VkFormat f, VkFormatFeatureFlags want, bool buffer) {
+    VkFormatProperties p;
+    vkGetPhysicalDeviceFormatProperties(g_vk.phys, f, &p);
+    return ((buffer ? p.bufferFeatures : p.optimalTilingFeatures) & want) == want;
+}
+
+// a list pipeline as this device's draw_ would key it; false if this device can't build it
+static bool list_pipe_here(RecPipe *r) {
+    PipeKey *k = &r->k;
+    pipe_key_canon(k);
+    if (k->depth == VK_FORMAT_D24_UNORM_S8_UINT) k->depth = vk_depth24_stencil8();
+    if (k->stencil == VK_FORMAT_D24_UNORM_S8_UINT) k->stencil = vk_depth24_stencil8();
+    for (int i = 0; i < 32; i++)
+        if (((k->attr_mask >> i) & 1) && k->attr_bind[i] != ZERO_BINDING) k->attr_fmt[i] = vertex_format_supported(k->attr_fmt[i]);
+    for (uint32_t i = 0; i < k->ncolor && i < 8; i++)
+        if (k->color[i] && !format_has(k->color[i], VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT, false)) return false;
+    if (k->depth && !format_has(k->depth, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, false)) return false;
+    for (int i = 0; i < 32; i++)
+        if (((k->attr_mask >> i) & 1) && !format_has(k->attr_fmt[i], VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT, true)) return false;
+    return true;
+}
+
+static bool list_pipe_add(const RecPipe *r) {  // (into the record, once; rec_lock held)
+    uint64_t h = hash_words(REC_PIPE_SEED, r, sizeof *r);
+    if (!h) h = 1;
+    if (!rec_file || set_has(&rec_pipes, h)) return false;
+    rec_write(REC_PIPE, r, sizeof *r, NULL);
+    set_add(&rec_pipes, h);
+    return true;
+}
+
+typedef struct { int prog, stage; const ListLoc *loc; } ListRef;
+static int list_ref_cmp(const void *a, const void *b) {
+    const ListLoc *x = ((const ListRef *)a)->loc, *y = ((const ListRef *)b)->loc;
+    if (x->file != y->file) return x->file < y->file ? -1 : 1;
+    if (x->outer_off != y->outer_off) return x->outer_off < y->outer_off ? -1 : 1;
+    return x->inner_off < y->inner_off ? -1 : x->inner_off > y->inner_off;
+}
+
+static void shader_list_seed(void) {
+    if (getenv("LARECOMP_NO_SHADER_LIST") || !rec_ready) return;
+    uint64_t t0 = plat_now_ns();
+    size_t zn, n;
+    char *text = NULL;  // (test) LARECOMP_SHADER_LIST=<file>: another list (tools/shader_list.py -o <file>), not the shipped one
+    if (getenv("LARECOMP_SHADER_LIST")) {
+        size_t tn;
+        uint8_t *t = read_file(getenv("LARECOMP_SHADER_LIST"), &tn);
+        text = calloc(1, tn + 1);
+        for (size_t i = 0, k = 0, comment = 0, start = 1; t && i < tn; i++) {  // (the base64 in its quotes; lines
+            if (start && t[i] == '/') comment = 1;                            // starting with // skipped - base64
+            start = t[i] == '\n';                                              // has '/' in it)
+            if (start) comment = 0;
+            if (!comment && t[i] != '"' && t[i] > ' ') text[k++] = (char)t[i];
+        }
+        free(t);
+        LOG("[shader] shader list from %s\n", getenv("LARECOMP_SHADER_LIST"));
+    }
+    uint8_t *z = b64_decode(text ? text : shader_list_b64, &zn), *b = z ? rt_inflate(z, zn, &n) : NULL;
+    free(z), free(text);
+    ListHdr lh;
+    if (!b || n < sizeof lh || (memcpy(&lh, b, sizeof lh), lh.magic != LIST_MAGIC) || lh.version != LIST_VERSION ||
+        lh.key_size != sizeof(ShaderKey) || lh.prog_size != sizeof(RecProg) || lh.pipe_size != sizeof(RecPipe)) {
+        LOG("[shader] shipped shader list: not this build's layout - not used\n");
+        free(b);
+        return;
+    }
+    uint64_t sum = hash_words(LIST_MAGIC, b, n);
+    char want[32], have[32] = "";
+    snprintf(want, sizeof want, "%016llx", (unsigned long long)sum);
+    FILE *f = fopen(LIST_DONE, "rb");
+    if (f) { if (!fgets(have, sizeof have, f)) have[0] = 0; fclose(f); }
+    if (!strcmp(have, want) && !getenv("LARECOMP_SHADER_LIST_AGAIN")) { free(b); return; }
+    GameFiles *gf = game_files_open();
+    if (!gf) {  // (not set up yet: next time)
+        LOG("[shader] shipped shader list: the game files can't be read - not used this time\n");
+        free(b);
+        return;
+    }
+    if ((f = fopen(LIST_DONE, "wb"))) fprintf(f, "%s\n", want), fclose(f);  // (tried once: never again, even if it crashes)
+    // the files, then the programs (each its record and its stages' locations), then the pipelines
+    size_t at = sizeof lh;
+    char **files = calloc(lh.nfiles + 1, sizeof *files);
+    for (uint32_t i = 0; i < lh.nfiles && at + 2 <= n; i++) {
+        uint16_t l;
+        memcpy(&l, b + at, 2);
+        files[i] = calloc(1, l + 1u);
+        if (at + 2 + l <= n) memcpy(files[i], b + at + 2, l);
+        at += 2 + l;
+    }
+    typedef struct { RecProg r; ListLoc loc[3]; uint8_t *code[3]; bool want; } ListProg;
+    ListProg *lp = calloc(lh.nprogs + 1, sizeof *lp);
+    int nwant = 0, have_already = 0, other_device = 0;
+    for (uint32_t i = 0; i < lh.nprogs && at + sizeof(RecProg) <= n; i++) {
+        memcpy(&lp[i].r, b + at, sizeof(RecProg));
+        at += sizeof(RecProg);
+        int ns = lp[i].r.nstages == 3 ? 3 : 2;
+        if (at + ns * sizeof(ListLoc) > n) break;
+        memcpy(lp[i].loc, b + at, ns * sizeof(ListLoc));
+        at += ns * sizeof(ListLoc);
+        bool fits = lp[i].r.nstages == 2 || (lp[i].r.gs && g_vk.geometry) || (lp[i].r.emul && !g_vk.geometry);
+        pthread_mutex_lock(&rec_lock);
+        bool had = set_has(&rec_progs, lp[i].r.ckey);
+        pthread_mutex_unlock(&rec_lock);
+        lp[i].want = fits && !had;
+        nwant += lp[i].want, have_already += had, other_device += !fits;
+    }
+    atomic_store(&seed_total, nwant);
+    // the code of the programs to add, by location: each asset inflated once, each stream in it once
+    ListRef *refs = malloc((size_t)(nwant * 3 + 1) * sizeof *refs);
+    int nrefs = 0;
+    for (uint32_t i = 0; i < lh.nprogs; i++)
+        for (int s = 0; lp[i].want && s < lp[i].r.nstages; s++) refs[nrefs++] = (ListRef){(int)i, s, &lp[i].loc[s]};
+    qsort(refs, nrefs, sizeof *refs, list_ref_cmp);
+    uint8_t *outer = NULL, *inner = NULL;
+    size_t outer_n = 0, inner_n = 0;
+    const ListLoc *outer_of = NULL, *inner_of = NULL;
+    uint64_t inflated = 0;
+    for (int i = 0; i < nrefs; i++) {
+        const ListLoc *L = refs[i].loc;
+        if (L->file >= lh.nfiles) continue;
+        if (!outer_of || outer_of->file != L->file || outer_of->outer_off != L->outer_off || outer_of->kind != L->kind) {
+            free(outer), free(inner);
+            outer = inner = NULL, outer_n = inner_n = 0, outer_of = L, inner_of = NULL;
+            int64_t fsz = L->kind == 1 ? (int64_t)L->outer_size : game_files_size(gf, files[L->file]);
+            uint8_t *raw = fsz > 0x20 ? malloc((size_t)fsz) : NULL;
+            if (raw && game_files_read(gf, files[L->file], L->kind == 1 ? L->outer_off : 0, raw, (uint64_t)fsz)) {
+                if (L->kind == 1) outer = rt_inflate(raw + 0x20, (size_t)fsz - 0x20, &outer_n), free(raw);  // (RFRM > MTRL)
+                else outer = raw, outer_n = (size_t)fsz;
+                inflated += outer_n;
+            } else free(raw);
+        }
+        if (!outer) continue;
+        if (!inner_of || inner_of->inner_off != L->inner_off) {
+            free(inner);
+            inner = L->inner_off < outer_n ? rt_inflate(outer + L->inner_off, outer_n - L->inner_off, &inner_n) : NULL;
+            inner_of = L;
+        }
+        ListProg *p = &lp[refs[i].prog];
+        uint32_t len = p->r.len[refs[i].stage];
+        if (inner && L->code_off <= inner_n && len <= inner_n - L->code_off && len > 0x80) {
+            p->code[refs[i].stage] = malloc(len);
+            memcpy(p->code[refs[i].stage], inner + L->code_off, len);
+        }
+    }
+    free(outer), free(inner), free(refs);
+    // each program whose code was all found and has its hash: into the record, then the pipelines of those it has
+    int added = 0, missing = 0, pipes_added = 0, pipes_skipped = 0;
+    for (uint32_t i = 0; i < lh.nprogs; i++) {
+        ListProg *p = &lp[i];
+        if (!p->want) continue;
+        bool all = true;
+        for (int s = 0; s < p->r.nstages; s++) all = all && p->code[s];
+        if (all && prog_ckey(&p->r, (const uint8_t *const *)p->code) == p->r.ckey) {
+            ProgIn in = {.r = p->r, .owned = false};
+            for (int s = 0; s < 3; s++) in.code[s] = p->code[s];
+            pthread_mutex_lock(&rec_lock);
+            if (rec_file && !set_has(&rec_progs, in.r.ckey)) rec_write(REC_PROG, &in.r, sizeof in.r, &in), set_add(&rec_progs, in.r.ckey);
+            pthread_mutex_unlock(&rec_lock);
+            added++;
+        } else missing++;
+        for (int s = 0; s < 3; s++) free(p->code[s]);
+        if ((added + missing) % 32 == 0) atomic_store(&seed_done, added + missing);
+    }
+    atomic_store(&seed_done, added + missing);
+    for (uint32_t i = 0; i < lh.npipes && at + sizeof(RecPipe) <= n; i++, at += sizeof(RecPipe)) {
+        RecPipe r;
+        memcpy(&r, b + at, sizeof r);
+        pthread_mutex_lock(&rec_lock);
+        bool ours = set_has(&rec_progs, r.ckey);
+        pthread_mutex_unlock(&rec_lock);
+        if (!ours) continue;
+        if (!list_pipe_here(&r)) { pipes_skipped++; continue; }
+        RecPipe twin = r;  // (the HDR / SDR twin: an 8-bit sRGB target made 16-bit float, or back)
+        bool has_twin = false;
+        for (uint32_t c = 0; c < r.k.ncolor && c < 8; c++) {
+            if (r.k.color[c] == VK_FORMAT_R8G8B8A8_SRGB) twin.k.color[c] = VK_FORMAT_R16G16B16A16_SFLOAT, has_twin = true;
+            else if (r.k.color[c] == VK_FORMAT_R16G16B16A16_SFLOAT) twin.k.color[c] = VK_FORMAT_R8G8B8A8_SRGB, has_twin = true;
+        }
+        pthread_mutex_lock(&rec_lock);
+        pipes_added += list_pipe_add(&r);
+        if (has_twin) pipes_added += list_pipe_add(&twin);
+        pthread_mutex_unlock(&rec_lock);
+    }
+    for (uint32_t i = 0; i < lh.nfiles; i++) free(files[i]);
+    free(files), free(lp), free(b);
+    game_files_close(gf);
+    LOG("[shader] shipped shader list: %d programs added from the game files (%d recorded already, %d for another kind "
+        "of device, %d not found), %d pipelines added (%d this device can't build); %.0f MB inflated in %.1f s\n",
+        added, have_already, other_device, missing, pipes_added, pipes_skipped, inflated / 1e6, (plat_now_ns() - t0) / 1e9);
+}
+
+void vk_preload_seed_progress(int *done, int *total) { *done = atomic_load(&seed_done), *total = atomic_load(&seed_total); }
+
 static void *preload_thread(void *arg) {
     (void)arg;
     uint64_t t0 = plat_now_ns();
     FILE *m = fopen(REC_MARKER, "wb");
     if (m) fclose(m);
+    shader_list_seed();  // (the shipped list's programs this player hasn't seen, into the record: built below too)
     PreParse pp = {0};
     pthread_mutex_lock(&rec_lock);  // (the record as it is now: appends wait for the read)
     if (rec_file) fflush(rec_file);

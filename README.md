@@ -53,8 +53,10 @@ PC, with Vulkan for the graphics. No emulator runs.
   15-40 minute wait for a hint down to as little as a second, and L3 (keyboard: H) to show the next hint at once;
   Samus' upgrades set as you like - missiles, power bombs, energy tanks, suit, beams, visors, morph ball upgrades,
   artifacts - or all unlocked at once
-- Shader pre-load (F1 menu, Video tab): the shaders of everything you've seen built on the start screen, so nothing
-  pops in the first time it's drawn
+- Shader pre-load (F1 menu, Video tab; on by default): the game's shaders built on the start screen - everything
+  you've seen, and the shaders of the rest of the game that come with PrimeRecomp as a list (hashes and render
+  settings only: their code is read from your own game files) - so nothing pops in or hitches the first time it's
+  drawn, on a first visit too. The first start takes longer (B / Esc plays at once; the rest loads while you play)
 - Texture mods (F1 menu, Video tab: Mods): image files in the `mods` folder drawn in place of the game's textures -
   PNG of any size, or DDS (BC1-BC7) for big packs. Turn on Dump textures to get the game's textures, named the way
   `mods` wants them (`dump\textures\tex_<size>_<name>.png`): edit one and put it in `mods`. Made for Remastered's own
@@ -313,6 +315,9 @@ screen.
 
 - [Ryujinx](https://github.com/Ryujinx/Ryujinx) (MIT) - PrimeRecomp's audio effects (reverb, I3DL2 reverb, delay,
   aux, splitters) are ported from Ryujinx's audio renderer, and some shader instruction decoding follows its decoders
+- [LAS Recomp](https://github.com/peiikai/LASRecomp) (MIT) and, through it,
+  [SuperMarioWonderRecomp](https://github.com/BelmanteGu/SuperMarioWonderRecomp) by BelmanteGu - shaders prepared
+  ahead of time from a shipped list of hashes and pipeline states, their code found in the player's own game files
 - [EoWRecomp](https://github.com/Nycolazs/EoWRecomp) (MIT) - the NSP / XCI reader (runtime/nxpkg.c) is its
   `runtime/nxpkg.c`, ported to Windows with AES-NI (suggested in issue #19)
 - [envytools](https://github.com/envytools/envytools) - NVIDIA GPU documentation used for the shader translator
@@ -333,6 +338,8 @@ screen.
 - [bcdec](https://github.com/iOrange/bcdec) by Sergii Kudlai - decodes the game's button prompt icons to redraw them
   (MIT or Unlicense, `third_party/bcdec/bcdec.h`)
 - [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) - the renderer (MIT)
+- [miniz](https://github.com/richgel999/miniz) by Rich Geldreich - its inflater, for the shaders in the game's
+  materials (MIT, `third_party/miniz/LICENSE`)
 - [SMAA](https://github.com/iryoku/smaa) by Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro and
   Diego Gutierrez - the anti-aliasing option (MIT, `third_party/smaa/LICENSE.txt`)
 - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) - the upscaler option,
@@ -357,7 +364,7 @@ not in this repository and not in release builds. You must provide your own lega
 PrimeRecomp's code - LAS Recomp's code and the changes made for Metroid Prime Remastered - is open source under the
 [MIT License](LICENSE) (copyright Peiikai, and the PrimeRecomp contributors for their changes). Third-party
 components keep their own licenses: Dear ImGui (MIT), Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT),
-bcdec (MIT), code ported from Ryujinx (MIT), EoWRecomp's game package reader (MIT), the Baloo 2 font (SIL OFL 1.1), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked
+bcdec (MIT), miniz (MIT), code ported from Ryujinx (MIT), EoWRecomp's game package reader (MIT), the Baloo 2 font (SIL OFL 1.1), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked
 dynamically), shaderc (Apache 2.0), the Zig compiler (MIT; its LLVM / Clang / LLD: Apache 2.0 with LLVM exceptions;
 its C library headers keep their own licenses) and the game code generator helper's bundled libraries listed above
 (Unicorn is under the GPL: the helper is a separate program the setup runs, and its sources are this repository plus
@@ -384,6 +391,7 @@ The Windows release includes these components; their source code for the exact v
 | python-lz4 (game code generator; includes LZ4) | 4.4.5 | BSD 3-clause; LZ4: BSD 2-clause | https://pypi.org/project/lz4/4.4.5/ |
 | Baloo 2 font (SemiBold) | 1.640 | SIL OFL 1.1 | https://github.com/EkType/Baloo2 |
 | SMAA (shader and lookup textures, built in) | 2013 (repository master) | MIT | https://github.com/iryoku/smaa |
+| miniz (its inflater, built in) | 3.1.2 | MIT | https://github.com/richgel999/miniz |
 
 The build scripts that fetch and build these (with checksums) are in this repository: `tools/build_deps_windows.sh`
 and `tools/primegen.spec`. The Windows build takes SDL 3, shaderc, libiconv and the compiler runtime from MSYS2's
