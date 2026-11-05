@@ -238,6 +238,33 @@ static bool copies_file(char *out, size_t n) {  // false: none here (not Windows
 #endif
 }
 
+#ifdef _WIN32
+static bool valid_utf8(const unsigned char *s) {
+    while (*s) {
+        int n = *s < 0x80 ? 0 : (*s & 0xE0) == 0xC0 ? 1 : (*s & 0xF0) == 0xE0 ? 2 : (*s & 0xF8) == 0xF0 ? 3 : -1;
+        if (n < 0) return false;
+        for (s++; n > 0; n--, s++) if ((*s & 0xC0) != 0x80) return false;
+    }
+    return true;
+}
+
+// A line an earlier build wrote: paths came from Windows in the system's ANSI code page before the exe's manifest
+// made the process code page UTF-8 (runtime/platform/windows.manifest) - a folder named with accents (José) was
+// written in cp1252, not UTF-8. Such a line is converted, so the earlier copy is still found.
+static void legacy_path_to_utf8(char *s, size_t cap) {
+    if (valid_utf8((const unsigned char *)s)) return;
+    UINT acp = 0;
+    if (!GetLocaleInfoEx(LOCALE_NAME_SYSTEM_DEFAULT, LOCALE_IDEFAULTANSICODEPAGE | LOCALE_RETURN_NUMBER, (LPWSTR)&acp,
+                         sizeof acp / sizeof(WCHAR)) || !acp)
+        return;
+    wchar_t w[1100];
+    char u[1100 * 3];
+    if (MultiByteToWideChar(acp, MB_ERR_INVALID_CHARS, s, -1, w, 1100) &&
+        WideCharToMultiByte(CP_UTF8, 0, w, -1, u, (int)sizeof u, NULL, NULL) && strlen(u) < cap)
+        snprintf(s, cap, "%s", u);
+}
+#endif
+
 static int read_copies(const char *path, char (*out)[1100], int max) {
     FILE *f = fopen(path, "r");
     if (!f) return 0;
@@ -245,6 +272,9 @@ static int read_copies(const char *path, char (*out)[1100], int max) {
     int n = 0;
     while (n < max && fgets(line, sizeof line, f)) {
         line[strcspn(line, "\r\n")] = 0;
+#ifdef _WIN32
+        legacy_path_to_utf8(line, sizeof line);
+#endif
         if (line[0]) snprintf(out[n++], 1100, "%s", line);
     }
     fclose(f);
