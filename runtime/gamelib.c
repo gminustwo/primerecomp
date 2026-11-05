@@ -17,7 +17,8 @@
 static const GameLibTables *g_tables;
 static char g_error[256];
 
-// The library's id file (<library>.id, written next to it by the build): its GAMELIB_ID, read without loading it.
+// The library's id file (<library>.id, written next to it by the build): its GAMELIB_ID, read without loading it - with
+// "-v2" after it for one built for x86-64-v2, which a CPU without AVX2 needs (gamebuild_expected_id)
 static bool id_matches(const char *lib) {
     char path[1100], id[128] = {0};
     snprintf(path, sizeof path, "%s.id", lib);
@@ -26,7 +27,7 @@ static bool id_matches(const char *lib) {
     size_t n = fread(id, 1, sizeof id - 1, f);
     fclose(f);
     while (n && (id[n - 1] == '\n' || id[n - 1] == '\r')) id[--n] = 0;
-    return !strcmp(id, GAMELIB_ID);
+    return !strcmp(id, gamebuild_expected_id());
 }
 
 static bool exists(const char *p) {
@@ -135,7 +136,8 @@ bool gamelib_load(const char *game_dir, char *why, size_t why_size) {
             if (g_tables) {
                 unsigned long long nf = 0;
                 for (uint32_t m = 0; m < g_tables->nmods; m++) nf += *g_tables->counts[m];
-                LOG("[gamelib] %s (%llu functions in %u modules)\n", c[i], nf, g_tables->nmods);
+                LOG("[gamelib] %s (%llu functions in %u modules)%s\n", c[i], nf, g_tables->nmods,
+                    gamebuild_x86_level() == 2 ? ", built for x86-64-v2 (this CPU has no AVX2 / FMA: slower)" : "");
             }
         }
     }

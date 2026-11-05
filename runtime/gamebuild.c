@@ -230,12 +230,32 @@ static void add_unit(Units *us, const char *src, const char *work, const char *s
     u->bytes = stat(src, &st) == 0 ? (unsigned long long)st.st_size : 0;
 }
 
-// The flags the game code was built with (GAMELIB_CFLAGS, part of its id). zig cc reads -march=<cpu> with its own CPU
-// names (x86_64_v3) and takes "-<feature>" off the end, so x86-64-v3 would be CPU "x86": the same CPU as -mcpu there.
+int gamebuild_x86_level(void) {
+#if defined(__x86_64__)
+    static int level;
+    if (!level) {
+        const char *e = getenv("LARECOMP_CPU_LEVEL");
+        __builtin_cpu_init();
+        level = e && atoi(e) == 2 ? 2
+              : __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("bmi2") ? 3 : 2;
+    }
+    return level;
+#else
+    return 0;
+#endif
+}
+
+const char *gamebuild_expected_id(void) { return gamebuild_x86_level() == 2 ? GAMELIB_ID "-v2" : GAMELIB_ID; }
+
+// The flags the game code was built with (GAMELIB_CFLAGS, part of its id) - on a CPU without AVX2 its x86-64-v3
+// becomes x86-64-v2 (gamebuild_x86_level). zig cc reads -march=<cpu> with its own CPU names (x86_64_v3) and takes
+// "-<feature>" off the end, so x86-64-v3 would be CPU "x86": the same CPU as -mcpu there.
 static void add_cflags(Args *a, const Tools *t) {
     char buf[1024];
     snprintf(buf, sizeof buf, "%s", GAMELIB_CFLAGS);
     for (char *f = strtok(buf, " "); f; f = strtok(NULL, " ")) {
+        static char v2[] = "-march=x86-64-v2";
+        if (!strcmp(f, "-march=x86-64-v3") && gamebuild_x86_level() == 2) f = v2;
         if (t->zig && !strncmp(f, "-march=", 7)) {
             char cpu[128];
             snprintf(cpu, sizeof cpu, "-mcpu=%s", f + 7);
@@ -489,7 +509,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         char idp[1100];
         snprintf(idp, sizeof idp, "%s.id", lib);
         FILE *f = NULL;
-        if (rename(tmp, lib) != 0 || !(f = fopen(idp, "wb")) || fprintf(f, "%s\n", GAMELIB_ID) < 0) {
+        if (rename(tmp, lib) != 0 || !(f = fopen(idp, "wb")) || fprintf(f, "%s\n", gamebuild_expected_id()) < 0) {
             snprintf(why, why_size, "the game code couldn't be saved");
             ok = false;
         }
