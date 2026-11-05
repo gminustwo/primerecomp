@@ -18,6 +18,14 @@ typedef struct {
 // Builds it (a few minutes). false: why says what went wrong (details in the log).
 bool gamebuild_run(const char *game_dir, const GameBuildOpts *opts, char *why, size_t why_size);
 
+// The game code's x86-64 level for this CPU (issue #28): 3 with AVX2, FMA and BMI2 (built -march=x86-64-v3, as the
+// Makefile's GENARCH), else 2 (x86-64-v2: SSE4.2 - slower, the ARM fused multiply-adds done in software); 0 on
+// other CPUs. LARECOMP_CPU_LEVEL=2 pretends (tests).
+int gamebuild_x86_level(void);
+// The id file's text for a library built here: GAMELIB_ID, "-v2" after it for an x86-64-v2 build (so a copy moved
+// between an older and a newer PC builds its game code again for that one)
+const char *gamebuild_expected_id(void);
+
 // True when the library at path is one this build loads: built with its GAMELIB_ID (the id file next to it; not
 // loaded). In runtime/gamelib.c, declared here because gamelib.h is part of GAMELIB_ID (any edit to it has every
 // player rebuild the game code after an update).
