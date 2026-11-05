@@ -11,7 +11,7 @@ S=$PWD/build/linux/src
 P=$PWD/build/linux/$ARCH/deps
 W=$PWD/build/linux/$ARCH/deps-build
 mkdir -p "$S" "$P/include" "$W"
-JOBS=$(nproc)
+JOBS=${JOBS:-$(nproc)}  # (JOBS=<n>: fewer - a desktop that crashes under a full all-core load)
 
 fetch() {  # url sha256 file
     [ -f "$S/$3" ] || { curl -fsSL -o "$S/$3.part" "$1" && mv "$S/$3.part" "$S/$3"; }
