@@ -207,6 +207,9 @@ $(B)/inc/smaa_hlsl.inc: third_party/smaa/SMAA.hlsl
 	LC_ALL=C tr -d '\r' < $< | LC_ALL=C tr '\200-\377' '?' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' > $@
 $(B)/rt/nvn/smaa_data.o: $(B)/inc/smaa_hlsl.inc
 $(B)/rt/nvn/smaa_data.o: RTFLAGS += -I$(B)/inc -Ithird_party/smaa/Textures
+# the shipped shader list (tools/shader_list.py) is in exec.c; the inflater (miniz's tinfl, third_party/miniz) in inflate.c
+$(B)/rt/nvn/vulkan/exec.o: runtime/nvn/shader_list.inc
+$(B)/rt/nvn/inflate.o: $(wildcard third_party/miniz/*.h) third_party/miniz/miniz_tinfl.c
 
 $(B)/rt/%.o: runtime/%.cpp $(RT_HDRS)
 	@mkdir -p $(dir $@)

@@ -50,6 +50,7 @@ uint64_t vk_imgui_texture_rgba(const void *rgba, int w, int h);
 void vk_imgui_texture_update(uint64_t id, const void *rgba, int w, int h);
 void vk_preload_start(void);  // runtime/nvn/vulkan/exec.c: Video > Pre-load shaders
 bool vk_preload_progress(int *done, int *total);
+void vk_preload_seed_progress(int *done, int *total);  // (its first step: the shipped shader list's programs found)
 }
 
 static const uint8_t BUILD_ID[8] = {0x67, 0xc9, 0xca, 0x14, 0x28, 0x22, 0x27, 0x52};  // Metroid Prime Remastered v1.0.0 main
@@ -1505,9 +1506,12 @@ extern "C" void launcher_run(const char *root) {
                 if (wait_shaders || wait_test) {
                     if (wait_test) done = 1234, total = 2900;
                     char line[160];
+                    int sdone, stotal;
+                    vk_preload_seed_progress(&sdone, &stotal);
                     if (total) snprintf(line, sizeof line, "%d of %d   %d%%", done, total, (int)(100.0 * done / total));
+                    else if (stotal) snprintf(line, sizeof line, "Finding the game's shaders: %d of %d", sdone, stotal);
                     else snprintf(line, sizeof line, "Reading the shader record...");
-                    const char *notes[] = {"Everything you've seen before, so it won't pop in when you see it again.",
+                    const char *notes[] = {"The game's shaders, so nothing pops in or hitches the first time you see it.",
                                            "B / Esc: play now - the rest loads while you play."};
                     progress_panel(ds, ds.y / 1080.0f, "Loading shaders", line, notes, 2, total ? (float)done / total : 0);
                 }

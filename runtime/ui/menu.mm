@@ -540,12 +540,13 @@ static void tab_display(void) {
         vk_shader_record_counts(&progs, &pipes);
         char d[900];
         snprintf(d, sizeof d,
-                 "Builds the shaders of everything you've already seen while the start screen is up. Without it, a "
-                 "shader is built the first time it's needed in a session, and whatever uses it is missing for a "
-                 "moment - the pop-in as you walk into a room. With it, only things you've never seen can pop in."
-                 "\n\nStarting takes a few seconds longer (more after an update) and uses more memory; the frame rate "
-                 "stays the same. From the next start screen on.\n\nRecorded so far (on or off): %d shader programs, "
-                 "%d pipelines.",
+                 "Builds the game's shaders while the start screen is up: everything you've already seen, and the "
+                 "shaders of the rest of the game that come with PrimeRecomp (their code read from your own game "
+                 "files). Without it, a shader is built the first time it's needed in a session, and whatever uses it "
+                 "is missing for a moment - the pop-in and hitch as you walk into a room.\n\nThe first start takes a "
+                 "while longer (a minute or more on a Steam Deck; B plays at once, the rest loads while you play), "
+                 "later ones a few seconds; it uses more memory, the frame rate stays the same. From the next start "
+                 "screen on.\n\nRecorded so far (on or off): %d shader programs, %d pipelines.",
                  progs, pipes);
         opt_toggle("Pre-load shaders", &g_settings.preload_shaders, false, d);
     }

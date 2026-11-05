@@ -37,6 +37,7 @@ static VkFormat depth24_stencil8(void) {
     }
     return f;
 }
+VkFormat vk_depth24_stencil8(void) { return depth24_stencil8(); }  // (exec.c: the shipped shader list's pipelines)
 
 static VkFmt fmt_of(uint32_t f) {
     switch (f) {

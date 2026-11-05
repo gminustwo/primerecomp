@@ -68,6 +68,7 @@ VkCommandBuffer vk_upload_cmd(void);  // upload command buffer of the pending su
 uint64_t vk_pending_seq(void);        // number the pending submission will get
 uint64_t vk_completed_seq(void);
 void vk_wait_seq(uint64_t seq);
+VkFormat vk_depth24_stencil8(void);  // (textures.c) NVN's DEPTH24_STENCIL8 on this device: D24S8, or D32S8 (AMD)
 void vk_full_barrier(VkCommandBuffer cb);
 void vk_end_pass(void);
 void vk_submit_extra(VkSemaphore wait, VkSemaphore signal, VkCommandBuffer extra);  // submit + one more cb (present)

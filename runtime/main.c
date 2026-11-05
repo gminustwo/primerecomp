@@ -235,6 +235,11 @@ int main(int argc, char **argv) {
     skip_launcher = true;  // (for now: the start screen's setup builds the game code, which a phone can't)
 #endif
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
+    {   // (known from here: the start screen reads game files too - the shader list, runtime/nvn/vulkan/exec.c)
+        char romfs[1024];
+        snprintf(romfs, sizeof romfs, "%s/romfs", root);
+        g_romfs_dir = strdup(romfs);
+    }
     for (bool title = !skip_launcher;;) {
         if (title) {  // start screen (runtime/ui/launcher.mm): game files setup, seed choice, settings
             extern void launcher_run(const char *root);

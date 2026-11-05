@@ -17,6 +17,7 @@ static const char *settings_file(void) {
 }
 
 Settings g_settings = {
+    .preload_shaders = true,  // (with the shipped shader list: a first visit anywhere it covers draws at once)
     .aspect = ASPECT_UNLOCKED,
     .hud = HUD_EDGES,
     .pause = PAUSE_FILL,
