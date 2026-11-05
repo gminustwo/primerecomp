@@ -336,6 +336,7 @@ static void debug_damage(Cpu *c, uint64_t ps) {
 
 // Each frame, from CStateManager::BeginFrame (runtime/hle/game.c rt_debug_autosave: the state manager in x0)
 void cheats_frame(Cpu *c) {
+    { extern void atmo_cheats_frame(void); atmo_cheats_frame(); }  // (the mods' Atmosphere cheat files: atmocheats.c)
     extern bool game_in_play(void);
     uint64_t gs = game_state(), ps = player_state();
     if (!gs || !ps) return;

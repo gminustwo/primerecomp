@@ -60,7 +60,9 @@ PC, with Vulkan for the graphics. No emulator runs.
 - Emulator mods (F1 menu, Mods tab): mods made for Ryujinx / yuzu or a modded Switch - game file (RomFS) mods - in
   the `mods` folder, a folder each, unpacked as they come (`romfs` right inside, or an SD card's
   `atmosphere/contents/010012101468C000/romfs`); switched on and off and put in order in the Mods tab (the higher
-  mod's file is used when two have the same one)
+  mod's file is used when two have the same one). Atmosphere cheat files in a mod's `cheats` folder
+  (`67C9CA1428222752.txt`) are switched one by one in the Cheats tab; cheats that change memory work, those that
+  change the game's code (compiled ahead of time here) can't, and code patches (`.ips`, `.pchtxt`) aren't used
 - Texture mods (F1 menu, Mods tab): image files in the `mods` folder drawn in place of the game's textures -
   PNG of any size, or DDS (BC1-BC7) for big packs. Turn on Dump textures to get the game's textures, named the way
   `mods` wants them (`dump\textures\tex_<size>_<name>.png`): edit one and put it in `mods`. Made for Remastered's own
