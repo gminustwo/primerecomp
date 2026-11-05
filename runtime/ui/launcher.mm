@@ -264,6 +264,14 @@ static std::string pick_package(const std::vector<std::string> &pkgs) {
     return hits.size() == 1 ? hits[0] : "";
 }
 
+// The ExeFS's own files (main, main.npdm, rtld, sdk, subsdk0-9): an exefs and a romfs extracted into one folder are
+// told apart by them (issue #25: setup copied the whole folder as both, 7 GB twice where nothing is shared)
+static bool is_exefs_file(const char *n, bool dir) {
+    return !dir && (!strcmp(n, "main") || !strcmp(n, "main.npdm") || !strcmp(n, "rtld") || !strcmp(n, "sdk") ||
+                    (!strncmp(n, "subsdk", 6) && n[6] >= '0' && n[6] <= '9' && !n[7]));
+}
+static bool not_exefs_file(const char *n, bool dir) { return !is_exefs_file(n, dir); }
+
 static bool build_id_ok(const std::string &main_path) {
     FILE *f = fopen(main_path.c_str(), "rb");
     if (!f) return false;
@@ -466,8 +474,12 @@ static void *extract_thread(void *) {
         unsigned long long rbytes = romfs_dir_bytes(romfs.c_str());
         g_total = rbytes;
         set_job("Copying the game files...");
-        if (!romfs_copy_tree(exefs.c_str(), (g_root + "/exefs").c_str(), NULL) ||
-            !romfs_copy_tree(romfs.c_str(), (g_root + "/romfs").c_str(), setup_progress)) {
+        char re[4096], rr[4096];  // (the exefs and romfs extracted into one folder: each copy only its own files)
+        bool one = realpath(exefs.c_str(), re) && realpath(romfs.c_str(), rr) && !strcmp(re, rr);
+        if (one) fprintf(stderr, "[launcher] the exefs and romfs are one folder: copied apart\n");
+        if (!romfs_copy_tree_filtered(exefs.c_str(), (g_root + "/exefs").c_str(), NULL, one ? is_exefs_file : NULL) ||
+            !romfs_copy_tree_filtered(romfs.c_str(), (g_root + "/romfs").c_str(), setup_progress,
+                                      one ? not_exefs_file : NULL)) {
             set_failure(FAIL_COPY);
             goto done;
         }
