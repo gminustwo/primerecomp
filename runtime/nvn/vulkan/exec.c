@@ -2449,6 +2449,12 @@ static void preload_adopt(Prog *p) {
     if (n++ % 100 == 0) LOG("[shader] pre-loaded programs in use: %d\n", n);
 }
 
+// A recorded key as draw_ makes it now: an earlier build put the formats an earlier pass left in the colour slots past
+// the pass's count into it (draw_), so the same pipeline was recorded under many keys and none might match draw_'s
+static void pipe_key_canon(PipeKey *k) {
+    for (uint32_t i = k->ncolor < 8 ? k->ncolor : 8; i < 8; i++) k->color[i] = VK_FORMAT_UNDEFINED;
+}
+
 static bool pipe_key_sane(const PipeKey *k) {  // (the record's own checks passed: this is belt and braces)
     if (k->ncolor > 8 || !k->samples || k->samples > 64 || (k->samples & (k->samples - 1)) || k->topo_class > 2 ||
         (k->used_streams >> 17))
@@ -2539,6 +2545,7 @@ static void *preload_thread(void *arg) {
     U64Set seen = {0};
     for (int i = 0; i < pp.nl; i++) {
         RecPipe *r = &pp.pipes[i];
+        pipe_key_canon(&r->k);  // (an earlier build's keys: as draw_ makes them now; the same ones once each)
         PreProg *o = pre_lookup(r->ckey);
         uint64_t h = hash_words(REC_PIPE_SEED, r, sizeof *r);
         if (!o || !pipe_key_sane(&r->k) || set_has(&seen, h ? h : 1)) continue;
@@ -4466,7 +4473,11 @@ static void draw_(CmdRec *r, bool indexed) {
     memset(&k, 0, sizeof k);
     k.prog = pr;
     k.ncolor = pass_ncolor;
-    memcpy(k.color, pass_color, sizeof k.color);
+    // (the pass's own colour formats only: begin_pass leaves the slots past its count as an earlier pass set them,
+    // and a pipeline uses the first ncolor - copied whole, keys that built the same pipeline differed by what was
+    // drawn before: 3769 recorded pipelines in a player's record were 1618 different ones, the rest built again in
+    // play, a hitch or a pop-in each - and a shipped list's keys didn't match another player's. pipe_key_canon)
+    memcpy(k.color, pass_color, (k.ncolor < 8 ? k.ncolor : 8) * sizeof *k.color);
     k.depth = pass_depth;
     k.stencil = pass_stencil;
     k.samples = pass_samples;
