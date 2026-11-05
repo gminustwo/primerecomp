@@ -28,6 +28,13 @@ void romfs_layout_free(RomfsLayout *l);
 // Bytes of file data under dir (the image is about this plus its tables).
 uint64_t romfs_dir_bytes(const char *dir);
 
+// The romfs folder dir against the game's own files (v1.0.0's, runtime/romfs_files.h): how many of them are missing.
+// *wrong_size (if given): how many are there at another size (modded, or cut short). each (if given) is called for
+// every one missing (have -1) or at another size (have: its size there; want: the game's).
+typedef void (*RomfsCheckFn)(void *ctx, const char *path, long long have, unsigned long long want);
+int romfs_check_files(const char *dir, int *wrong_size, RomfsCheckFn each, void *ctx);
+int romfs_game_file_count(void);  // (341)
+
 // Copies the folder tree src to dst (hard links where the file system allows: no second copy of 6 GB). progress as
 // above. false = failed.
 bool romfs_copy_tree(const char *src, const char *dst, void (*progress)(uint64_t done, uint64_t total));
