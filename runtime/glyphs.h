@@ -10,6 +10,7 @@ enum { GLYPH_DEV_PAD, GLYPH_DEV_KEYS, GLYPH_DEV_WII };
 
 // runtime/hle/input.c: what the player used last (Auto follows it)
 void glyphs_note_device(int dev);
+int glyphs_last_device(void);  // GLYPH_DEV_*, -1: nothing used yet (runtime/hle/rumble.c: none while on keys)
 // Once a frame (input.c): the icons to show worked out again; a change bumps the generation
 void glyphs_frame(void);
 // The set shown now (Auto resolved: ICONS_SWITCH .. ICONS_WII), for the menu

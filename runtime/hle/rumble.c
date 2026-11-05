@@ -17,7 +17,8 @@
 //   were, 10..25%, rumble felt very weak: issue #13): through x^0.5 (0.1 -> 32%, 0.25 -> 50%).
 // The game asks for 12..30 Hz in both bands, below either band's range: a Switch controller plays that at the lowest
 // it has (~41 Hz low, ~82 Hz high), and so do these.
-// Rumble strength (0..200%) scales the amplitudes everywhere. LARECOMP_NO_RUMBLE=1: none; scripted runs don't rumble;
+// Rumble strength (0..200%) scales the amplitudes everywhere; none while keys / the mouse were used last (input.c's
+// glyphs_note_device, as the button icons go). LARECOMP_NO_RUMBLE=1: none; scripted runs don't rumble;
 // LARECOMP_LOG_RUMBLE=1 logs the game's values as they change and what was sent; LARECOMP_RUMBLE_DEVICE=<name part>
 // picks the DualSense's audio device by name (another language's Windows calls it something else).
 #include <SDL3/SDL.h>
@@ -27,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../glyphs.h"
 #include "../hle.h"
 #include "../settings.h"
 #include "wiimote.h"
@@ -234,7 +236,9 @@ void rumble_pump(SDL_Gamepad *pad, bool off) {
 
     float v[2][4];
     take(v, true);
-    bool on = g_settings.rumble && !off;
+    // (none while the keyboard and mouse are what's played with: a controller lying by shook with every shot - issue
+    // #31; it stops at once, and comes back with the controller's next button or a stick pushed well over)
+    bool on = g_settings.rumble && !off && glyphs_last_device() != GLYPH_DEV_KEYS;
     float s = on ? g_settings.rumble_strength : 0;
     uint16_t l = motor(v[0], s), r = motor(v[1], s);
     wiimote_rumble(on && (l > 16000 || r > 16000));  // (the remote's motor is on / off)
