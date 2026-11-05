@@ -138,8 +138,8 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 - **Windows:** Windows 10 or 11, 64-bit
 - **Linux:** a 64-bit x86 distribution with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, Arch, SteamOS
   on the Steam Deck, ...)
-- On Windows and Linux, a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Zen or newer) and a GPU with a Vulkan
-  1.3 driver (any current NVIDIA, AMD or Intel driver; on Linux, Mesa's RADV / ANV or NVIDIA's)
+- On Windows and Linux, a CPU with SSE4.2 (2008 or newer; AVX2 - Intel Haswell / 2013, AMD Zen - runs the game faster:
+  without it the game code is built for older CPUs) and a GPU with a Vulkan 1.3 driver (any current NVIDIA, AMD or Intel driver; on Linux, Mesa's RADV / ANV or NVIDIA's)
 - **macOS:** a Mac with Apple Silicon (M1 or newer) and macOS 15 or newer (Intel Macs aren't supported)
 - About 8 GB of free disk space (the game files are copied in, about 7 GB, plus the recompiled game; less when your
   game files are on the same drive: they're linked rather than copied where the file system allows; about 1 GB when

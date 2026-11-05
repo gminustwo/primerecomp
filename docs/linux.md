@@ -61,7 +61,8 @@ Windows. On the Deck's frigate: the render thread's time per frame 15.2 -> 8.4 m
     ./PrimeRecomp-<version>-linux-x86_64.AppImage
 
 Needs: a distribution with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, Arch, ...), a Vulkan 1.3 driver
-(Mesa RADV / ANV / NVK / Turnip / Asahi Honeykrisp, or NVIDIA's), and on x86-64 a CPU with AVX2 (2013 or newer).
+(Mesa RADV / ANV / NVK / Turnip / Asahi Honeykrisp, or NVIDIA's), and on x86-64 a CPU with SSE4.2 (2008 or newer;
+with AVX2, 2013 or newer, the game code is built to run faster).
 The start screen asks for the folder with your own game files and sets them up.
 
 Everything the app writes lives in `~/.local/share/primerecomp` (`$XDG_DATA_HOME/primerecomp`): game files (`extracted/`),

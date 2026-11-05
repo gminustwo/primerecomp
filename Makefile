@@ -144,7 +144,7 @@ else
 EXE      := $(B)/primerecomp.exe
 DEPINC   := $(if $(DEPS),-I$(DEPS)/include)
 OSFLAGS  := -D_FILE_OFFSET_BITS=64 -D_POSIX_THREAD_SAFE_FUNCTIONS -D_CRT_RAND_S -DWIN32_LEAN_AND_MEAN -DNOMINMAX
-GENARCH  ?= -march=x86-64-v3  # AVX2 + FMA for the lifted FP/SIMD code (simd.h); override for older CPUs
+GENARCH  ?= -march=x86-64-v3  # AVX2 + FMA for the lifted FP/SIMD code (simd.h); x86-64-v2 at setup without them
 GENFLAGS += -D_FILE_OFFSET_BITS=64 $(GENARCH)
 LDFLAGS  := -fuse-ld=lld -Wl,--stack,16777216 $(if $(DEPS),-L$(DEPS)/lib) -lSDL3 -lavformat -lavcodec -lavutil -lswscale \
             -lvulkan-1 -lwinmm -lole32 -lshell32 -lcomdlg32 -luuid -lshaderc_shared \
@@ -283,7 +283,8 @@ dmg: app
 # (RELEASE=1: the log goes to primerecomp.log next to the exe, fatal errors show a message box). Its DLLs are looked up
 # with build/deps-win/bin first (the FFmpeg DLL names are the same as MSYS2's GPL ones). vulkan-1.dll is left
 # out: every Vulkan driver installs the loader in System32. Saves and game files go next to the exe at run time.
-# Needs: Windows 10+ x64, a Vulkan 1.3 driver, an AVX2 CPU (GENARCH x86-64-v3; checked at startup).
+# Needs: Windows 10+ x64, a Vulkan 1.3 driver, an SSE4.2 CPU (checked at startup; GENARCH x86-64-v3, built as
+# x86-64-v2 on the player's PC without AVX2: runtime/gamebuild.c gamebuild_x86_level).
 DIST     := build/dist/PrimeRecomp
 WIN_B    := build/win-release
 deps-windows:
