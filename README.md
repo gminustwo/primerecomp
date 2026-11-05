@@ -84,8 +84,8 @@ PC, with Vulkan for the graphics. No emulator runs.
 **New in v0.0.7: play from your NSP / XCI, emulator mods and saves, and first visits without shader hitches.** Set up
 from the game's NSP or XCI itself (with your console's keys), no extracting; use mods and Atmosphere cheats made for
 Ryujinx, yuzu or a modded Switch (Mods and Cheats tabs), and bring your saves over from those emulators (Settings ->
-Prelaunch). Shader pre-load is on by default and comes with a list of the whole game's shaders, so a first visit
-draws at once. A confirms in menus on every controller; keyboard prompts show the right keys (the visors' Q / E / R /
+Prelaunch). Shader pre-load comes with a list of the whole game's shaders, so a first visit draws at once (on by
+default for a new setup; after updating, turn it on in the Video tab). A confirms in menus on every controller; keyboard prompts show the right keys (the visors' Q / E / R /
 T, Q / E for the pause pages); CPUs without AVX2 work. Fixed: the crash with Russian or Traditional Chinese set,
 saves cut short by a crash, the X-ray visor on ultrawide screens, setup with half-extracted game files (it now says
 which are missing), and rumble while you play with keyboard and mouse. `primerecomp.log` now notes where you were and
