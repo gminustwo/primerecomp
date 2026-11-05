@@ -515,8 +515,8 @@ static void SDLCALL picked_keys(void *, const char *const *files, int) {
 
 // ------------------------------------------------------------------ background: the game's Tallon IV movie
 // Metroid Prime's movies sit in its UI archive (romfs/UI/MPR1/UIMP1.pak) as plain MP4s. The start screen plays the
-// one of Tallon IV turning in space (12.7 s, 1600 x 900) on a loop, muted, at 960 x 540 and 30 frames a second (it
-// sits under the shadow banners). Found by its MP4 boxes and its size (about 16 MB), copied once to
+// one of Tallon IV turning in space (12.7 s, 1600 x 900) on a loop, muted, at 960 x 540 and its own 60 frames a second
+// (it sits under the shadow banners; at 30, every other frame, it stuttered: issues #18, #33). Found by its MP4 boxes and its size (about 16 MB), copied once to
 // cache/start_bg.mp4. (The red title-menu loop isn't stored that way.)
 static uint64_t g_bg;  // ImGui texture id (Vulkan descriptor set)
 #define BG_TEXID ((ImTextureID)g_bg)
@@ -530,6 +530,7 @@ static struct {
     AVFrame *fr;
     int si;
     double t0, shown;  // when the loop started (seconds), the frame time on screen
+    double frame;      // a frame's time (the stream's frame rate)
     std::vector<uint8_t> rgba;
 } g_mv;
 
@@ -608,7 +609,10 @@ static void load_background(void) {
     g_mv.pkt = av_packet_alloc();
     g_mv.fr = av_frame_alloc();
     g_mv.rgba.assign((size_t)BG_W * BG_H * 4, 0);
-    g_mv.t0 = SDL_GetTicks() / 1000.0;
+    AVStream *st = g_mv.fmt->streams[g_mv.si];
+    double fps = av_q2d(st->avg_frame_rate) > 0 ? av_q2d(st->avg_frame_rate) : av_q2d(st->r_frame_rate);
+    g_mv.frame = 1.0 / (fps >= 10 && fps <= 120 ? fps : 30);
+    g_mv.t0 = SDL_GetTicksNS() / 1e9;
     g_mv.shown = -1;
 }
 
@@ -626,21 +630,23 @@ static bool bg_decode(double *t) {
     }
 }
 
-// Each start-screen frame: the movie frame for now, at most 30 a second (from the start at the end)
+// Each start-screen frame: the movie frame for now, at most the movie's frame rate (from the start at the end)
 static void bg_update(void) {
     if (!g_mv.cc) return;
-    double now = SDL_GetTicks() / 1000.0 - g_mv.t0, t = 0;
-    if (g_mv.shown >= 0 && now < g_mv.shown + 1.0 / 30) return;
+    double now = SDL_GetTicksNS() / 1e9 - g_mv.t0, t = 0;
+    // (the next frame from half a frame before its time: at 60 Hz a frame's own time would fall on the refresh, and
+    // the timer's jitter held one and skipped the next now and then)
+    if (g_mv.shown >= 0 && now < g_mv.shown + g_mv.frame / 2) return;
     bool got = false;
     for (int guard = 0; guard < 8; guard++) {  // (catch up: skip frames older than now)
         if (!bg_decode(&t)) {
             av_seek_frame(g_mv.fmt, g_mv.si, 0, AVSEEK_FLAG_BACKWARD);
             avcodec_flush_buffers(g_mv.cc);
-            g_mv.t0 = SDL_GetTicks() / 1000.0, now = 0, g_mv.shown = -1;
+            g_mv.t0 = SDL_GetTicksNS() / 1e9, now = 0, g_mv.shown = -1;
             continue;
         }
         got = true;
-        if (t >= now - 1.0 / 30) break;
+        if (t >= now - g_mv.frame / 2) break;
     }
     if (!got) return;
     g_mv.shown = t;
