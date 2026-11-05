@@ -38,6 +38,10 @@ int romfs_game_file_count(void);  // (341)
 // Copies the folder tree src to dst (hard links where the file system allows: no second copy of 6 GB). progress as
 // above. false = failed.
 bool romfs_copy_tree(const char *src, const char *dst, void (*progress)(uint64_t done, uint64_t total));
+// The same with only the top-level entries keep says yes to (name, whether it's a folder): an exefs and a romfs
+// extracted into one folder copied apart (issue #25: both copies held all of it).
+bool romfs_copy_tree_filtered(const char *src, const char *dst, void (*progress)(uint64_t done, uint64_t total),
+                              bool (*keep)(const char *name, bool dir));
 // One file, the same way.
 bool romfs_copy_file(const char *src, const char *dst, void (*progress)(uint64_t done, uint64_t total));
 
