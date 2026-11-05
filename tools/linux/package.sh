@@ -16,7 +16,7 @@ B=$L/game
 APPDIR=$L/AppDir
 VERSION=$(sed -n 's/^#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)
 OUT="build/dist/PrimeRecomp-$VERSION-linux-$ARCH.AppImage"
-JOBS=$(nproc)
+JOBS=${JOBS:-$(nproc)}  # (JOBS=<n>: fewer - a desktop that crashes under a full all-core load)
 
 tools/linux/build_deps.sh "$ARCH"
 
