@@ -518,9 +518,143 @@ static Service *open_romfs_storage(void) {
 }
 
 // ------------------------------------------------------------------ host-directory filesystem
-typedef struct { char root[1024]; } HostFs;
+// Saves are all-or-nothing, as on the Switch (its save storage commits a mount's changes at once): a save file opened
+// for writing works on a copy, <file>.pending, which the game's Commit syncs and renames over the file in one step. A
+// crash or power loss mid-save leaves the last committed save, never a half-written one (the game writes the whole
+// save.bin, 140 KB, at every save). Reads see the working copy until then, as the Switch's do; the save folder's
+// listing never shows it. A copy left by a crash is dropped at the next mount: never committed, as on the Switch. The
+// SD card mount writes in place. As LAS Recomp's e56bb74 / 1c805c2 (the files closed when the game closes them -
+// Windows can't rename over a file that's still open).
+// A save that can't be staged or committed is logged ("[save] SAVE FAILED") and the game is told it worked: its SDK
+// aborts on a failed fs call (LAS Recomp 366d6a7), and the committed save stays as it was.
+#define PENDING_MAX 16
+typedef struct {
+    char root[1024];
+    bool journaled;                   // a save mount (not the SD card)
+    bool live;                        // mounted and not closed yet (g_mount_lock)
+    int npending;
+    char pending[PENDING_MAX][1100];  // files with a working copy, to be swapped in at the Commit
+} HostFs;
 typedef struct { int fd; char path[1100]; } HostFile;
-typedef struct { DIR *d; char path[1024]; int mode; } HostDir;
+typedef struct { DIR *d; char path[1024]; int mode; bool journaled; } HostDir;
+
+// The game mounts its save folder again for each save. A mount drops the working copies a crash left behind - never
+// while another mount of the same folder is open: those could be its copies, mid-save.
+static pthread_mutex_t g_mount_lock = PTHREAD_MUTEX_INITIALIZER;
+#define LIVE_MOUNTS_MAX 16
+static HostFs *g_live_mounts[LIVE_MOUNTS_MAX];
+RT_ON_RESET(mounts_reset) {
+    pthread_mutex_lock(&g_mount_lock);
+    memset(g_live_mounts, 0, sizeof g_live_mounts);
+    pthread_mutex_unlock(&g_mount_lock);
+}
+
+static bool is_pending_name(const char *name) {
+    size_t l = strlen(name);
+    return l > 8 && !strcmp(name + l - 8, ".pending");
+}
+
+// in -> out from the start (errno set on failure)
+static bool copy_fd(int in, int out) {
+    char buf[65536];
+    ssize_t n;
+    while ((n = read(in, buf, sizeof buf)) > 0)
+        for (ssize_t done = 0; done < n;) {
+            ssize_t w = write(out, buf + done, (size_t)(n - done));
+            if (w < 0 && errno == EINTR) continue;
+            if (w <= 0) { if (!w) errno = EIO; return false; }
+            done += w;
+        }
+    return n == 0;
+}
+
+static bool copy_file(const char *from, const char *to) {
+    int in = open(from, O_RDONLY);
+    if (in < 0) return false;
+    int out = open(to, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+    bool ok = out >= 0 && copy_fd(in, out);
+    int error = errno;
+    close(in);
+    if (out >= 0 && close(out)) { error = errno; ok = false; }
+    errno = error;
+    return ok;
+}
+
+// The working copy of save file p, made on its first open for writing (create): its slot in fs->pending and its path
+// in out; -1 for the SD card, a file with none (create false), or (errno set) a copy that can't be made
+static int pending_of(HostFs *fs, const char *p, bool create, char *out, size_t n) {
+    if (!fs->journaled) return -1;
+    snprintf(out, n, "%s.pending", p);
+    for (int i = 0; i < fs->npending; i++) if (!strcmp(fs->pending[i], p)) return i;
+    if (!create) return -1;
+    if (fs->npending == PENDING_MAX) { errno = ENOSPC; return -1; }
+    if (strlen(p) >= sizeof fs->pending[0]) { errno = ENAMETOOLONG; return -1; }
+    if (!copy_file(p, out)) { int error = errno; unlink(out); errno = error; return -1; }
+    snprintf(fs->pending[fs->npending], sizeof fs->pending[0], "%s", p);
+    return fs->npending++;
+}
+
+static void pending_forget(HostFs *fs, int slot) {
+    memmove(fs->pending[slot], fs->pending[slot + 1], (size_t)(fs->npending - slot - 1) * sizeof fs->pending[0]);
+    fs->npending--;
+}
+
+static bool sync_file(const char *path) {
+    int fd = open(path, O_RDWR);
+    if (fd < 0) return false;
+    bool ok = fsync(fd) == 0;
+    int error = errno;
+    if (close(fd)) return false;
+    if (!ok) errno = error;
+    return ok;
+}
+
+// The game's Commit: each working copy synced and renamed over its file (then the folder synced, where that's how a
+// rename reaches the disk). One that can't be is dropped, the committed file kept as it was.
+static void commit(HostFs *fs) {
+    for (int i = 0; i < fs->npending; i++) {
+        const char *path = fs->pending[i];
+        char work[1200];
+        snprintf(work, sizeof work, "%s.pending", path);
+        struct stat sb;
+        if (stat(work, &sb)) { LOG("[save] %s: its working copy is gone (deleted with its folder?)\n", path); continue; }
+        if (!sync_file(work) || !plat_replace_file(work, path)) {
+            LOG("[save] SAVE FAILED: could not commit %s (%s) - not saved, the last committed save is kept\n", path,
+                strerror(errno));
+            unlink(work);
+            continue;
+        }
+#ifndef _WIN32
+        char dir[1100];
+        snprintf(dir, sizeof dir, "%s", path);
+        char *slash = strrchr(dir, '/');
+        if (slash) {
+            *slash = 0;
+            int dfd = open(dir, O_RDONLY);
+            if (dfd >= 0) { fsync(dfd); close(dfd); }
+        }
+#endif
+        LOG("[save] committed %s (%lld bytes)\n", path, (long long)sb.st_size);
+    }
+    fs->npending = 0;
+}
+
+// The game closed the file / directory / mount: the host one too (they used to stay open for the whole run)
+static void file_close(Service *s) {
+    HostFile *f = s->state;
+    if (f) { if (f->fd >= 0) close(f->fd); free(f); s->state = NULL; }
+}
+static void dir_close(Service *s) {
+    HostDir *d = s->state;
+    if (d) { if (d->d) closedir(d->d); free(d); s->state = NULL; }
+}
+static void fs_unmount(Service *s) {  // (the HostFs stays: a file opened through it may outlive it)
+    HostFs *fs = s->state;
+    pthread_mutex_lock(&g_mount_lock);
+    for (int i = 0; fs && i < LIVE_MOUNTS_MAX; i++) if (g_live_mounts[i] == fs) g_live_mounts[i] = NULL;
+    if (fs) fs->live = false;
+    pthread_mutex_unlock(&g_mount_lock);
+}
 
 static const char *in_path(IpcReq *req, int i) {
     if (i < req->nx) return (const char *)(uintptr_t)req->x[i].addr;
@@ -588,6 +722,7 @@ static void directory(Service *s, IpcReq *req, IpcResp *resp) {
         struct dirent *e;
         while (n < max && (e = readdir(d->d))) {
             if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+            if (d->journaled && is_pending_name(e->d_name)) continue;  // (a working copy: not one of the game's files)
 #ifdef _WIN32  // no d_type
             char full[2048];
             struct stat es;
@@ -601,11 +736,15 @@ static void directory(Service *s, IpcReq *req, IpcResp *resp) {
             memset(ent, 0, 0x310);
             strncpy((char *)ent, e->d_name, 0x300);
             ent[0x304] = isdir ? 0 : 1;
-            if (!isdir) {
+            if (!isdir) {  // (the size its working copy has, mid-save)
                 char p[2048];
                 struct stat sb;
-                snprintf(p, sizeof p, "%s/%s", d->path, e->d_name);
-                if (!stat(p, &sb)) *(int64_t *)(ent + 0x308) = sb.st_size;
+                snprintf(p, sizeof p, "%s/%s.pending", d->path, e->d_name);
+                if (!d->journaled || stat(p, &sb)) {
+                    snprintf(p, sizeof p, "%s/%s", d->path, e->d_name);
+                    if (stat(p, &sb)) sb.st_size = 0;
+                }
+                *(int64_t *)(ent + 0x308) = sb.st_size;
             }
             n++;
         }
@@ -619,7 +758,7 @@ static void directory(Service *s, IpcReq *req, IpcResp *resp) {
         int64_t n = 0;
         struct dirent *e;
         while ((e = readdir(d->d)))
-            if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) n++;
+            if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..") && !(d->journaled && is_pending_name(e->d_name))) n++;
         seekdir(d->d, pos);
         OUT(int64_t, 0) = n;
         resp_size(resp, 8);
@@ -654,14 +793,29 @@ static void filesystem(Service *s, IpcReq *req, IpcResp *resp) {
         close(fd);
         break;
     }
-    case 1: if (unlink(p)) resp->result = errno_result(); break;
+    case 1: {  // DeleteFile (its working copy too)
+        char work[2100];
+        int slot = pending_of(fs, p, false, work, sizeof work);
+        if (slot >= 0) unlink(work), pending_forget(fs, slot);
+        if (unlink(p)) resp->result = errno_result();
+        break;
+    }
     case 2: if (mkdir(p, 0755)) resp->result = errno_result(); break;
     case 3: if (rmdir(p)) resp->result = errno_result(); break;
     case 4: if (rm_rf(p, false)) resp->result = errno_result(); break;
-    case 5: case 6:
+    case 5: case 6: {  // RenameFile / RenameDirectory (a file's working copy goes with it)
         host_path(fs, in_path(req, 1), p2, sizeof p2);
-        if (rename(p, p2)) resp->result = errno_result();
+        if (rename(p, p2)) { resp->result = errno_result(); break; }
+        char work[2100], work2[2200];
+        int slot = req->cmd == 5 ? pending_of(fs, p, false, work, sizeof work) : -1;
+        if (slot >= 0) {
+            snprintf(work2, sizeof work2, "%s.pending", p2);
+            if (strlen(p2) < sizeof fs->pending[0] && !rename(work, work2))
+                snprintf(fs->pending[slot], sizeof fs->pending[0], "%s", p2);
+            else unlink(work), pending_forget(fs, slot);
+        }
         break;
+    }
     case 7: {  // GetEntryType
         struct stat sb;
         if (stat(p, &sb)) { resp->result = FS_PATH_NOT_FOUND; break; }
@@ -669,14 +823,25 @@ static void filesystem(Service *s, IpcReq *req, IpcResp *resp) {
         resp_size(resp, 4);
         break;
     }
-    case 8: {  // OpenFile(mode)
+    case 8: {  // OpenFile(mode): a save file opened for writing works on its working copy; reads see one made already
         uint32_t mode = IN(uint32_t, 0);
+        char work[2100];
+        struct stat sb;
+        if (fs->journaled && !stat(p, &sb)) {
+            int slot = pending_of(fs, p, (mode & 2) != 0, work, sizeof work);
+            if (slot >= 0) snprintf(p, sizeof p, "%s", work);
+            else if (mode & 2)
+                LOG("[save] SAVE FAILED: could not make a working copy of %s (%s) - writing it in place\n", p,
+                    strerror(errno));
+        }
         int fd = open(p, (mode & 2) ? O_RDWR : O_RDONLY);
         if (fd < 0) { resp->result = errno_result(); break; }
         HostFile *f = calloc(1, sizeof *f);
         f->fd = fd;
         strlcpy(f->path, p, sizeof f->path);
-        ipc_return_object(resp, service_new("IFile", file, f));
+        Service *fsvc = service_new("IFile", file, f);
+        fsvc->on_close = file_close;
+        ipc_return_object(resp, fsvc);
         break;
     }
     case 9: {  // OpenDirectory(mode)
@@ -685,11 +850,14 @@ static void filesystem(Service *s, IpcReq *req, IpcResp *resp) {
         HostDir *hd = calloc(1, sizeof *hd);
         hd->d = d;
         hd->mode = (int)IN(uint32_t, 0);
+        hd->journaled = fs->journaled;
         snprintf(hd->path, sizeof hd->path, "%s", p);
-        ipc_return_object(resp, service_new("IDirectory", directory, hd));
+        Service *dsvc = service_new("IDirectory", directory, hd);
+        dsvc->on_close = dir_close;
+        ipc_return_object(resp, dsvc);
         break;
     }
-    case 10: break;  // Commit
+    case 10: commit(fs); break;  // Commit (always a success for the game: see the save notes above)
     case 11: case 12: OUT(int64_t, 0) = 0x40000000; resp_size(resp, 8); break;
     case 13: rm_rf(p, true); break;
     case 14: memset(resp->data, 0, 0x20); resp_size(resp, 0x20); break;
@@ -706,8 +874,31 @@ static Service *open_host_fs(const char *sub) {
     for (char *q = cmd + 1; *q; q++)
         if (*q == '/') { *q = 0; mkdir(cmd, 0755); *q = '/'; }
     mkdir(cmd, 0755);
+    fs->journaled = strcmp(sub, "sdcard") != 0;
+    pthread_mutex_lock(&g_mount_lock);
+    bool other_live = false;
+    for (int i = 0; i < LIVE_MOUNTS_MAX; i++)
+        if (g_live_mounts[i] && !strcmp(g_live_mounts[i]->root, fs->root)) other_live = true;
+    if (fs->journaled && other_live) LOG("[save] %s is still mounted: its working copies are left alone\n", fs->root);
+    if (fs->journaled && !other_live) {  // (a working copy a crash left: never committed - dropped, as on the Switch)
+        DIR *d = opendir(fs->root);
+        struct dirent *e;
+        while (d && (e = readdir(d))) {
+            if (!is_pending_name(e->d_name)) continue;
+            char stale[1300];
+            snprintf(stale, sizeof stale, "%s/%s", fs->root, e->d_name);
+            LOG("[save] dropping uncommitted %s\n", stale);
+            unlink(stale);
+        }
+        if (d) closedir(d);
+    }
+    for (int i = 0; fs->journaled && i < LIVE_MOUNTS_MAX; i++)
+        if (!g_live_mounts[i]) { g_live_mounts[i] = fs, fs->live = true; break; }
+    pthread_mutex_unlock(&g_mount_lock);
     LOG("[fs] mounted host directory %s\n", fs->root);
-    return service_new("IFileSystem", filesystem, fs);
+    Service *svc = service_new("IFileSystem", filesystem, fs);
+    svc->on_close = fs_unmount;
+    return svc;
 }
 
 // ------------------------------------------------------------------ fsp-srv
