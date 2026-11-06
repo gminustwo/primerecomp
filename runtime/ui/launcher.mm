@@ -1228,8 +1228,10 @@ extern "C" void launcher_run(const char *root) {
 
     static int runs;  // (test: =once - only the first time, so a "Quit to Start Screen" reboot lands here)
     const char *ap = getenv("LARECOMP_LAUNCHER_AUTOPLAY");
-    // (test: PLAY at once - in the first frame, so it waits for a shader pre-load as PLAY does)
-    bool autoplay = ap && status.empty() && !(runs && !strcmp(ap, "once"));
+    // (test: PLAY at once - in the first frame, so it waits for a shader pre-load as PLAY does; --preload-shaders,
+    // runtime/main.c: so too, the first time only - a "Quit to Start Screen" lands on the start screen as it is)
+    extern bool g_cli_preload_shaders;
+    bool autoplay = (ap || (g_cli_preload_shaders && !runs)) && status.empty() && !(runs && ap && !strcmp(ap, "once"));
     runs++;
     // an update (game files there, the game code not built for this version) or an earlier copy found: set up by itself
     bool auto_setup = (check_copied_files(g_root).empty() && !status.empty() && status != FILES_INCOMPLETE) ||

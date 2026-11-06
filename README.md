@@ -251,6 +251,19 @@ Choose one to play on from it. For a save backed up from a Switch (JKSV, Checkpo
 **Choose a folder...** and pick its folder. The save you had is kept: it's moved aside, and the same list shows it as
 "Your save before an import" so you can go back to it.
 
+### Starting from a launcher (Playnite, Steam, ...)
+
+Two arguments start PrimeRecomp without its start screen, for a game launcher's shortcut (Playnite: the game's
+Actions; Steam: Properties -> Launch Options; the AppImage takes them too):
+
+- `--play` goes straight into the game. With **Pre-load shaders** on (Video tab), the shaders load beside the game
+  instead of before it.
+- `--preload-shaders` builds the game's shaders first, with a progress bar (B / Esc: play at once), then starts the
+  game - whether Pre-load shaders is on or not. Use it instead of `--play` for a first visit anywhere without
+  hitches.
+
+Until the game files are set up, both open the start screen as usual.
+
 ## Controls
 
 A controller works out of the box (Xbox, PlayStation, Switch Pro, Steam Controller, Steam Deck and others), using

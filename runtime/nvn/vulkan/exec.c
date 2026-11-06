@@ -2840,9 +2840,12 @@ static void *preload_thread(void *arg) {
 
 // Video > Pre-load shaders on and not done yet in this process: start (from the start screen; or at the game's
 // start without one - then beside it, the game taking what's ready). Off with debug options that change translations.
+bool g_cli_preload_shaders;  // --preload-shaders (runtime/main.c): this run's pre-load, whatever the setting
+
 void vk_preload_start(void) {
     static bool started;
-    if (started || !g_settings.preload_shaders || !rec_ready || getenv("LARECOMP_GLSL_OVERRIDE") || getenv("LARECOMP_SAVE_MSL"))
+    if (started || !(g_settings.preload_shaders || g_cli_preload_shaders) || !rec_ready ||
+        getenv("LARECOMP_GLSL_OVERRIDE") || getenv("LARECOMP_SAVE_MSL"))
         return;
     started = true;
     atomic_store(&pre_running, true);
