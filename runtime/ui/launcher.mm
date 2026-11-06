@@ -37,6 +37,7 @@ extern "C" {
 #include "romfs_build.h"
 #include "saveimport.h"
 #include "settings.h"
+#include "update.h"
 #include "input_bind.h"
 void controls_bindings_draw(float scale);  // ui/controls_ui.mm
 void ui_window_init(void);
@@ -678,6 +679,7 @@ static float g_menu_gap = 0.35f;  // space under each item, in line heights
 // OK starts the game. Returns true once OK is pressed. (LAS Recomp asked "authentic 16:9 or unlocked?" first; the
 // Aspect ratio setting only matters on windows wider than 16:9, so that isn't asked.)
 static bool g_tip_test;  // (LARECOMP_LAUNCHER_SHOT=<frame>:tip)
+static bool g_update_test;  // (LARECOMP_LAUNCHER_SHOT=<frame>:update)
 static bool menu_tip(float s) {
     bool go = false;
     ImVec2 ds = ImGui::GetIO().DisplaySize;
@@ -714,6 +716,56 @@ static bool menu_tip(float s) {
         ImGui::EndPopup();
     }
     return go;
+}
+
+// The start screen's UPDATE item (issue #36, runtime/update.c): what's new, then Update now (installed here, then
+// restarted) or, where this copy can't install it, the release page
+static void update_popup(float s) {
+    ImVec2 ds = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(ds.x * 0.5f, ds.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(fminf(ds.x * 0.85f, 900 * s), 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(36 * s, 28 * s));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16 * s);
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, theme::panel);
+    bool open = ImGui::BeginPopupModal("##update", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    if (!open) return;
+    UpdateInfo u;
+    char msg[300];
+    int st = update_state(&u, NULL, msg, sizeof msg);
+    ImGui::SetWindowFontScale(1.15f);
+    ImGui::PushFont(g_font_menu);
+    ImGui::TextColored(theme::heading, "PrimeRecomp %s", u.tag[0] == 'v' ? u.tag + 1 : u.tag);
+    ImGui::PopFont();
+    ImGui::PushTextWrapPos(0);
+    if (u.name[0]) ImGui::TextUnformatted(u.name);
+    ImGui::Spacing();
+    if (st == UPD_FAILED) {
+        ImGui::TextColored(theme::warn, "%s", msg);
+        ImGui::TextDisabled("PrimeRecomp is as it was. The release page has the download.");
+    } else {
+        for (int i = 0; i < u.nnews; i++) ImGui::BulletText("%s", u.news[i]);
+        ImGui::Spacing();
+        ImGui::TextDisabled(u.installs ? "Your game files, saves and settings stay. PrimeRecomp restarts by itself."
+                                       : "Download it from the release page (this copy can't update itself).");
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, 14 * s));
+    float bw = 260 * s, bh = 44 * s;
+    if (st == UPD_AVAILABLE && u.installs) {
+        ImGui::SetItemDefaultFocus();
+        if (ImGui::Button("Update now", ImVec2(bw, bh))) update_install_start(), ImGui::CloseCurrentPopup();
+        ImGui::SameLine();
+    }
+    if (ImGui::Button(u.installs && st != UPD_FAILED ? "Release notes" : "Open the release page", ImVec2(bw, bh)))
+        SDL_OpenURL(u.page);
+    ImGui::SameLine();
+    if (ImGui::Button("Not now", ImVec2(bw * 0.7f, bh)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 // Start-screen text: a soft drop shadow, then the text with a top-to-bottom colour gradient (top == bottom: flat)
@@ -1111,6 +1163,37 @@ static void prelaunch_tab(float sc) {
     saves_section(sc);
     ImGui::Spacing();
     ImGui::Spacing();
+    heading("Updates");  // (runtime/update.c)
+    {
+        UpdateInfo u;
+        char msg[300];
+        int st = update_state(&u, NULL, msg, sizeof msg);
+        bool on = g_settings.check_updates;
+        if (ImGui::Checkbox("Check for updates when PrimeRecomp starts", &on)) {
+            g_settings.check_updates = on;
+            settings_save();
+            if (on) update_check_start(false);
+        }
+        ImGui::TextDisabled("Asks GitHub for the latest release; nothing else is sent.");
+        ImGui::PushTextWrapPos(0);
+        if (st == UPD_CHECKING) ImGui::Text("Checking...");
+        else if (st == UPD_AVAILABLE) ImGui::TextColored(theme::accent, "%s is out: %s", tag_label(u.tag).c_str(), u.name);
+        else if (st == UPD_NONE && u.tag[0]) ImGui::Text("PrimeRecomp is up to date (the latest is %s).", tag_label(u.tag).c_str());
+        else if (st == UPD_FAILED) ImGui::TextColored(theme::warn, "%s", msg);
+        ImGui::PopTextWrapPos();
+        if (st != UPD_CHECKING && st != UPD_DOWNLOADING && st != UPD_INSTALLING) {
+            if (ImGui::Button("Check now")) update_check_start(true);
+            if (st == UPD_AVAILABLE) {
+                ImGui::SameLine();
+                if (ImGui::Button(u.installs ? "Update now" : "Open the download page")) {
+                    if (u.installs) update_install_start();
+                    else SDL_OpenURL(u.page);
+                }
+            }
+        }
+    }
+    ImGui::Spacing();
+    ImGui::Spacing();
     heading("About");
     ImGui::PushTextWrapPos(0);
     ImGui::Text("PrimeRecomp %s - Metroid Prime Remastered, recompiled to run natively on this computer.",
@@ -1196,6 +1279,9 @@ extern "C" void launcher_run(const char *root) {
     launcher_pad_open_all();
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
 
+    update_cleanup();               // (an update's old program files: runtime/update.c)
+    // a newer release: the UPDATE item (not in screenshot tests, unless they pretend an older version)
+    if (!getenv("LARECOMP_LAUNCHER_SHOT") || getenv("LARECOMP_UPDATE_FROM")) update_check_start(false);
     // an older version's game data image: the game reads the romfs/ folder itself now - 6.8 GB back (issues #11, #15)
     if (check_copied_files(g_root).empty() && file_exists(g_root + "/romfs.bin") &&
         rt_remove_game_file(g_root.c_str(), "romfs.bin"))
@@ -1221,6 +1307,7 @@ extern "C" void launcher_run(const char *root) {
         if (pg && !strncmp(pg + 1, "settings", 8) && pg[9] == ':') g_tab_request_ext = atoi(pg + 10);  // settings:<tab>
         if (pg && !strcmp(pg + 1, "delete")) page = SETUP, g_confirm_delete = true;
         if (pg && !strcmp(pg + 1, "tip")) g_settings.menu_tip_seen = false, g_tip_test = true;
+        if (pg && !strcmp(pg + 1, "update")) g_update_test = true;  // (the UPDATE dialog, once the check has found one)
     }
     // PLAY chosen while the shader pre-load runs (Video > Pre-load shaders): its progress until it's done, then the game
     bool wait_shaders = false;
@@ -1369,16 +1456,22 @@ extern "C" void launcher_run(const char *root) {
             static bool typed_before;
             bool typing = typed_before || ui_text_busy();
 
+            UpdateInfo upd;  // (runtime/update.c: a newer release, or one being installed)
+            float upd_f = 0;
+            int upd_s = update_state(&upd, &upd_f, NULL, 0);
+            bool updating = upd_s == UPD_DOWNLOADING || upd_s == UPD_INSTALLING || upd_s == UPD_DONE;
             if (page == MAIN) {
-                ImGui::BeginDisabled(wait_shaders);  // (waiting for the shaders: the panel in front has the input)
+                // (waiting for the shaders or an update: the panel in front has the input)
+                ImGui::BeginDisabled(wait_shaders || updating);
                 {  // the four items close together, the block anchored where QUIT always was (the gap to the status
-                   // line stays)
+                   // line stays; a fifth - UPDATE with SET UP GAME FILES - above them)
                     ImGui::PushFont(g_font_menu);
                     float h = ImGui::CalcTextSize("A").y, sp = ImGui::GetStyle().ItemSpacing.y;
                     ImGui::PopFont();
                     auto pitch = [&](float gap) { return h + 6 + gap * h + (gap >= 0 ? 2 : 1) * sp; };
                     g_menu_gap = -0.18f;
-                    ImGui::SetCursorPosY(285 * s + 3 * pitch(0.35f) - 3 * pitch(g_menu_gap));
+                    int above = upd_s == UPD_AVAILABLE && (!status.empty() || busy) ? 4 : 3;
+                    ImGui::SetCursorPosY(285 * s + 3 * pitch(0.35f) - above * pitch(g_menu_gap));
                 }
                 bool hov = false;
                 ImGui::SetCursorPosX(x0);
@@ -1407,6 +1500,17 @@ extern "C" void launcher_run(const char *root) {
                 }
                 if (g_tip_test) ImGui::OpenPopup("##menutip"), g_tip_test = false;
                 if (menu_tip(s)) play = true;
+                if (upd_s == UPD_AVAILABLE || (upd_s == UPD_FAILED && upd.tag[0])) {  // (a newer release: issue #36)
+                    ImGui::SetCursorPosX(x0);
+                    std::string l = std::string("UPDATE TO ") + (upd.tag[0] == 'v' ? upd.tag + 1 : upd.tag);
+                    if (menu_item(l.c_str(), true) || g_update_test) ImGui::OpenPopup("##update"), g_update_test = false;
+                }
+                {   // (an install that failed: the dialog again, saying so)
+                    static int was = UPD_IDLE;
+                    if (upd_s == UPD_FAILED && (was == UPD_DOWNLOADING || was == UPD_INSTALLING)) ImGui::OpenPopup("##update");
+                    was = upd_s;
+                }
+                update_popup(s);
                 ImGui::SetCursorPosX(x0);
                 if (g_refocus == SETTINGS) ImGui::SetKeyboardFocusHere(), g_refocus = MAIN;  // (back from Settings: it
                 if (menu_item("SETTINGS", true)) {                                             //  stays selected)
@@ -1744,11 +1848,29 @@ extern "C" void launcher_run(const char *root) {
                 }
             }
 
+            {   // an update being installed (runtime/update.c): its progress in front
+                if (updating) {
+                    char line[160], title[80];
+                    snprintf(title, sizeof title, "Updating to %s", upd.tag[0] == 'v' ? upd.tag + 1 : upd.tag);
+                    if (upd_s == UPD_DOWNLOADING && upd.size)
+                        snprintf(line, sizeof line, "Downloading: %.0f of %.0f MB", upd_f * upd.size / 1e6, upd.size / 1e6);
+                    else snprintf(line, sizeof line, upd_s == UPD_DOWNLOADING ? "Downloading..." :
+                                                     upd_s == UPD_INSTALLING ? "Installing..." : "Restarting...");
+                    const char *notes[] = {"Your game files, saves and settings stay."};
+                    progress_panel(ds, ds.y / 1080.0f, title, line, notes, 1, upd_s == UPD_DOWNLOADING ? upd_f : 1);
+                }
+            }
+
             ImGui::Render();
             ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), (VkCommandBuffer)vk_frame_cmd());
             bool shot = shot_at && ++frame == shot_at;
             vk_frame_end(shot ? getenv("LARECOMP_SHOT_PATH") ? getenv("LARECOMP_SHOT_PATH") : "build/launcher.png" : NULL);
             if (shot) exit(0);
+            static int restart_in = 3;  // (installed: "Restarting..." on screen, then the new version)
+            if (upd_s == UPD_DONE && --restart_in <= 0) {
+                settings_save();
+                update_restart();
+            }
         }
     }
     // play: hand the window to the game
