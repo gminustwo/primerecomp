@@ -28,6 +28,7 @@ Settings g_settings = {
     .rumble = true,
     .rumble_strength = 1.0f,
     .hd_rumble = true,
+    .check_updates = true,
     .deadzone = {0.05f, 0.05f},
     .movie_audio = true,
     .show_fps = false,
@@ -259,6 +260,7 @@ void settings_load(void) {
                 if (!strcmp(val, g_language_codes[i])) g_settings.language = i;
         }
         else if (!strcmp(key, "menu_tip_seen")) g_settings.menu_tip_seen = atoi(val) != 0, tip_key = true;
+        else if (!strcmp(key, "check_updates")) g_settings.check_updates = atoi(val) != 0;
         else bind_settings_load(key, val);  // bind_pad_* / bind_key_*: runtime/hle/bindings.c
     }
     fclose(f);
@@ -349,6 +351,7 @@ static void write_settings(void *o) {
     put(o, "language = %s\n", g_language_codes[g_settings.language > LANG_AUTO && g_settings.language < N_LANGUAGES
                                                      ? g_settings.language : LANG_AUTO]);
     put(o, "menu_tip_seen = %d\n", g_settings.menu_tip_seen);
+    put(o, "check_updates = %d\n", g_settings.check_updates);
     bind_settings_save(put, o);
 }
 

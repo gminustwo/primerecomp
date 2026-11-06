@@ -101,6 +101,7 @@ typedef struct {
     int button_icons;    // ICONS_* (runtime/glyphs.h): the game's button prompts drawn as this controller's, or Auto:
                          // whichever was used last (runtime/hle/glyphs.c)
     bool menu_tip_seen;  // the start screen's one-time "how to open the menu" note was shown (first PLAY ever)
+    bool check_updates;  // the start screen asks GitHub for a newer release (runtime/update.c; Settings > Prelaunch)
 } Settings;
 
 extern Settings g_settings;

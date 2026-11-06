@@ -225,7 +225,12 @@ keep it on the SD card instead.
 
 ### Updating
 
-A new version doesn't need your game files again, and keeps your saves and settings:
+From v0.0.8 on, the start screen checks for a new version and offers it: **UPDATE TO ...** under PLAY. On Windows
+and with the AppImage (Linux, Steam Deck), **Update now** downloads and installs it in place - your shortcuts
+(Steam, Playnite) keep working - and PrimeRecomp restarts by itself; on macOS it opens the download page. The check
+only asks GitHub for the latest release; turn it off in Settings > Prelaunch (Check for updates).
+
+By hand, a new version doesn't need your game files again, and keeps your saves and settings:
 
 - **Windows:** extract the new zip anywhere, as you did the first time, and run it. In a new folder it finds your
   earlier copy (v0.0.3 or newer) by itself and uses its game files, saves and settings. The game files aren't copied
