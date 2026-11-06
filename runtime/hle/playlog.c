@@ -185,6 +185,28 @@ static void items_frame(uint64_t ps) {
     g_caps_set = true;
 }
 
+// The game's controls (its Options -> Controls; CGameOptionsMP1, the game state's +0x40, kept in the save file):
+// +0x11c the control scheme (EControlScheme: SetCurrentControllerScheme), +0x130 a bit set, a bit per scheme: "Swap
+// Beam and Visor" (GetIsSwitchVisorBeamControls) - on, the d-pad picks the beams and the HUD shows the beams at its
+// lower left, the visors at its lower right. Said in play when they change (and after each boot), so a report of the
+// HUD's selectors "flipped" shows the game's own option: 2026-11-06, a save brought in from the Eden emulator had it
+// on (scheme 0), the test save off.
+static int32_t g_ctl_scheme = -2;
+static int g_ctl_swap = -2;
+
+static void controls_frame(void) {
+    uint64_t gs = LD64(guest_sym("gpGameState"));
+    if (!GUEST_PTR_OK(gs)) return;
+    int32_t scheme = (int32_t)LD32(gs + 0x40 + 0x11c);
+    uint64_t bits = LD64(gs + 0x40 + 0x130);
+    int sw = scheme >= 0 && scheme < 64 && bits >= GUEST_LO && bits < GUEST_HI && !(bits & 3)
+                 ? (int)((LD32(bits + 4 * (scheme / 32)) >> (scheme % 32)) & 1) : -1;
+    if (scheme == g_ctl_scheme && sw == g_ctl_swap) return;
+    LOG("[state] controls: scheme %d, Swap Beam and Visor %s\n", scheme,
+        sw < 0 ? "?" : sw ? "on (the d-pad picks beams; the HUD's beams at the lower left, visors at the right)" : "off");
+    g_ctl_scheme = scheme, g_ctl_swap = sw;
+}
+
 // ------------------------------------------------------------------ from the game (runtime/hle/game.c)
 // Each gameplay frame, CWorldStateMP1::SetCurrentArea's id (x1, x2: its two halves)
 void playlog_area(uint64_t lo, uint64_t hi) {
@@ -218,6 +240,7 @@ void playlog_frame(const float pos[3]) {
     if (!ps) return;
     memcpy(g_pos, pos, sizeof g_pos), g_pos_set = true;
     items_frame(ps);
+    controls_frame();
     bool alive = (LD8(ps) & 1) != 0;
     if (g_alive && !alive) {
         char room[128];
@@ -231,6 +254,7 @@ void playlog_frame(const float pos[3]) {
 // The game booted again (Quit to Start Screen): taken in again from the start
 RT_ON_RESET(playlog_reset) {
     g_caps_set = false, g_alive = true, g_pos_set = false, g_last_ns = 0;
+    g_ctl_scheme = -2, g_ctl_swap = -2;
     memset(g_room, 0, sizeof g_room);
 }
 
