@@ -199,11 +199,18 @@ int main(int argc, char **argv) {
     const char *root = "extracted";  // (in the data root)
     bool skip_launcher = getenv("LARECOMP_NO_LAUNCHER") || getenv("LARECOMP_INPUT");  // tests boot straight in
     static char arg_root[1024];
+    // Command line (README "Starting from a launcher"): --play goes straight into the game, past the start screen
+    // (a Video > Pre-load shaders that's on runs beside the game); --preload-shaders builds the shaders first, on the
+    // start screen's "Loading shaders" panel (B / Esc: play at once), whatever that setting, then plays (issue #38:
+    // Playnite). The start screen stays when the game files aren't set up.
+    extern bool g_cli_preload_shaders;  // (runtime/nvn/vulkan/exec.c vk_preload_start, runtime/ui/launcher.mm)
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--play")) skip_launcher = true;
+        else if (!strcmp(argv[i], "--preload-shaders")) g_cli_preload_shaders = true;
         else if (argv[i][0] != '-' && !realpath(argv[i], arg_root)) root = argv[i];  // (relative to where we started)
         else if (argv[i][0] != '-') root = arg_root;
     }
+    if (g_cli_preload_shaders) skip_launcher = false;  // (the start screen shows the shaders' progress, then plays)
     extern const char *rt_version(void);  // runtime/ui/launcher.mm
 #if defined(_WIN32)
     const char *os = "Windows";
