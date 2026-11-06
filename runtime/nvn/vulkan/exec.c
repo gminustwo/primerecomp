@@ -4186,6 +4186,9 @@ static bool edge_overlay(uint64_t fs_hash) {
                                 // the window now, through the game camera - this if that test misses)
         0x405a073135796880ull,  // pause screens: the dimmed backdrop behind the inventory / log book / options
         0xc4028b01cf7837acull,  // the visor powering on: scan lines over the screen (a full-screen quad, or bands of them)
+        0xfc3e1305857ffb85ull,  // the visor powering on as Samus leaves the morph ball: scan lines over the scene, 300
+                                // bands across the screen (1800 vertices, no texture; boxed by its viewport, they ended
+                                // at the 16:9 box's sides)
     };
     static uint64_t extra[16];
     static int nextra = -1, off = -1;
