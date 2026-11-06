@@ -67,6 +67,19 @@ static int menu_key(int sc) {
 static int bound_held(int sc) { return held_key(sc) && !(key_menu[sc] && menu_key(sc) >= 0); }
 int input_menu_key(int sc) { return sc > 0 && sc < BIND_KEY_HOST_COUNT ? menu_key(sc) : -1; }  // (glyphs.c)
 
+// On the map (the in-game GUI's screen 2: runtime/hle/game.c game_gui_screen) a key bound to a stick is that stick,
+// not a menu key: the map moves with the right stick and turns with the left, and its legend shows their keys - the
+// arrows, by default the right stick's, were the d-pad there and moved nothing (issue #37)
+static bool map_stick_key(int sc) {
+    extern void game_gui_screen(int *now, int *before);
+    int now, before;
+    game_gui_screen(&now, &before);
+    if (now != 2) return false;
+    for (int i = BIND_LS_UP; i <= BIND_RS_RIGHT; i++)
+        if (g_bind_key[i] == sc) return true;
+    return false;
+}
+
 // Through the bindings (runtime/hle/bindings.c: g_bind_key), read on every key event, so a rebind applies at once.
 static void recompute_keyboard(void) {
     uint64_t b = 0;
@@ -358,7 +371,8 @@ void input_handle_event(const SDL_Event *e) {
             glyphs_note_device(GLYPH_DEV_KEYS);  // (the button icons, on Auto: the runtime's own F keys don't count)
         if (e->key.scancode < SDL_SCANCODE_COUNT) {
             keys_down[e->key.scancode] = e->type == SDL_EVENT_KEY_DOWN;
-            if (e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat) key_menu[e->key.scancode] = !game_in_play();
+            if (e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat)
+                key_menu[e->key.scancode] = !game_in_play() && !map_stick_key(e->key.scancode);
         }
         recompute_keyboard();
         break;
