@@ -15,6 +15,7 @@
 #include <libavutil/imgutils.h>
 #include <libswscale/swscale.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -399,8 +400,15 @@ typedef struct {
     bool eos_pending;
     int64_t eos_time;
     bool stopped;  // Stop / destroyed: no more events (see dec_stop)
+    uint64_t player;  // the CMoviePlayer feeding it (a video decoder: dec_send_input), 0 = not known
     pthread_mutex_t lock;
 } Decoder;
+
+// The movies' time step, microseconds (CMovieList::Update's dt, each frame: runtime/hle/game.c rt_movie_dt)
+static _Atomic int64_t g_movie_dt = 16667;
+void movie_clock_advance(float dt) {
+    if (dt > 0 && dt < 1) g_movie_dt = (int64_t)(dt * 1e6f + 0.5f);
+}
 
 // Input / output buffers live in the HLE heap, which only a reboot frees: buffers of destroyed decoders are kept
 // for the next movie (the title's attract loop replays the opening, ~37 MB of buffers per showing).
@@ -445,7 +453,10 @@ static void dec_configure(Cpu *c) {
     const AVCodec *codec = avcodec_find_decoder(p->codec_id);
     d->ctx = avcodec_alloc_context3(codec);
     avcodec_parameters_to_context(d->ctx, p);
-    d->ctx->thread_count = 4;
+    // Two frame threads: each frame thread holds back a frame (4 held back three, and the title screen's movie came out
+    // of the decoder late, in bursts: video_due); one decodes in the game's own thread, up to 27 ms a packet.
+    // LARECOMP_MOVIE_THREADS=<n>: another count.
+    d->ctx->thread_count = getenv("LARECOMP_MOVIE_THREADS") ? atoi(getenv("LARECOMP_MOVIE_THREADS")) : 2;
     if (avcodec_open2(d->ctx, codec, NULL) < 0) { LOG("[movie] cannot open decoder\n"); c->x[0] = 1; return; }
     d->frame = av_frame_alloc();
     d->pkt = av_packet_alloc();
@@ -630,6 +641,27 @@ static bool flush_pending(Decoder *d) {
     return any;
 }
 
+// The frames the decoder has finished, into the outputs (or pending, in order). With frame threads a frame can finish
+// after its packet's send has returned: dec_acquire_output looks again (lock held). time: a frame without its own.
+static bool collect_frames(Decoder *d, int64_t time) {
+    bool produced = false;
+    while (avcodec_receive_frame(d->ctx, d->frame) == 0) {
+        int64_t t = d->frame->pts != AV_NOPTS_VALUE ? d->frame->pts : time;
+        // keep order: queue behind anything already pending
+        if (d->npending || !emit_frame(d, d->frame, t, 0)) {
+            if (d->npending < NPENDING) {
+                d->pending[d->npending] = av_frame_clone(d->frame);
+                d->pending_time[d->npending++] = t;
+            } else {
+                LOG("[movie] output queue full, dropping frame\n");
+            }
+        }
+        n_frames++;
+        produced = true;
+    }
+    return produced;
+}
+
 static void dec_send_input(Cpu *c) {
     Decoder *d = self_state(c);
     n_send++;
@@ -646,21 +678,7 @@ static void dec_send_input(Cpu *c) {
         avcodec_send_packet(d->ctx, d->pkt);
     }
     if (flags & MOVIE_EOS) avcodec_send_packet(d->ctx, NULL);
-    bool produced = false;
-    while (avcodec_receive_frame(d->ctx, d->frame) == 0) {
-        int64_t t = d->frame->pts != AV_NOPTS_VALUE ? d->frame->pts : time;
-        // keep order: queue behind anything already pending
-        if (d->npending || !emit_frame(d, d->frame, t, 0)) {
-            if (d->npending < NPENDING) {
-                d->pending[d->npending] = av_frame_clone(d->frame);
-                d->pending_time[d->npending++] = t;
-            } else {
-                LOG("[movie] output queue full, dropping frame\n");
-            }
-        }
-        n_frames++;
-        produced = true;
-    }
+    bool produced = collect_frames(d, time);
     if (flags & MOVIE_EOS) { d->eos_pending = true; d->eos_time = time; }
     produced |= flush_pending(d);
     if (idx >= 0 && idx < NIN) d->in_busy[idx] = false;
@@ -680,17 +698,49 @@ static void dec_send_input(Cpu *c) {
             last = now;
         }
     }
+    // the CMoviePlayer feeding a video decoder (video_due): sent from NMovie's video decoder (0x700032fe9c, returning
+    // to 0x700032fef0), which CMoviePlayer::PumpExtractor calls with the player in x19 - saved by that function at its
+    // sp + 0x38
+    if (d->video && !d->player && c->x[30] == MAIN_BASE + 0x32fef0) {
+        uint64_t mp = LD64(c->sp + 0x38);
+        if (mp >= GUEST_LO && mp < GUEST_HI && !(mp & 7)) d->player = mp;
+    }
     pthread_mutex_unlock(&d->lock);
     dec_signal(c, d, 0);
     if (produced) dec_signal(c, d, 1);
     c->x[0] = 0;
 }
 
+// A video frame goes to the game when its player's time reaches it (issue #33: the title screen's movie moved 15 times
+// a second). CMoviePlayer::ContinuePlaying (0x7000326ac8) adds the frame's dt to its time (+0x58), feeds the decoder
+// every sample whose time is due by its read-ahead (+0x48, 0.1 s) - by the sample's presentation time, and the movies
+// have B-frames: in decode order each P-frame comes four frames early, so it was fed with the three B-frames before it,
+// four packets every fourth frame - then takes every frame the decoder has ready and shows the last. The console's
+// decoder takes its time; FFmpeg here had the four ready at once, so three of every four frames weren't seen. Now a
+// frame is ready when it's due: the player's time plus half a frame (the game's own presentation epsilon, at most its
+// +0x60) - in the player's own timebase, loops and seeks included. The player is known from the send's caller
+// (dec_send_input); until then, and while it isn't playing (+0x38 state 3: preloading, loading), as they come.
+// LARECOMP_MOVIE_PACING=0: as they come.
+static bool video_due(Decoder *d, int64_t t) {
+    static int on = -1;
+    if (on < 0) on = !(getenv("LARECOMP_MOVIE_PACING") && !atoi(getenv("LARECOMP_MOVIE_PACING")));
+    uint64_t p = d->player;
+    if (!on || !p || LD32(p + 0x38) != 3) return true;
+    int64_t now = (int64_t)LD64(p + 0x58), cap = (int64_t)LD64(p + 0x60), eps = g_movie_dt / 2;
+    if (cap > 0 && cap < eps) eps = cap;
+    return t <= now + eps;
+}
+
 static void dec_acquire_output(Cpu *c) {
     Decoder *d = self_state(c);
     n_acq_out++;
     pthread_mutex_lock(&d->lock);
-    if (!d->nready) { pthread_mutex_unlock(&d->lock); c->x[0] = 1; return; }
+    if (d->video && !d->nready && d->ctx && !d->stopped) collect_frames(d, 0);  // (finished since the last send)
+    if (!d->nready || (d->video && !(d->ready[0].flags & MOVIE_EOS) && !video_due(d, d->ready[0].time))) {
+        pthread_mutex_unlock(&d->lock);
+        c->x[0] = 1;
+        return;
+    }
     OutReady r = d->ready[0];
     memmove(d->ready, d->ready + 1, --d->nready * sizeof *d->ready);
     int remaining = d->nready;

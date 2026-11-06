@@ -147,7 +147,13 @@ unsigned rt_frame_step(Cpu *c) {
     return r;
 }
 
-void rt_movie_dt(Cpu *c) {  // (debug, LARECOMP_TICK_LOG) the time step the movies advance by
+void rt_movie_dt(Cpu *c) {  // the time step the movies advance by: their clock (runtime/hle/movie.c); LARECOMP_TICK_LOG
+    {
+        float step;
+        memcpy(&step, &c->v[0], 4);
+        extern void movie_clock_advance(float dt);
+        movie_clock_advance(step);
+    }
     static long from = -2, left;
     if (from == -2) {
         const char *e = getenv("LARECOMP_TICK_LOG");
