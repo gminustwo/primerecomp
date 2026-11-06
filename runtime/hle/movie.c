@@ -401,6 +401,7 @@ typedef struct {
     int64_t eos_time;
     bool stopped;  // Stop / destroyed: no more events (see dec_stop)
     uint64_t player;  // the CMoviePlayer feeding it (a video decoder: dec_send_input), 0 = not known
+    int next_out;     // the output buffer after the last one used (emit_frame: round the ring)
     pthread_mutex_t lock;
 } Decoder;
 
@@ -582,10 +583,21 @@ static void dec_get_input_buffer(Cpu *c) {
 }
 
 // Copy a decoded frame into an output slot; caller holds the lock.
+// An output buffer for the next frame: the next free one after the last used, round the ring. The game takes a frame by
+// its buffer (GetOutputBuffer: our memory, not a copy) and releases it in the same frame, but the picture is drawn from
+// that memory later (the frame's GPU work runs behind). Filled again first (the lowest free one: every 3 to 5 frames),
+// the buffer held a frame 3 or 4 ahead by then: a fifth of the title and menu movies' frames shown out of order, a
+// flicker (issue #33); round the ring, a buffer is used again 6 frames on. LARECOMP_MOVIE_SLOTS=lowest: the old way.
 static bool emit_frame(Decoder *d, AVFrame *f, int64_t time, uint32_t flags) {
+    static int lowest = -1;
+    if (lowest < 0) lowest = getenv("LARECOMP_MOVIE_SLOTS") && !strcmp(getenv("LARECOMP_MOVIE_SLOTS"), "lowest");
     int slot = -1;
-    for (int i = 0; i < NOUT; i++) if (!d->out_busy[i]) { slot = i; break; }
+    for (int k = 0; k < NOUT; k++) {
+        int i = lowest ? k : (d->next_out + k) % NOUT;
+        if (!d->out_busy[i]) { slot = i; break; }
+    }
     if (slot < 0) return false;
+    d->next_out = (slot + 1) % NOUT;
     uint8_t *o = d->out_mem[slot];
     uint32_t size = 0;
     if (flags & MOVIE_EOS) {
