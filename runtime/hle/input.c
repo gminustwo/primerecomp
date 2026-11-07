@@ -172,6 +172,9 @@ SDL_Gamepad *input_gamepad(void) { return host_test ? NULL : pad; }  // (binding
 // Switch controller - and X / Y are the ones marked so. In play they're their bindings (by position by default: the
 // bottom one jumps on every controller). As with the menu keys, a button keeps the meaning it was pressed with until
 // it's let go (A starting the game isn't also a jump). Nintendo / Xbox: the bindings everywhere, as before.
+// The game's paused messages (an item's "acquired" text: game.c game_message_screen) are play's: their icons show the
+// buttons for play (glyphs.c; issue #52), so there the face buttons are their bindings - but the one labelled A
+// confirms as in every menu, so both it and play's A (the right button) close a message.
 static uint8_t pad_menu[4];  // SDL_GAMEPAD_BUTTON_SOUTH, EAST, WEST, NORTH: pressed in a menu
 static uint32_t pad_was;
 
@@ -186,8 +189,11 @@ static void recompute_pad(void) {
     }
     uint32_t pressed = host & ~pad_was, menu_held = 0;
     pad_was = host;
+    extern bool game_message_screen(void);  // runtime/hle/game.c
+    bool message = pressed & 15 ? game_message_screen() : false;
     for (int f = 0; f < 4; f++) {
-        if (pressed >> f & 1) pad_menu[f] = g_settings.face_buttons == FACE_LABELS && !game_in_play();
+        if (pressed >> f & 1)
+            pad_menu[f] = g_settings.face_buttons == FACE_LABELS && !game_in_play() && (!message || bind_face_label(0, f) == BIND_A);
         if ((host >> f & 1) && pad_menu[f]) menu_held |= 1u << f;
     }
     uint64_t b = 0;
