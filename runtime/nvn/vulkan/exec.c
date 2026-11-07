@@ -4180,6 +4180,25 @@ static bool edge_quad(CmdRec *r) {
     return r->x[2] <= (uint64_t)most;
 }
 
+// A draw showing a movie - the title screen's Tallon IV, the pre-rendered clips. The game gets runtime/hle/movie.c's
+// frames as NV12 and draws them from its two planes (luma R8, chroma RG8 at half its size; fs 80551d65b3d83e83 on the
+// title screen), or has them decoded into a texture of its own (TexBackend.movie). Its quad covers the 16:9 screen
+// like the effects above, but stretched to the window's sides a 16:9 picture came out 1.3 times too wide at 21:9,
+// twice at 32:9 (a player's report, 2026-11-07: "pre-rendered clips stretch out to full screen"): it stays boxed, its
+// shape kept, the sides black.
+static bool shows_movie(Prog *pr) {
+    int ntex = pr->fi->ntex < 64 ? pr->fi->ntex : 64;
+    NvnTexture *luma = NULL, *chroma = NULL;
+    for (int i = 0; i < ntex; i++) {
+        NvnTexture *t = shader_texture_object(1, &pr->fi->tex[i]);
+        if (!t) continue;
+        if (t->backend && ((TexBackend *)t->backend)->movie) return true;
+        if (t->format == 0x1 && t->width >= 256) luma = t;     // (R8)
+        else if (t->format == 0xd) chroma = t;                 // (RG8)
+    }
+    return luma && chroma && chroma->width * 2 == luma->width && chroma->height * 2 == luma->height;
+}
+
 static bool edge_overlay(uint64_t fs_hash) {
     static const uint64_t known[] = {
         0xc8eaf61ff0b2c969ull,  // scan visor: the dimmed ring around the lens (a 178-vertex strip; ui_boxed: drawn over
@@ -4703,7 +4722,7 @@ static void draw_(CmdRec *r, bool indexed) {
     float edge_k = 1;
     if (boxed && !hud && hud_k == 1 && !pr->has_gs && !pr->gs_emul && pass_sx > pass_sy && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
         st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height &&
-        (edge_overlay(g_cur_fs_hash) || edge_quad(r))) {
+        (edge_overlay(g_cur_fs_hash) || edge_quad(r)) && !shows_movie(pr)) {
         ShaderKey vk2 = vkey;
         vk2.x_mode |= 2;
         Prog *p2 = get_program(st.program, &vk2, &fkey, cls0);
