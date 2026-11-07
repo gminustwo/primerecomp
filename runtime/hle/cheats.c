@@ -341,11 +341,6 @@ void cheats_frame(Cpu *c) {
     uint64_t gs = game_state(), ps = player_state();
     if (!gs || !ps) return;
     if (g_items_seen) items_frame(c, ps, game_in_play());
-    {   // (Patriot sounds: a save loaded, a missile fired - before the missiles are filled up below)
-        extern void suit_sounds_frame(int missiles, int capacity, bool in_play);
-        const int32_t *it = (const int32_t *)(uintptr_t)(ps + 0x2c);
-        suit_sounds_frame(it[2 * ITEM_MISSILES], it[2 * ITEM_MISSILES + 1], game_in_play());
-    }
     if (!game_in_play()) return;
     g_items_seen = true;
     debug_damage(c, ps);
@@ -369,9 +364,5 @@ void cheats_frame(Cpu *c) {
     }
     if (g_settings.inf_missiles) refill(ps, ITEM_MISSILES);
     if (g_settings.inf_power_bombs) refill(ps, ITEM_POWER_BOMBS);
-    {
-        extern void suit_sounds_missiles_now(int missiles);
-        suit_sounds_missiles_now(((const int32_t *)(uintptr_t)(ps + 0x2c))[2 * ITEM_MISSILES]);
-    }
     hint_frame(gs);
 }

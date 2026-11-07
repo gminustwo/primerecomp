@@ -5,13 +5,8 @@
 
 #include "texmods.h"
 
-// A color style other than the game's own is chosen, or the player's picture is to go on the suit
+// The player's own colors are chosen (Custom)
 bool suitmods_on(void);
-// The picture: its file (suit_image.png in the data folder), whether it's there, and a PNG of the player's copied there
-// (false: not a PNG, or it couldn't be copied)
-const char *suitmods_image_path(void);
-bool suitmods_image_present(void);
-bool suitmods_import_image(const char *src);
 // Changes whenever the colors to draw do: a suit texture made for an older one is made again
 uint32_t suitmods_generation(void);
 // Could this texture be one of the suits (size and format; then its key decides): worth naming at upload

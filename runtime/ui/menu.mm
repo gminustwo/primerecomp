@@ -33,23 +33,6 @@ void controls_bindings_draw(float scale);  // controls_ui.mm
 static std::atomic<bool> g_open{false};
 static std::atomic<bool> g_text_busy{false};  // a text field / the on-screen keyboard has the keys (render thread: ui_text_busy)
 static std::atomic<bool> g_want_fullscreen_apply{false};
-// Gameplay tab "Choose image" (the suit's picture): the file dialog opens on the event thread (SDL wants dialogs on
-// the main thread); the chosen file is copied into place (runtime/nvn/vulkan/suitmods.c)
-static std::atomic<bool> g_want_suit_image_pick{false};
-extern "C" bool suitmods_import_image(const char *src);
-extern "C" bool suitmods_image_present(void);
-static void SDLCALL picked_suit_image(void *, const char *const *files, int) {
-    if (!files || !files[0]) return;  // (cancelled, or an error)
-    if (suitmods_import_image(files[0]) && g_settings.suit_image == SUIT_IMAGE_OFF) g_settings.suit_image = SUIT_IMAGE_HELMET;
-    settings_save();
-}
-// ... and Patriot's sounds (runtime/hle/suitsounds.c): which one the dialog is for (1 the save's, 2 the missile's)
-static std::atomic<int> g_want_sound_pick{0};
-extern "C" bool suit_sound_import(int slot, const char *src);
-extern "C" const char *suit_sound_file(int slot);
-static void SDLCALL picked_sound(void *slot, const char *const *files, int) {
-    if (files && files[0]) suit_sound_import((int)(intptr_t)slot, files[0]);
-}
 
 struct QEvent {
     enum { KEY, ANALOG, MOUSE_POS, MOUSE_BUTTON, WHEEL, TEXT } kind;
@@ -291,14 +274,6 @@ void menu_apply_window_requests(void *win) {
         text_input = want_text;
     }
     static bool first = true;
-    if (g_want_suit_image_pick.exchange(false)) {
-        static const SDL_DialogFileFilter png[] = {{"PNG image", "png"}};
-        SDL_ShowOpenFileDialog(picked_suit_image, NULL, w, png, 1, NULL, false);
-    }
-    if (int s = g_want_sound_pick.exchange(0)) {
-        static const SDL_DialogFileFilter snd[] = {{"Sound (MP3, OGG, WAV, FLAC, M4A)", "mp3;ogg;wav;flac;m4a"}};
-        SDL_ShowOpenFileDialog(picked_sound, (void *)(intptr_t)(s - 1), w, snd, 1, NULL, false);
-    }
     if (first || g_want_fullscreen_apply.exchange(false)) {
         first = false;
         SDL_SetWindowFullscreen(w, g_settings.fullscreen);
@@ -652,32 +627,15 @@ static void tab_gameplay(void) {
                "lets you skip only the ones you've seen before.");
     opt_section("Suit");
     {   // runtime/nvn/vulkan/suitmods.c
-        static const char *const styles[SUIT_STYLES] = {"Original", "Patriot", "Custom"};
+        static const char *const styles[SUIT_STYLES] = {"Original", "Custom"};
         static const char *const where =
             "\n\nEvery suit changes: Power, Varia, Gravity and Phazon. You see it on the pause screen's Samus "
             "(Inventory, X to look closer), in cutscenes and anywhere else she's shown. The visor, the suit's lights, "
             "the arm cannon in your view and the morph ball keep their colors.\n\nMade from your own game files as the "
             "suit loads: a change shows within a second.";
         char d[900];
-        snprintf(d, sizeof d, "Samus' suit in other colors. Original: the game's. Patriot: red armor, a white suit "
-                              "and a blue helmet with a white star. Custom: your own, below.%s", where);
+        snprintf(d, sizeof d, "Samus' suit in other colors. Original: the game's. Custom: your own, below.%s", where);
         opt_choice("Suit colors", &g_settings.suit_style, styles, SUIT_STYLES, SUIT_ORIGINAL, d, true);
-        if (g_settings.suit_style == SUIT_PATRIOT) {
-            static const char *const snd =
-                "Sound files of your own played with Patriot: one as a save is loaded (or a new game begins), one each "
-                "time Samus fires a missile (a Super Missile counts once). MP3, OGG, WAV, FLAC or M4A; at the game's "
-                "volume, over its own sound. Each file you pick is copied into PrimeRecomp's folder (patriot_load, "
-                "patriot_missile), so it stays if you move the original.";
-            opt_indent(1);
-            opt_toggle("Patriot sounds", &g_settings.suit_sounds, true, snd);
-            if (g_settings.suit_sounds) {
-                const char *f = suit_sound_file(0);
-                if (opt_action("Save loaded sound", f ? f : "None yet", snd, true)) g_want_sound_pick.store(1);
-                f = suit_sound_file(1);
-                if (opt_action("Missile sound", f ? f : "None yet", snd, true)) g_want_sound_pick.store(2);
-            }
-            opt_indent(-1);
-        }
         if (g_settings.suit_style == SUIT_CUSTOM) {
             opt_indent(1);
             snprintf(d, sizeof d, "The helmet's color: its shell, the brow over the visor and the bulbs at its "
@@ -689,26 +647,6 @@ static void tab_gameplay(void) {
             snprintf(d, sizeof d, "The rest of the suit: the gold arms and legs, the Varia Suit's shoulders, the "
                                   "Gravity Suit's purple, the Phazon Suit's dark body.%s", where);
             opt_choice("Body", &g_settings.suit_body, g_suit_color_names, N_SUIT_COLORS, SUIT_COLOR_WHITE, d, true);
-            opt_indent(-1);
-        }
-        static const char *const places[SUIT_IMAGE_PLACES] = {"Off", "Helmet", "Chest"};
-        static const char *const pic =
-            "Your own picture on Samus: on the helmet's brow above the visor (where Patriot's star goes) or on her chest, "
-            "opposite the suit's own emblem. A PNG of any size; its transparent parts let the suit show through, and the suit's shading "
-            "shows on it. With any suit colors, Original too.";
-        snprintf(d, sizeof d, "%s\n\nChoose the picture in the row below: it's copied into PrimeRecomp's folder as "
-                              "suit_image.png.%s", pic, where);
-        opt_choice("Image on the suit", &g_settings.suit_image, places, SUIT_IMAGE_PLACES, SUIT_IMAGE_OFF, d, true);
-        if (g_settings.suit_image != SUIT_IMAGE_OFF) {
-            opt_indent(1);
-            snprintf(d, sizeof d, "Pick a PNG file. It's copied into PrimeRecomp's folder as suit_image.png (choosing "
-                                  "another replaces it), so it stays if you move the original.\n\n%s", pic);
-            if (opt_action("Choose image", suitmods_image_present() ? "suit_image.png" : "None yet", d, true))
-                g_want_suit_image_pick.store(true);
-            snprintf(d, sizeof d, "How big the picture is; it keeps its shape. On the helmet 100%% fills the brow "
-                                  "above the visor, and a bigger one is cut at its edges.\n\n%s", pic);
-            opt_int("Image size", &g_settings.suit_image_size, SUIT_IMAGE_SIZE_MIN, SUIT_IMAGE_SIZE_MAX, 10, 100, "%d%%",
-                    d, NULL);
             opt_indent(-1);
         }
     }

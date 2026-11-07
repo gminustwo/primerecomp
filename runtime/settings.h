@@ -31,18 +31,15 @@ enum { N_HINT_WAITS = 33 };
 extern const int g_hint_waits[N_HINT_WAITS];
 int settings_hint_wait_index(int seconds);  // the offered wait nearest to it
 enum { HDR_PEAK_MIN = 400, HDR_PEAK_MAX = 4000, HDR_PAPER_MIN = 80, HDR_PAPER_MAX = 500 };  // (nits: Video tab "HDR")
-// Gameplay tab "Suit colors" (runtime/nvn/vulkan/suitmods.c): Samus' suit as the game made it, Patriot (red
-// armor, a white body, a blue helmet with a white star) or the player's own colors, from a palette
-enum { SUIT_ORIGINAL = 0, SUIT_PATRIOT = 1, SUIT_CUSTOM = 2, SUIT_STYLES };
+// Gameplay tab "Suit colors" (runtime/nvn/vulkan/suitmods.c): Samus' suit as the game made it or in the player's own
+// colors, from a palette
+enum { SUIT_ORIGINAL = 0, SUIT_CUSTOM = 1, SUIT_STYLES };
 enum { N_SUIT_COLORS = 20 };
-extern const char *const g_suit_style_names[SUIT_STYLES];   // "original", "patriot", "custom" (primerecomp.ini; "american" read as patriot)
+extern const char *const g_suit_style_names[SUIT_STYLES];   // "original", "custom" (primerecomp.ini; "patriot" and
+                                                             // "american", from branch suit-patriot-image: custom)
 extern const char *const g_suit_color_names[N_SUIT_COLORS];  // "Red", "Crimson", ... (the menu; lower case in the ini)
 extern const float g_suit_colors[N_SUIT_COLORS][3];       // sRGB, 0..1
 enum { SUIT_COLOR_RED = 0, SUIT_COLOR_BLUE = 10, SUIT_COLOR_WHITE = 15 };
-// The player's own picture on the suit (suit_image.png in the data folder): where it goes
-enum { SUIT_IMAGE_OFF = 0, SUIT_IMAGE_HELMET = 1, SUIT_IMAGE_CHEST = 2, SUIT_IMAGE_PLACES };
-extern const char *const g_suit_image_names[SUIT_IMAGE_PLACES];  // "off", "helmet", "chest" (primerecomp.ini)
-enum { SUIT_IMAGE_SIZE_MIN = 50, SUIT_IMAGE_SIZE_MAX = 160 };  // (percent)
 #define DEADZONE_MAX 0.30f  // (a stick's dead zone, 0..this: Controls tab)
 #define RUMBLE_STRENGTH_MAX 2.0f  // (rumble strength, 0..this = 200%: Audio tab)
 #define MOUSE_SENS_MIN 0.1f  // (mouse aim sensitivity range: Controls tab)
@@ -97,9 +94,6 @@ typedef struct {
     int suit_style;      // SUIT_*: Samus' suit's colors (runtime/nvn/vulkan/suitmods.c)
     int suit_helmet, suit_armor, suit_body;  // SUIT_CUSTOM: g_suit_colors indices for the helmet, the armor (chest,
                                               // shoulders) and the rest of the suit
-    int suit_image;      // SUIT_IMAGE_*: the player's picture on the helmet's brow (instead of the star) or the chest
-    int suit_image_size; // its size, percent (SUIT_IMAGE_SIZE_MIN..MAX; 100: 9.4% of the texture's width)
-    bool suit_sounds;    // Patriot: the player's sound files as a save loads and a missile fires (runtime/hle/suitsounds.c)
     int hint_seconds;    // Cheats: the game waits at most this long before a hint shows, and before it shows it again
                          // (0: the game's own waits; one of g_hint_waits; runtime/hle/cheats.c)
     bool hint_on_l3;     // Cheats: the left stick pressed in shows the next hint due at once (runtime/hle/cheats.c)

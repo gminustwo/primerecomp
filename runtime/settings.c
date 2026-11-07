@@ -49,15 +49,12 @@ Settings g_settings = {
     .wiimote = true,
     .wiimote_area = 0.5f,
     .wiimote_smooth = 0.3f,
-    .suit_helmet = SUIT_COLOR_BLUE,  // (Custom starts from Patriot's colors)
+    .suit_helmet = SUIT_COLOR_BLUE,  // (Custom starts from a blue helmet, red armor and a white body)
     .suit_armor = SUIT_COLOR_RED,
     .suit_body = SUIT_COLOR_WHITE,
-    .suit_image_size = 100,
-    .suit_sounds = true,
 };
 
-const char *const g_suit_style_names[SUIT_STYLES] = {"original", "patriot", "custom"};
-const char *const g_suit_image_names[SUIT_IMAGE_PLACES] = {"off", "helmet", "chest"};
+const char *const g_suit_style_names[SUIT_STYLES] = {"original", "custom"};
 const char *const g_suit_color_names[N_SUIT_COLORS] = {
     "Red", "Crimson", "Orange", "Gold", "Yellow", "Lime", "Green", "Teal", "Cyan", "Sky blue",
     "Blue", "Navy", "Purple", "Magenta", "Pink", "White", "Silver", "Graphite", "Black", "Brown"};
@@ -285,21 +282,12 @@ void settings_load(void) {
             g_settings.suit_style = SUIT_ORIGINAL;
             for (int i = 0; i < SUIT_STYLES; i++)
                 if (!strcmp(val, g_suit_style_names[i])) g_settings.suit_style = i;
-            if (!strcmp(val, "american")) g_settings.suit_style = SUIT_PATRIOT;  // (its first name, 2026-11-07)
+            // (Patriot, "american" its first day: on branch suit-patriot-image - the player's own colors instead)
+            if (!strcmp(val, "patriot") || !strcmp(val, "american")) g_settings.suit_style = SUIT_CUSTOM;
         }
         else if (!strcmp(key, "suit_helmet")) g_settings.suit_helmet = suit_color_index(val, SUIT_COLOR_BLUE);
         else if (!strcmp(key, "suit_armor")) g_settings.suit_armor = suit_color_index(val, SUIT_COLOR_RED);
         else if (!strcmp(key, "suit_body")) g_settings.suit_body = suit_color_index(val, SUIT_COLOR_WHITE);
-        else if (!strcmp(key, "patriot_sounds")) g_settings.suit_sounds = atoi(val) != 0;
-        else if (!strcmp(key, "suit_image")) {  // (anything else: off)
-            g_settings.suit_image = SUIT_IMAGE_OFF;
-            for (int i = 0; i < SUIT_IMAGE_PLACES; i++)
-                if (!strcmp(val, g_suit_image_names[i])) g_settings.suit_image = i;
-        }
-        else if (!strcmp(key, "suit_image_size")) {
-            int v = atoi(val);
-            g_settings.suit_image_size = v < SUIT_IMAGE_SIZE_MIN ? SUIT_IMAGE_SIZE_MIN : v > SUIT_IMAGE_SIZE_MAX ? SUIT_IMAGE_SIZE_MAX : v;
-        }
         else if (!strcmp(key, "language")) {  // ("auto" or one of the game's codes; anything else: auto)
             g_settings.language = LANG_AUTO;
             if (!strcmp(val, "zh-TW")) strcpy(val, "zh-Hant");  // (an older version's Traditional Chinese)
@@ -409,9 +397,6 @@ static void write_settings(void *o) {
         }
         put(o, "suit_colors = %s\nsuit_helmet = %s\nsuit_armor = %s\nsuit_body = %s\n", g_suit_style_names[st], names[0],
             names[1], names[2]);
-        int im = g_settings.suit_image >= 0 && g_settings.suit_image < SUIT_IMAGE_PLACES ? g_settings.suit_image : SUIT_IMAGE_OFF;
-        put(o, "suit_image = %s\nsuit_image_size = %d\npatriot_sounds = %d\n", g_suit_image_names[im],
-            g_settings.suit_image_size, g_settings.suit_sounds);
     }
     put(o, "menu_tip_seen = %d\n", g_settings.menu_tip_seen);
     put(o, "check_updates = %d\n", g_settings.check_updates);
