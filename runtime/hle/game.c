@@ -283,7 +283,53 @@ static void rt_fluid_fx(Cpu *c) {
 static GuestFn g_fp_think;
 static void rt_fp_think(Cpu *c);
 
+// Shots in water at 90 and 120 fps. CGameProjectileMP1::UpdateProjectileMovement(dt) moves a projectile - Samus' beams
+// and missiles, enemies' shots - by advancing its weapon (CProjectileWeapon::Update, a virtual call: 0x7001018ad8) by
+// dt, or while it's in water (+0x3f8 bit 2) by 37.5 * dt * dt: Metroid Prime's slowdown under water, 0.625 * dt at
+// the 1/60 s step it was made for. At 1/120 that's 0.3125 * dt - half the speed again - and at 1/90 0.42 * dt, so
+// shots crawled under water (a player's report, 2026-11-07: "beam shots / enemy shots travelled incredibly slowly").
+// That call gets 37.5 * dt / 60 instead: 0.625 * dt at every rate. At 60 it's left alone (the game's own).
+// (debug) LARECOMP_SHOT_LOG=1: each shot's position and the game time, as it moves ("[shot]"); 2: every shot moves as
+// in water (the speed checked at any rate without water); 3: as 2 with the game's own 37.5 * dt * dt.
+static float ldf(uint64_t a) { float f; memcpy(&f, (const void *)(uintptr_t)a, 4); return f; }
+static GuestFn g_weapon_update;
+static void rt_weapon_update(Cpu *c) {
+    static int dbg = -1;
+    if (dbg < 0) dbg = getenv("LARECOMP_SHOT_LOG") ? atoi(getenv("LARECOMP_SHOT_LOG")) : 0;
+    uint64_t proj = c->x[20];
+    bool moving = c->x[30] == MAIN_BASE + 0x1018adc && GUEST_PTR_OK(proj);  // (from UpdateProjectileMovement)
+    if (moving && ((LD8(proj + 0x3f8) & 4) || dbg >= 2) && (rt_sim_step_bits(0) != 0x3c888889u || dbg >= 2)) {
+        float dt;
+        uint32_t b = (uint32_t)c->v[8];  // (its dt, kept in s8 across the call)
+        memcpy(&dt, &b, 4);
+        double use = (double)(dbg == 3 ? 37.5f * dt * dt : 37.5f * dt / 60.0f);
+        uint64_t u;
+        memcpy(&u, &use, 8);
+        c->v[0] = (__uint128_t)u;
+    }
+    g_weapon_update(c);
+    static int nlog;
+    if (dbg && moving && nlog < 400) {
+        nlog++;
+        Cpu *saved = malloc(sizeof *saved);
+        *saved = *c;
+        c->x[0] = proj;
+        guest_call(c, guest_sym("_ZNK9CActorMP112GetTransformEv"));
+        uint64_t m = c->x[0];
+        LOG("[shot] %llx t %.4f s at %.3f %.3f %.3f water %d\n", (unsigned long long)proj, game_sim_ns() / 1e9,
+            ldf(m + 0xc), ldf(m + 0x1c), ldf(m + 0x2c), (LD8(proj + 0x3f8) >> 2) & 1);
+        *c = *saved;
+        free(saved);
+    }
+}
+
 void game_hooks_init(void) {  // (each boot, after dispatch_init)
+    {
+        uint64_t w = guest_sym("_ZN17CProjectileWeapon6UpdateEd");
+        static bool whooked;
+        g_weapon_update = dispatch_lookup(w);
+        if (g_weapon_update && !whooked) hle_override(w, rt_weapon_update, "CProjectileWeapon::Update"), whooked = true;
+    }
     uint64_t a = guest_sym("_ZN13CGameIOWinMP110FrameBeginER18CArchitectureQueue");
     static bool hooked;
     g_frame_begin = dispatch_lookup(a);
