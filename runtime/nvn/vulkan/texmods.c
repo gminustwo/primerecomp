@@ -164,22 +164,18 @@ static uint32_t levels_for(uint32_t w, uint32_t h) {
     return n > 16 ? 16 : n;
 }
 
-// PNG: RGBA8, then each smaller level a 2x2 average of the one above
-static bool load_png(ModImage *m, const char *path) {
-    SDL_Surface *s = SDL_LoadPNG(path);
-    if (!s) { LOG("[mods] %s: %s\n", path, SDL_GetError()); return false; }
-    SDL_Surface *c = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ABGR8888);  // (R, G, B, A bytes)
-    SDL_DestroySurface(s);
-    if (!c) return false;
-    m->w = (uint32_t)c->w, m->h = (uint32_t)c->h, m->kind = MOD_RGBA8, m->levels = levels_for(m->w, m->h);
+// RGBA8 (R, G, B, A bytes, top row first; pitch bytes a row) as m's levels: it, then each smaller level a 2x2 average
+// of the one above (PNG files; runtime/nvn/vulkan/suitmods.c's recoloured suits)
+bool texmods_set_rgba(ModImage *m, const uint8_t *rgba, uint32_t w0, uint32_t h0, uint64_t pitch) {
+    m->w = w0, m->h = h0, m->kind = MOD_RGBA8, m->levels = levels_for(m->w, m->h);
     uint64_t total = 0;
     for (uint32_t l = 0, w = m->w, h = m->h; l < m->levels; l++) {
         m->off[l] = total, m->len[l] = (uint64_t)w * h * 4, total += m->len[l];
         w = w > 1 ? w / 2 : 1, h = h > 1 ? h / 2 : 1;
     }
     m->data = malloc(total);
-    for (uint32_t y = 0; y < m->h; y++) memcpy(m->data + (uint64_t)y * m->w * 4, (uint8_t *)c->pixels + (uint64_t)y * c->pitch, m->w * 4);
-    SDL_DestroySurface(c);
+    if (!m->data) return false;
+    for (uint32_t y = 0; y < m->h; y++) memcpy(m->data + (uint64_t)y * m->w * 4, rgba + (uint64_t)y * pitch, m->w * 4);
     for (uint32_t l = 1, pw = m->w, ph = m->h; l < m->levels; l++) {
         uint32_t w = pw > 1 ? pw / 2 : 1, h = ph > 1 ? ph / 2 : 1;
         const uint8_t *src = m->data + m->off[l - 1];
@@ -195,6 +191,18 @@ static bool load_png(ModImage *m, const char *path) {
         pw = w, ph = h;
     }
     return true;
+}
+
+// PNG: RGBA8 and its smaller levels (texmods_set_rgba)
+static bool load_png(ModImage *m, const char *path) {
+    SDL_Surface *s = SDL_LoadPNG(path);
+    if (!s) { LOG("[mods] %s: %s\n", path, SDL_GetError()); return false; }
+    SDL_Surface *c = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ABGR8888);  // (R, G, B, A bytes)
+    SDL_DestroySurface(s);
+    if (!c) return false;
+    bool ok = texmods_set_rgba(m, (const uint8_t *)c->pixels, (uint32_t)c->w, (uint32_t)c->h, (uint64_t)c->pitch);
+    SDL_DestroySurface(c);
+    return ok;
 }
 
 // DDS: its own levels, as they are

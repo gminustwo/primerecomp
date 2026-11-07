@@ -136,6 +136,8 @@ typedef struct TexBackend {
     // shaders' texel lookups), or one is loading (mod_img); mod_key: the name of the data last uploaded
     bool mod;
     uint64_t mod_key;
+    bool suit;            // one of Samus' suits (suitmods.c): its replacement is made here, for suit_gen's colours
+    uint32_t suit_gen;
     float mod_sx, mod_sy;
     struct ModImage *mod_img;
 } TexBackend;

@@ -49,7 +49,30 @@ Settings g_settings = {
     .wiimote = true,
     .wiimote_area = 0.5f,
     .wiimote_smooth = 0.3f,
+    .suit_helmet = SUIT_COLOUR_BLUE,  // (Custom starts from the American colours)
+    .suit_armour = SUIT_COLOUR_RED,
+    .suit_body = SUIT_COLOUR_WHITE,
+    .suit_star = true,
 };
+
+const char *const g_suit_style_names[SUIT_STYLES] = {"original", "american", "custom"};
+const char *const g_suit_colour_names[N_SUIT_COLOURS] = {
+    "Red", "Crimson", "Orange", "Gold", "Yellow", "Lime", "Green", "Teal", "Cyan", "Sky blue",
+    "Blue", "Navy", "Purple", "Magenta", "Pink", "White", "Silver", "Graphite", "Black", "Brown"};
+const float g_suit_colours[N_SUIT_COLOURS][3] = {
+    {0.70f, 0.06f, 0.08f}, {0.52f, 0.03f, 0.09f}, {0.95f, 0.42f, 0.06f}, {0.86f, 0.63f, 0.16f}, {0.95f, 0.86f, 0.18f},
+    {0.56f, 0.86f, 0.16f}, {0.10f, 0.55f, 0.20f}, {0.05f, 0.50f, 0.50f}, {0.16f, 0.76f, 0.86f}, {0.36f, 0.62f, 0.95f},
+    {0.08f, 0.18f, 0.62f}, {0.05f, 0.08f, 0.32f}, {0.42f, 0.16f, 0.66f}, {0.80f, 0.10f, 0.60f}, {0.95f, 0.52f, 0.72f},
+    {0.92f, 0.92f, 0.95f}, {0.70f, 0.72f, 0.76f}, {0.30f, 0.31f, 0.33f}, {0.06f, 0.06f, 0.07f}, {0.40f, 0.22f, 0.10f}};
+
+static int suit_colour_index(const char *v, int fallback) {  // (a name from the ini, any case)
+    for (int i = 0; i < N_SUIT_COLOURS; i++) {
+        const char *a = v, *b = g_suit_colour_names[i];
+        while (*a && *b && (*a | 0x20) == (*b | 0x20)) a++, b++;
+        if (!*a && !*b) return i;
+    }
+    return fallback;
+}
 
 const int g_hint_waits[N_HINT_WAITS] = {0, 1, 30, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600, 660, 720, 780, 840, 900,
                                         960, 1020, 1080, 1140, 1200, 1260, 1320, 1380, 1440, 1500, 1560, 1620, 1680, 1740, 1800};
@@ -256,6 +279,15 @@ void settings_load(void) {
             for (int i = 0; i < ICONS_COUNT; i++)
                 if (!strcmp(val, g_icons_names[i])) g_settings.button_icons = i;
         }
+        else if (!strcmp(key, "suit_colors")) {  // (anything else: original)
+            g_settings.suit_style = SUIT_ORIGINAL;
+            for (int i = 0; i < SUIT_STYLES; i++)
+                if (!strcmp(val, g_suit_style_names[i])) g_settings.suit_style = i;
+        }
+        else if (!strcmp(key, "suit_helmet")) g_settings.suit_helmet = suit_colour_index(val, SUIT_COLOUR_BLUE);
+        else if (!strcmp(key, "suit_armor")) g_settings.suit_armour = suit_colour_index(val, SUIT_COLOUR_RED);
+        else if (!strcmp(key, "suit_body")) g_settings.suit_body = suit_colour_index(val, SUIT_COLOUR_WHITE);
+        else if (!strcmp(key, "suit_star")) g_settings.suit_star = atoi(val) != 0;
         else if (!strcmp(key, "language")) {  // ("auto" or one of the game's codes; anything else: auto)
             g_settings.language = LANG_AUTO;
             if (!strcmp(val, "zh-TW")) strcpy(val, "zh-Hant");  // (an older version's Traditional Chinese)
@@ -355,6 +387,17 @@ static void write_settings(void *o) {
                                                          ? g_settings.button_icons : ICONS_AUTO]);
     put(o, "language = %s\n", g_language_codes[g_settings.language > LANG_AUTO && g_settings.language < N_LANGUAGES
                                                      ? g_settings.language : LANG_AUTO]);
+    {
+        int st = g_settings.suit_style >= 0 && g_settings.suit_style < SUIT_STYLES ? g_settings.suit_style : SUIT_ORIGINAL;
+        char names[3][24];
+        const int idx[3] = {g_settings.suit_helmet, g_settings.suit_armour, g_settings.suit_body};
+        for (int k = 0; k < 3; k++) {  // (lower case: "sky blue")
+            snprintf(names[k], sizeof names[k], "%s", g_suit_colour_names[idx[k] >= 0 && idx[k] < N_SUIT_COLOURS ? idx[k] : 0]);
+            for (char *c = names[k]; *c; c++) if (*c >= 'A' && *c <= 'Z') *c += 32;
+        }
+        put(o, "suit_colors = %s\nsuit_helmet = %s\nsuit_armor = %s\nsuit_body = %s\nsuit_star = %d\n", g_suit_style_names[st],
+            names[0], names[1], names[2], g_settings.suit_star);
+    }
     put(o, "menu_tip_seen = %d\n", g_settings.menu_tip_seen);
     put(o, "check_updates = %d\n", g_settings.check_updates);
     bind_settings_save(put, o);

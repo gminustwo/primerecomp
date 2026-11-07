@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 
 #include "vk.h"
+#include "suitmods.h"
 #include "texmods.h"
 #include "../../glyphs.h"
 #include "../astc.h"
@@ -1152,20 +1153,32 @@ static void mod_poll(NvnTexture *t, TexBackend *b) {  // a replacement loading: 
 // one in place for other data goes, and without one, Dump textures takes the game's. True: the replacement in place
 // is this data's - nothing to upload.
 static bool mod_upload(NvnTexture *t, TexBackend *b, const uint8_t *base, bool sparse) {
-    bool elig = !sparse && texmods_active() && mod_eligible(t, b);
-    uint64_t key = 0;
+    // (one of Samus' suits, Suit colours on: suitmods.c makes its replacement, for the colours of suit_gen)
+    bool elig = !sparse && (texmods_active() || suitmods_candidate(t->width, t->height, t->format)) && mod_eligible(t, b);
+    uint64_t key = 0, end = 0;
+    LevelLayout l0 = {0};
+    uint32_t sg = suitmods_generation();
+    bool suit_stale = b->suit && b->suit_gen != sg;
     if (elig) {
-        LevelLayout l0 = tegra_level(&t->layout, 0);
-        uint64_t end = t->layout.levels > 1 ? tegra_level(&t->layout, 1).offset : tegra_layer_size(&t->layout);
+        l0 = tegra_level(&t->layout, 0);
+        end = t->layout.levels > 1 ? tegra_level(&t->layout, 1).offset : tegra_layer_size(&t->layout);
         key = texmods_key(base + l0.offset, end - l0.offset, t->width, t->height, t->format);
-        if (b->mod && b->mod_key == key) return true;
+        if (b->mod && b->mod_key == key && !suit_stale) return true;
     }
-    if (b->mod_img && (!elig || b->mod_img->key != key)) texmods_release(b->mod_img), b->mod_img = NULL;
+    if (b->mod_img && (!elig || b->mod_img->key != key || suit_stale)) texmods_release(b->mod_img), b->mod_img = NULL;
     if (b->mod) mod_revert(t, b);
+    b->suit = false;
     if (!elig) return false;
     b->mod_key = key;
     if (texmods_has(key)) {
         if (!b->mod_img) b->mod_img = texmods_request(key);
+    } else if (suitmods_wants(key)) {
+        b->suit = true, b->suit_gen = sg;
+        const FormatInfo *fi = t->layout.fmt;
+        SuitSource s = {.level0 = base + l0.offset, .size = end - l0.offset, .w = t->width, .h = t->height, .wb = l0.wb,
+                        .hb = l0.hb, .bw = fi ? fi->bw : 0, .bh = fi ? fi->bh : 0, .block_height_log2 = l0.block_height_log2,
+                        .block_depth_log2 = l0.block_depth_log2, .srgb = vk_format_srgb(fmt_of(t->format).vf)};
+        if (!b->mod_img) b->mod_img = suitmods_request(key, &s);
     } else if (g_settings.dump_textures) {
         texmods_dump_request(b, key, t->width, t->height);
     }
@@ -1191,6 +1204,11 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
     if ((!t->addr && !sparse) || t->target == 10) return;
     if (b->mod_img) mod_poll(t, b);
     if (b->glyph && b->glyph_gen != glyph_generation()) b->uploaded = false;  // (a button icon to draw another way)
+    if (b->suit && b->suit_gen != suitmods_generation()) b->uploaded = false;  // (a suit in other colours: made again)
+    // (Suit colours turned on: a suit texture loaded before then is named and made at its next check)
+    if (!b->suit && !b->mod && b->uploaded && suitmods_candidate(t->width, t->height, t->format) &&
+        b->suit_gen != suitmods_generation())
+        b->suit_gen = suitmods_generation(), b->uploaded = false;
     const uint8_t *base = (const uint8_t *)(uintptr_t)t->addr;
     uint64_t frame = vk_frame_counter();
     if (b->uploaded && b->checked_frame == frame) return;
@@ -1304,7 +1322,9 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
     b->data_hash = h;
     b->uploaded = true;
 upload:
-    if ((b->mod || b->mod_img || texmods_active()) && mod_upload(t, b, base, sparse)) return;
+    if ((b->mod || b->mod_img || b->suit || texmods_active() || suitmods_candidate(t->width, t->height, t->format)) &&
+        mod_upload(t, b, base, sparse))
+        return;
     if (b->format != mf.vf && !b->astc_bw) return;  // unsupported format: nothing sensible to copy
     VkCommandBuffer cb = vk_upload_cmd();
     uint32_t layers = t->layout.layers ? t->layout.layers : 1;

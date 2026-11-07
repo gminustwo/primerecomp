@@ -25,6 +25,8 @@ uint64_t texmods_key(const uint8_t *level0, uint64_t n, uint32_t w, uint32_t h, 
 bool texmods_has(uint64_t key);
 ModImage *texmods_request(uint64_t key);  // loading starts (NULL: no such file); poll ->state, then texmods_release
 void texmods_release(ModImage *m);
+// RGBA8 pixels (R, G, B, A bytes, top row first) as m's levels, the smaller ones made here (false: out of memory)
+bool texmods_set_rgba(ModImage *m, const uint8_t *rgba, uint32_t w, uint32_t h, uint64_t pitch);
 // Dump textures: written at the start of the next presented frame (texmods_dump_frame), a few a frame
 void texmods_dump_request(TexBackend *b, uint64_t key, uint32_t w, uint32_t h);
 void texmods_dump_frame(void);
