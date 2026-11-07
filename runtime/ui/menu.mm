@@ -894,6 +894,21 @@ static void tab_cheats(void) {
 }
 
 extern "C" const char *rumble_output_name(void);  // runtime/hle/rumble.c
+extern "C" int audio_output_channels(int *device_ch);  // runtime/services/audio.c
+
+static const char *channels_name(int ch) {
+    switch (ch) {
+    case 1: return "mono";
+    case 2: return "stereo";
+    case 3: return "2.1";
+    case 4: return "quad";
+    case 5: return "4.1";
+    case 6: return "5.1";
+    case 7: return "6.1";
+    case 8: return "7.1";
+    }
+    return "unknown";
+}
 
 static void tab_audio(void) {
     opt_begin("##audio", ImGui::GetFontSize() / 34);
@@ -902,6 +917,23 @@ static void tab_audio(void) {
     if (opt_slider("Volume", &pct, 0, 200, 5, 100, "%g%%",
                    "The game's volume. 100% is the game's own level; above it, louder."))
         g_settings.volume = pct / 100.0f;
+    {   // (runtime/services/audio.c out_channels / speaker_layout)
+        const char *outs[SPEAKERS_COUNT] = {"Auto", "Stereo", "5.1 surround", "7.1 surround"};
+        int dev, out = audio_output_channels(&dev);  // (0 on the start screen: the game's sound isn't open yet)
+        char now[200] = "", desc[1000];
+        if (out && dev && dev != out)
+            snprintf(now, sizeof now, "\n\nPlaying now: %s, mixed to your %s output.", channels_name(out), channels_name(dev));
+        else if (out)
+            snprintf(now, sizeof now, "\n\nPlaying now: %s.", channels_name(out));
+        snprintf(desc, sizeof desc,
+                 "The game mixes its sound in 5.1 surround - front, centre, rear and subwoofer - as a Switch does for a "
+                 "TV or receiver with surround sound. Auto: as your sound output is set up (on Windows: Sound "
+                 "settings, the output's speaker setup) - stereo on headphones and most TVs and monitors. Stereo: the "
+                 "centre and rear folded into the two sides. 5.1 surround: the game's six channels as they are. 7.1 "
+                 "surround: the same on eight speakers, each rear channel shared by the side and back speakers (the "
+                 "game has no 7.1 mix of its own).%s", now);
+        opt_choice("Speakers", &g_settings.speakers, outs, SPEAKERS_COUNT, SPEAKERS_AUTO, desc);
+    }
     opt_toggle("Room reverb", &g_settings.reverb, true,
                "The game's echo in caves, ruins and big rooms.");
     // (LAS Recomp's "Movie audio" - Link's Awakening's opening and ending - isn't shown; primerecomp.ini movie_audio
