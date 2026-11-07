@@ -1002,6 +1002,8 @@ int ui_run(void) {
             }
             extern bool input_user_blocked(const SDL_Event *e);
             if (input_user_blocked(&e)) continue;  // scripted test runs: the real keyboard / mouse / pads do nothing
+            extern void input_pointer_event(const SDL_Event *e);
+            input_pointer_event(&e);  // (runtime/hle/input.c: the pointer hidden while a controller is played with)
             if (menu_handle_event(&e)) continue;
             input_handle_event(&e);
         } while (++nev < 256 && SDL_PollEvent(&e));
