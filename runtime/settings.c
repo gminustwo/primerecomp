@@ -49,25 +49,27 @@ Settings g_settings = {
     .wiimote = true,
     .wiimote_area = 0.5f,
     .wiimote_smooth = 0.3f,
-    .suit_helmet = SUIT_COLOUR_BLUE,  // (Custom starts from the American colours)
-    .suit_armour = SUIT_COLOUR_RED,
-    .suit_body = SUIT_COLOUR_WHITE,
+    .suit_helmet = SUIT_COLOR_BLUE,  // (Custom starts from Patriot's colors)
+    .suit_armor = SUIT_COLOR_RED,
+    .suit_body = SUIT_COLOR_WHITE,
     .suit_star = true,
+    .suit_image_size = 100,
 };
 
-const char *const g_suit_style_names[SUIT_STYLES] = {"original", "american", "custom"};
-const char *const g_suit_colour_names[N_SUIT_COLOURS] = {
+const char *const g_suit_style_names[SUIT_STYLES] = {"original", "patriot", "custom"};
+const char *const g_suit_image_names[SUIT_IMAGE_PLACES] = {"off", "helmet", "chest"};
+const char *const g_suit_color_names[N_SUIT_COLORS] = {
     "Red", "Crimson", "Orange", "Gold", "Yellow", "Lime", "Green", "Teal", "Cyan", "Sky blue",
     "Blue", "Navy", "Purple", "Magenta", "Pink", "White", "Silver", "Graphite", "Black", "Brown"};
-const float g_suit_colours[N_SUIT_COLOURS][3] = {
+const float g_suit_colors[N_SUIT_COLORS][3] = {
     {0.70f, 0.06f, 0.08f}, {0.52f, 0.03f, 0.09f}, {0.95f, 0.42f, 0.06f}, {0.86f, 0.63f, 0.16f}, {0.95f, 0.86f, 0.18f},
     {0.56f, 0.86f, 0.16f}, {0.10f, 0.55f, 0.20f}, {0.05f, 0.50f, 0.50f}, {0.16f, 0.76f, 0.86f}, {0.36f, 0.62f, 0.95f},
     {0.08f, 0.18f, 0.62f}, {0.05f, 0.08f, 0.32f}, {0.42f, 0.16f, 0.66f}, {0.80f, 0.10f, 0.60f}, {0.95f, 0.52f, 0.72f},
     {0.92f, 0.92f, 0.95f}, {0.70f, 0.72f, 0.76f}, {0.30f, 0.31f, 0.33f}, {0.06f, 0.06f, 0.07f}, {0.40f, 0.22f, 0.10f}};
 
-static int suit_colour_index(const char *v, int fallback) {  // (a name from the ini, any case)
-    for (int i = 0; i < N_SUIT_COLOURS; i++) {
-        const char *a = v, *b = g_suit_colour_names[i];
+static int suit_color_index(const char *v, int fallback) {  // (a name from the ini, any case)
+    for (int i = 0; i < N_SUIT_COLORS; i++) {
+        const char *a = v, *b = g_suit_color_names[i];
         while (*a && *b && (*a | 0x20) == (*b | 0x20)) a++, b++;
         if (!*a && !*b) return i;
     }
@@ -283,11 +285,21 @@ void settings_load(void) {
             g_settings.suit_style = SUIT_ORIGINAL;
             for (int i = 0; i < SUIT_STYLES; i++)
                 if (!strcmp(val, g_suit_style_names[i])) g_settings.suit_style = i;
+            if (!strcmp(val, "american")) g_settings.suit_style = SUIT_PATRIOT;  // (its first name, 2026-11-07)
         }
-        else if (!strcmp(key, "suit_helmet")) g_settings.suit_helmet = suit_colour_index(val, SUIT_COLOUR_BLUE);
-        else if (!strcmp(key, "suit_armor")) g_settings.suit_armour = suit_colour_index(val, SUIT_COLOUR_RED);
-        else if (!strcmp(key, "suit_body")) g_settings.suit_body = suit_colour_index(val, SUIT_COLOUR_WHITE);
+        else if (!strcmp(key, "suit_helmet")) g_settings.suit_helmet = suit_color_index(val, SUIT_COLOR_BLUE);
+        else if (!strcmp(key, "suit_armor")) g_settings.suit_armor = suit_color_index(val, SUIT_COLOR_RED);
+        else if (!strcmp(key, "suit_body")) g_settings.suit_body = suit_color_index(val, SUIT_COLOR_WHITE);
         else if (!strcmp(key, "suit_star")) g_settings.suit_star = atoi(val) != 0;
+        else if (!strcmp(key, "suit_image")) {  // (anything else: off)
+            g_settings.suit_image = SUIT_IMAGE_OFF;
+            for (int i = 0; i < SUIT_IMAGE_PLACES; i++)
+                if (!strcmp(val, g_suit_image_names[i])) g_settings.suit_image = i;
+        }
+        else if (!strcmp(key, "suit_image_size")) {
+            int v = atoi(val);
+            g_settings.suit_image_size = v < SUIT_IMAGE_SIZE_MIN ? SUIT_IMAGE_SIZE_MIN : v > SUIT_IMAGE_SIZE_MAX ? SUIT_IMAGE_SIZE_MAX : v;
+        }
         else if (!strcmp(key, "language")) {  // ("auto" or one of the game's codes; anything else: auto)
             g_settings.language = LANG_AUTO;
             if (!strcmp(val, "zh-TW")) strcpy(val, "zh-Hant");  // (an older version's Traditional Chinese)
@@ -390,13 +402,15 @@ static void write_settings(void *o) {
     {
         int st = g_settings.suit_style >= 0 && g_settings.suit_style < SUIT_STYLES ? g_settings.suit_style : SUIT_ORIGINAL;
         char names[3][24];
-        const int idx[3] = {g_settings.suit_helmet, g_settings.suit_armour, g_settings.suit_body};
+        const int idx[3] = {g_settings.suit_helmet, g_settings.suit_armor, g_settings.suit_body};
         for (int k = 0; k < 3; k++) {  // (lower case: "sky blue")
-            snprintf(names[k], sizeof names[k], "%s", g_suit_colour_names[idx[k] >= 0 && idx[k] < N_SUIT_COLOURS ? idx[k] : 0]);
+            snprintf(names[k], sizeof names[k], "%s", g_suit_color_names[idx[k] >= 0 && idx[k] < N_SUIT_COLORS ? idx[k] : 0]);
             for (char *c = names[k]; *c; c++) if (*c >= 'A' && *c <= 'Z') *c += 32;
         }
         put(o, "suit_colors = %s\nsuit_helmet = %s\nsuit_armor = %s\nsuit_body = %s\nsuit_star = %d\n", g_suit_style_names[st],
             names[0], names[1], names[2], g_settings.suit_star);
+        int im = g_settings.suit_image >= 0 && g_settings.suit_image < SUIT_IMAGE_PLACES ? g_settings.suit_image : SUIT_IMAGE_OFF;
+        put(o, "suit_image = %s\nsuit_image_size = %d\n", g_suit_image_names[im], g_settings.suit_image_size);
     }
     put(o, "menu_tip_seen = %d\n", g_settings.menu_tip_seen);
     put(o, "check_updates = %d\n", g_settings.check_updates);

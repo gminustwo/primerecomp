@@ -4,13 +4,13 @@
 // A texture's name is tex_<width>x<height>_<key>, key = texmods_key over its full-size level as the game stores it,
 // its size and its format: the same texture gets the same name in every run, on every machine. "Dump textures" writes
 // each texture the game loads to dump/textures/ under its name as a PNG - its pixels as stored (R, G, B, A; top row
-// first; the colour channels as the game's shaders read them: a normal map's X and Y in red and green) - the starting
+// first; the color channels as the game's shaders read them: a normal map's X and Y in red and green) - the starting
 // point for a replacement. A file of that name anywhere under mods/ (in folders of any names) is drawn instead:
 //   PNG, any size (the mipmaps are made here);
 //   DDS, BC1 / BC2 / BC3 / BC4 / BC5 / BC7 or RGBA8, with its own mipmaps - the small, fast choice for big packs.
 // Larger than the original is fine (4K over 2K: the game samples by coordinates, it just gets more detail). Loaded in
 // the background (texmods_request): the game's own texture shows until the replacement is ready. textures.c puts
-// the replacement in place of the texture's image (texmod_poll); colour textures are read in the colour space the
+// the replacement in place of the texture's image (texmod_poll); color textures are read in the color space the
 // game's texture had, whatever the file says.
 #include "texmods.h"
 
@@ -165,7 +165,7 @@ static uint32_t levels_for(uint32_t w, uint32_t h) {
 }
 
 // RGBA8 (R, G, B, A bytes, top row first; pitch bytes a row) as m's levels: it, then each smaller level a 2x2 average
-// of the one above (PNG files; runtime/nvn/vulkan/suitmods.c's recoloured suits)
+// of the one above (PNG files; runtime/nvn/vulkan/suitmods.c's recolored suits)
 bool texmods_set_rgba(ModImage *m, const uint8_t *rgba, uint32_t w0, uint32_t h0, uint64_t pitch) {
     m->w = w0, m->h = h0, m->kind = MOD_RGBA8, m->levels = levels_for(m->w, m->h);
     uint64_t total = 0;

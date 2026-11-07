@@ -279,7 +279,7 @@ void vk_collect_dead(void) {
 }
 
 // Textures first used for sampling (loaded ones, not render targets) suballocate from VMA's memory blocks even where the
-// driver prefers a dedicated allocation (NVIDIA, for any image that could be a colour attachment): those dedicated
+// driver prefers a dedicated allocation (NVIDIA, for any image that could be a color attachment): those dedicated
 // vkAllocateMemory calls took 14-42 ms each on the render thread while a room loaded (on a save's load, 91 ms of the
 // frame). The same memory type vmaCreateImage would take; an image that requires its own allocation still gets one.
 static VkResult create_sampled_image(const VkImageCreateInfo *ci, const VmaAllocationCreateInfo *ai, TexBackend *b) {
@@ -344,7 +344,7 @@ static void create_image(NvnTexture *t, TexBackend *b, bool render) {
     if (!format_supports(vf, need)) {
         bool astc = vf >= VK_FORMAT_ASTC_4x4_UNORM_BLOCK && vf <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK;
         const FormatInfo *fi = t->layout.fmt;
-        if (astc && fi && fi->bpb == 16) {  // desktop GPUs: decoded on the CPU into an RGBA8 image of the same colour space
+        if (astc && fi && fi->bpb == 16) {  // desktop GPUs: decoded on the CPU into an RGBA8 image of the same color space
             b->astc_bw = fi->bw;
             b->astc_bh = fi->bh;
             b->astc_srgb = t->format >= 0x87;
@@ -399,8 +399,8 @@ static void create_image(NvnTexture *t, TexBackend *b, bool render) {
         vkCmdClearDepthStencilImage(icb, b->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &rg);
         cleared = true;
     } else if (!(vf >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && vf <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK) && samples == 1) {
-        // Colour images too: a level or layer nothing writes (the cube faces a geometry shader picks, before that
-        // was emulated) read uninitialized memory - garbage colours over whole rooms. (Compressed formats can't
+        // Color images too: a level or layer nothing writes (the cube faces a geometry shader picks, before that
+        // was emulated) read uninitialized memory - garbage colors over whole rooms. (Compressed formats can't
         // be cleared; they are uploaded whole.)
         VkClearColorValue zero = {0};
         VkImageSubresourceRange rg = {VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
@@ -1075,7 +1075,7 @@ static bool mod_eligible(NvnTexture *t, TexBackend *b) {
 }
 
 // The replacement in the texture's place: a new image of the file's size and encoding, read in the game texture's
-// colour space (the old image goes once the GPU is done with it). Views take the image's own format (vk_view: it
+// color space (the old image goes once the GPU is done with it). Views take the image's own format (vk_view: it
 // differs from the game's), the shaders' texel lookups its size (mod_sx / mod_sy: exec.c texture_info).
 static bool mod_apply(NvnTexture *t, TexBackend *b, ModImage *m) {
     static const VkFormat lin[] = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_BC2_UNORM_BLOCK,
@@ -1153,7 +1153,7 @@ static void mod_poll(NvnTexture *t, TexBackend *b) {  // a replacement loading: 
 // one in place for other data goes, and without one, Dump textures takes the game's. True: the replacement in place
 // is this data's - nothing to upload.
 static bool mod_upload(NvnTexture *t, TexBackend *b, const uint8_t *base, bool sparse) {
-    // (one of Samus' suits, Suit colours on: suitmods.c makes its replacement, for the colours of suit_gen)
+    // (one of Samus' suits, Suit colors on: suitmods.c makes its replacement, for the colors of suit_gen)
     bool elig = !sparse && (texmods_active() || suitmods_candidate(t->width, t->height, t->format)) && mod_eligible(t, b);
     uint64_t key = 0, end = 0;
     LevelLayout l0 = {0};
@@ -1204,8 +1204,8 @@ static void upload_texture_(NvnTexture *t, TexBackend *b) {
     if ((!t->addr && !sparse) || t->target == 10) return;
     if (b->mod_img) mod_poll(t, b);
     if (b->glyph && b->glyph_gen != glyph_generation()) b->uploaded = false;  // (a button icon to draw another way)
-    if (b->suit && b->suit_gen != suitmods_generation()) b->uploaded = false;  // (a suit in other colours: made again)
-    // (Suit colours turned on: a suit texture loaded before then is named and made at its next check)
+    if (b->suit && b->suit_gen != suitmods_generation()) b->uploaded = false;  // (a suit in other colors: made again)
+    // (Suit colors turned on: a suit texture loaded before then is named and made at its next check)
     if (!b->suit && !b->mod && b->uploaded && suitmods_candidate(t->width, t->height, t->format) &&
         b->suit_gen != suitmods_generation())
         b->suit_gen = suitmods_generation(), b->uploaded = false;
