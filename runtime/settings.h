@@ -63,7 +63,8 @@ typedef struct {
     float deadzone[2];   // the left / right stick's dead zone, a share of full tilt (0..DEADZONE_MAX): runtime/hle/input.c
     bool movie_audio;
     bool show_fps;
-    int frame_rate;      // frames per second: 60 (the Switch's), 120 (the simulation too) or 30 (two 60 Hz steps a frame)
+    int frame_rate;      // frames per second: 60 (the Switch's), 90 or 120 (the simulation too) or 30 (two 60 Hz steps a
+                         // frame)
                          // (runtime/hle/game.c); LARECOMP_FPS overrides it
     bool vsync;          // no tearing (runtime/nvn/vulkan/device.c present_mode)
     bool preload_shaders;  // the start screen builds every shader recorded so far before PLAY (runtime/nvn/vulkan/exec.c
