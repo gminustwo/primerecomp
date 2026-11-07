@@ -114,16 +114,51 @@ bool input_mouse_take(float *dx, float *dy) {
 }
 void input_mouse_stick(int32_t rx, int32_t ry) { mouse_rx = rx, mouse_ry = ry; }
 
+// The pointer, while the mouse isn't captured (the game's menus and cutscenes, Mouse aim off): hidden once a controller
+// or the Wii Remote is what's played with, shown again as soon as the mouse moves a little or clicks - it sat in the
+// middle of the screen while playing with a controller (issue #51). Motion right after the capture changes is left
+// out (SDL may move the pointer back then).
+static _Atomic bool pad_in_use;  // a controller / the Wii Remote used since the mouse last moved
+static float pointer_moved;      // (pixels the mouse moved since then)
+static uint64_t capture_changed_ns;
+
 static bool scripted_run(void);
 void input_mouse_frame(SDL_Window *w) {  // (the event loop, each pass)
     extern bool menu_input_captured(void);
     bool want = g_settings.mouse_aim && game_in_play() && !menu_input_captured() &&
                 (SDL_GetWindowFlags(w) & SDL_WINDOW_INPUT_FOCUS) && !scripted_run();
+    bool hide = pad_in_use;
+    if (hide == SDL_CursorVisible()) {  // (checked each pass: the start screen shows it again)
+        if (hide) SDL_HideCursor(), pointer_moved = 0;
+        else SDL_ShowCursor();
+        static int n;
+        if (n++ < 6) LOG("[input] pointer %s\n", hide ? "hidden: a controller is in use" : "shown");
+    }
     if (want == mouse_captured) return;
     SDL_SetWindowRelativeMouseMode(w, want);
     mouse_captured = want;
     mouse_dx = mouse_dy = 0;
+    capture_changed_ns = SDL_GetTicksNS();
     LOG("[input] mouse %s\n", want ? "captured (mouse aim)" : "released");
+}
+
+static void pointer_used(float dx, float dy, bool click) {
+    if (!pad_in_use) return;
+    if (!click && SDL_GetTicksNS() - capture_changed_ns < 200000000ull) return;
+    pointer_moved += fabsf(dx) + fabsf(dy);
+    if (click || pointer_moved > 12) pad_in_use = false;
+}
+static void pad_used(void) { pad_in_use = true; }  // (also from the game's thread: the Wii Remote)
+
+// Every event, before the overlay menu takes its own (runtime/nvn/vulkan/device.c ui_run): what's being played with
+void input_pointer_event(const SDL_Event *e) {
+    switch (e->type) {
+    case SDL_EVENT_MOUSE_MOTION: pointer_used(e->motion.xrel, e->motion.yrel, false); break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: pointer_used(0, 0, true); break;
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: pad_used(); break;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION: if (abs(e->gaxis.value) > 20000) pad_used(); break;
+    default: break;
+    }
 }
 
 // A stick's dead zone (Controls tab; issue #14): the game's own is small - about 5% of full tilt - and it acts hard
@@ -706,7 +741,7 @@ static void fill_state(Cpu *c) {
     bool menu = menu_input_captured();  // the overlay menu / name entry has the controls (typing there isn't for the game)
     int32_t wm_lx, wm_ly, wm_rx, wm_ry;
     uint64_t wm_b = wiimote_buttons(&wm_lx, &wm_ly, &wm_rx, &wm_ry);
-    if (wm_b) glyphs_note_device(GLYPH_DEV_WII);
+    if (wm_b) glyphs_note_device(GLYPH_DEV_WII), pad_used();
     glyphs_frame();  // (the button icons: what they should show now)
     uint64_t b = menu ? script_buttons : key_buttons | pad_buttons | wm_b | script_buttons;
     int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx + wm_lx) + script_lx);
