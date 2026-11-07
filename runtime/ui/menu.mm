@@ -625,6 +625,34 @@ static void tab_gameplay(void) {
     opt_toggle("Skip any cutscene", &g_settings.skippable_cutscenes, false,
                "Every cutscene can be skipped with the game's own skip prompt, the first time too. The game normally "
                "lets you skip only the ones you've seen before.");
+    opt_section("Suit");
+    {   // runtime/nvn/vulkan/suitmods.c
+        static const char *const styles[SUIT_STYLES] = {"Original", "American", "Custom"};
+        static const char *const where =
+            "\n\nEvery suit changes: Power, Varia, Gravity and Phazon. You see it on the pause screen's Samus "
+            "(Inventory, X to look closer), in cutscenes and anywhere else she's shown. The visor, the suit's lights, "
+            "the arm cannon in your view and the morph ball keep their colours.\n\nMade from your own game files as the "
+            "suit loads: a change shows within a second.";
+        char d[900];
+        snprintf(d, sizeof d, "Samus' suit in other colours. Original: the game's. American: red armour, a white suit "
+                              "and a blue helmet with a white star. Custom: your own, below.%s", where);
+        opt_choice("Suit colours", &g_settings.suit_style, styles, SUIT_STYLES, SUIT_ORIGINAL, d, true);
+        if (g_settings.suit_style == SUIT_CUSTOM) {
+            opt_indent(1);
+            snprintf(d, sizeof d, "The helmet's colour: its shell, the brow over the visor and the bulbs at its "
+                                  "sides.%s", where);
+            opt_choice("Helmet", &g_settings.suit_helmet, g_suit_colour_names, N_SUIT_COLOURS, SUIT_COLOUR_BLUE, d, true);
+            snprintf(d, sizeof d, "The armour's colour: the Power Suit's chest and shoulders (maroon), the Varia and "
+                                  "Gravity Suits' chest, the Phazon Suit's light plates.%s", where);
+            opt_choice("Armour", &g_settings.suit_armour, g_suit_colour_names, N_SUIT_COLOURS, SUIT_COLOUR_RED, d, true);
+            snprintf(d, sizeof d, "The rest of the suit: the gold arms and legs, the Varia Suit's shoulders, the "
+                                  "Gravity Suit's purple, the Phazon Suit's dark body.%s", where);
+            opt_choice("Body", &g_settings.suit_body, g_suit_colour_names, N_SUIT_COLOURS, SUIT_COLOUR_WHITE, d, true);
+            snprintf(d, sizeof d, "A white star on the helmet's brow, above the visor.%s", where);
+            opt_toggle("Star on the helmet", &g_settings.suit_star, true, d);
+            opt_indent(-1);
+        }
+    }
     opt_end();
 }
 

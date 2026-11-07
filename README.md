@@ -51,6 +51,9 @@ PC, with Vulkan for the graphics. No emulator runs.
   following your bindings - in the game's own style (F1 menu, Controls tab: Button icons; Auto follows what you used
   last)
 - Any cutscene skippable
+- Suit colours (F1 menu, Gameplay tab): Samus' suit - all four of them - in an American style (red armour, a white
+  suit, a blue helmet with a white star) or your own colours for the helmet, the armour and the rest, recoloured from
+  your own game files as the suit loads; seen on the pause screen's Samus and in cutscenes
 - Cheats (F1 menu, Cheats tab): infinite energy, missiles and power bombs, a hint timer that cuts the game's
   15-40 minute wait for a hint down to as little as a second, and L3 (keyboard: H) to show the next hint at once;
   Samus' upgrades set as you like - missiles, power bombs, energy tanks, suit, beams, visors, morph ball upgrades,
