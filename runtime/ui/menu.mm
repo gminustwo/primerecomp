@@ -1110,7 +1110,9 @@ static void sticks_section(void) {
     }
     hint("A stick inside its dead zone counts as let go: one that rests a little off its middle - most do - no longer "
          "walks Samus or turns the view. Past it the stick counts up from zero, so full tilt is still full. 5% to start "
-         "with; raise it if the dot stays lit with the stick let go, lower it if small moves are lost.");
+         "with; raise it if the dot stays lit with the stick let go, lower it if small moves are lost. To look up "
+         "and down the other way with the stick, use the game's own setting: pause, Options -> Controls -> Invert "
+         "Y-Axis.");
 }
 
 static void tab_about(void) {
