@@ -52,7 +52,6 @@ Settings g_settings = {
     .suit_helmet = SUIT_COLOR_BLUE,  // (Custom starts from Patriot's colors)
     .suit_armor = SUIT_COLOR_RED,
     .suit_body = SUIT_COLOR_WHITE,
-    .suit_star = true,
     .suit_image_size = 100,
     .suit_sounds = true,
 };
@@ -291,7 +290,6 @@ void settings_load(void) {
         else if (!strcmp(key, "suit_helmet")) g_settings.suit_helmet = suit_color_index(val, SUIT_COLOR_BLUE);
         else if (!strcmp(key, "suit_armor")) g_settings.suit_armor = suit_color_index(val, SUIT_COLOR_RED);
         else if (!strcmp(key, "suit_body")) g_settings.suit_body = suit_color_index(val, SUIT_COLOR_WHITE);
-        else if (!strcmp(key, "suit_star")) g_settings.suit_star = atoi(val) != 0;
         else if (!strcmp(key, "patriot_sounds")) g_settings.suit_sounds = atoi(val) != 0;
         else if (!strcmp(key, "suit_image")) {  // (anything else: off)
             g_settings.suit_image = SUIT_IMAGE_OFF;
@@ -409,8 +407,8 @@ static void write_settings(void *o) {
             snprintf(names[k], sizeof names[k], "%s", g_suit_color_names[idx[k] >= 0 && idx[k] < N_SUIT_COLORS ? idx[k] : 0]);
             for (char *c = names[k]; *c; c++) if (*c >= 'A' && *c <= 'Z') *c += 32;
         }
-        put(o, "suit_colors = %s\nsuit_helmet = %s\nsuit_armor = %s\nsuit_body = %s\nsuit_star = %d\n", g_suit_style_names[st],
-            names[0], names[1], names[2], g_settings.suit_star);
+        put(o, "suit_colors = %s\nsuit_helmet = %s\nsuit_armor = %s\nsuit_body = %s\n", g_suit_style_names[st], names[0],
+            names[1], names[2]);
         int im = g_settings.suit_image >= 0 && g_settings.suit_image < SUIT_IMAGE_PLACES ? g_settings.suit_image : SUIT_IMAGE_OFF;
         put(o, "suit_image = %s\nsuit_image_size = %d\npatriot_sounds = %d\n", g_suit_image_names[im],
             g_settings.suit_image_size, g_settings.suit_sounds);

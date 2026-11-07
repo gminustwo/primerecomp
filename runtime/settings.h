@@ -97,7 +97,6 @@ typedef struct {
     int suit_style;      // SUIT_*: Samus' suit's colors (runtime/nvn/vulkan/suitmods.c)
     int suit_helmet, suit_armor, suit_body;  // SUIT_CUSTOM: g_suit_colors indices for the helmet, the armor (chest,
                                               // shoulders) and the rest of the suit
-    bool suit_star;      // SUIT_CUSTOM: a white star on the helmet's brow
     int suit_image;      // SUIT_IMAGE_*: the player's picture on the helmet's brow (instead of the star) or the chest
     int suit_image_size; // its size, percent (SUIT_IMAGE_SIZE_MIN..MAX; 100: 9.4% of the texture's width)
     bool suit_sounds;    // Patriot: the player's sound files as a save loads and a missile fires (runtime/hle/suitsounds.c)

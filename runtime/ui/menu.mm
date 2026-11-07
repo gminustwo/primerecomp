@@ -689,14 +689,11 @@ static void tab_gameplay(void) {
             snprintf(d, sizeof d, "The rest of the suit: the gold arms and legs, the Varia Suit's shoulders, the "
                                   "Gravity Suit's purple, the Phazon Suit's dark body.%s", where);
             opt_choice("Body", &g_settings.suit_body, g_suit_color_names, N_SUIT_COLORS, SUIT_COLOR_WHITE, d, true);
-            snprintf(d, sizeof d, "A white star on the helmet's brow, above the visor (a picture on the helmet, below, "
-                                  "takes its place).%s", where);
-            opt_toggle("Star on the helmet", &g_settings.suit_star, true, d);
             opt_indent(-1);
         }
         static const char *const places[SUIT_IMAGE_PLACES] = {"Off", "Helmet", "Chest"};
         static const char *const pic =
-            "Your own picture on Samus: on the helmet's brow above the visor (in the star's place) or on her chest, "
+            "Your own picture on Samus: on the helmet's brow above the visor (where Patriot's star goes) or on her chest, "
             "opposite the suit's own emblem. A PNG of any size; its transparent parts let the suit show through, and the suit's shading "
             "shows on it. With any suit colors, Original too.";
         snprintf(d, sizeof d, "%s\n\nChoose the picture in the row below: it's copied into PrimeRecomp's folder as "
