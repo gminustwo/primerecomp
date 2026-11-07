@@ -280,6 +280,32 @@ static void rt_fluid_fx(Cpu *c) {
     g_fluid_fx(c);
 }
 
+// ... and each water in the area once, as it thinks (CScriptWaterMP1::Think: a virtual call), with its box ("[water]"):
+// where to put Samus to test leaving water
+static GuestFn g_water_think;
+static void rt_water_think(Cpu *c) {
+    static uint64_t seen[64];
+    static int nseen;
+    uint64_t w = c->x[0];
+    bool known = false;
+    for (int i = 0; i < nseen; i++) known |= seen[i] == w;
+    if (!known && nseen < 64) {
+        seen[nseen++] = w;
+        static float *box;
+        if (!box) box = hle_alloc(32);
+        Cpu *saved = malloc(sizeof *saved);
+        *saved = *c;
+        c->x[0] = w;
+        c->x[8] = (uint64_t)(uintptr_t)box;
+        guest_call(c, guest_sym("_ZNK17CScriptTriggerMP118GetTriggerBoundsWREv"));
+        *c = *saved;
+        free(saved);
+        LOG("[water] %llx box %.2f %.2f %.2f .. %.2f %.2f %.2f\n", (unsigned long long)w, box[0], box[1], box[2], box[3],
+            box[4], box[5]);
+    }
+    g_water_think(c);
+}
+
 static GuestFn g_fp_think;
 static void rt_fp_think(Cpu *c);
 
@@ -343,6 +369,10 @@ void game_hooks_init(void) {  // (each boot, after dispatch_init)
         static bool fhooked;
         g_fluid_fx = dispatch_lookup(f);
         if (g_fluid_fx && !fhooked) hle_override(f, rt_fluid_fx, "CPlayerMP1::FluidFXThink"), fhooked = true;
+        uint64_t t = guest_sym("_ZN15CScriptWaterMP15ThinkEfR13CStateManager");
+        static bool whooked;
+        g_water_think = dispatch_lookup(t);
+        if (g_water_think && !whooked) hle_override(t, rt_water_think, "CScriptWaterMP1::Think"), whooked = true;
     }
     extern void cheats_hooks_init(void);  // runtime/hle/cheats.c
     cheats_hooks_init();
