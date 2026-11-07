@@ -447,14 +447,18 @@ static void tab_display(void) {
                "CPU), GPU the graphics card's work. The largest is what holds the frame rate back - a frame at 60 "
                "fps has 16.7 ms.");
     {
-        static const char *const rates[] = {"30", "60 (original)", "120"};
-        static const int values[] = {30, 60, 120};
-        int i = g_settings.frame_rate == 30 ? 0 : g_settings.frame_rate == 120 ? 2 : 1;
-        if (opt_choice("Frame rate", &i, rates, 3, 1,
-                       "Frames per second. 60 is the game's own rate. 120 also runs the game's simulation twice as "
-                       "often, so motion is smoother; game speed stays the same. 30: for slower machines and the "
-                       "Steam Deck - a steady 30 at full game speed.\n\nWhen your machine can't keep up, the game "
-                       "still runs at full speed (down to 20 fps), only less smoothly.", false))
+        static const char *const rates[] = {"30", "60 (original)", "90", "120"};
+        static const int values[] = {30, 60, 90, 120};
+        int i = 1;
+        for (int k = 0; k < 4; k++) if (g_settings.frame_rate == values[k]) i = k;
+        if (opt_choice("Frame rate", &i, rates, 4, 1,
+                       "Frames per second. 60 is the game's own rate. 90 and 120 also run the game's simulation 1.5 "
+                       "or 2 times as often, so motion is smoother; game speed stays the same. 90: for 90 Hz and "
+                       "180 Hz screens - a Steam Deck OLED's - and machines that can't hold 120. 30: for slower "
+                       "machines and the Steam Deck - a steady 30 at full game speed.\n\nPick one your screen's "
+                       "refresh rate is a multiple of (with V-Sync on, 90 on a 60 or 144 Hz screen judders).\n\nWhen "
+                       "your machine can't keep up, the game still runs at full speed (down to 20 fps), only less "
+                       "smoothly.", false))
             g_settings.frame_rate = values[i];
     }
     // (runtime/nvn/vulkan/device.c present_mode; the swapchain is remade on a change)
