@@ -33,6 +33,16 @@ void controls_bindings_draw(float scale);  // controls_ui.mm
 static std::atomic<bool> g_open{false};
 static std::atomic<bool> g_text_busy{false};  // a text field / the on-screen keyboard has the keys (render thread: ui_text_busy)
 static std::atomic<bool> g_want_fullscreen_apply{false};
+// Gameplay tab "Choose image" (the suit's picture): the file dialog opens on the event thread (SDL wants dialogs on
+// the main thread); the chosen file is copied into place (runtime/nvn/vulkan/suitmods.c)
+static std::atomic<bool> g_want_suit_image_pick{false};
+extern "C" bool suitmods_import_image(const char *src);
+extern "C" bool suitmods_image_present(void);
+static void SDLCALL picked_suit_image(void *, const char *const *files, int) {
+    if (!files || !files[0]) return;  // (cancelled, or an error)
+    if (suitmods_import_image(files[0]) && g_settings.suit_image == SUIT_IMAGE_OFF) g_settings.suit_image = SUIT_IMAGE_HELMET;
+    settings_save();
+}
 
 struct QEvent {
     enum { KEY, ANALOG, MOUSE_POS, MOUSE_BUTTON, WHEEL, TEXT } kind;
@@ -274,6 +284,10 @@ void menu_apply_window_requests(void *win) {
         text_input = want_text;
     }
     static bool first = true;
+    if (g_want_suit_image_pick.exchange(false)) {
+        static const SDL_DialogFileFilter png[] = {{"PNG image", "png"}};
+        SDL_ShowOpenFileDialog(picked_suit_image, NULL, w, png, 1, NULL, false);
+    }
     if (first || g_want_fullscreen_apply.exchange(false)) {
         first = false;
         SDL_SetWindowFullscreen(w, g_settings.fullscreen);
@@ -627,29 +641,50 @@ static void tab_gameplay(void) {
                "lets you skip only the ones you've seen before.");
     opt_section("Suit");
     {   // runtime/nvn/vulkan/suitmods.c
-        static const char *const styles[SUIT_STYLES] = {"Original", "American", "Custom"};
+        static const char *const styles[SUIT_STYLES] = {"Original", "Patriot", "Custom"};
         static const char *const where =
             "\n\nEvery suit changes: Power, Varia, Gravity and Phazon. You see it on the pause screen's Samus "
             "(Inventory, X to look closer), in cutscenes and anywhere else she's shown. The visor, the suit's lights, "
-            "the arm cannon in your view and the morph ball keep their colours.\n\nMade from your own game files as the "
+            "the arm cannon in your view and the morph ball keep their colors.\n\nMade from your own game files as the "
             "suit loads: a change shows within a second.";
         char d[900];
-        snprintf(d, sizeof d, "Samus' suit in other colours. Original: the game's. American: red armour, a white suit "
+        snprintf(d, sizeof d, "Samus' suit in other colors. Original: the game's. Patriot: red armor, a white suit "
                               "and a blue helmet with a white star. Custom: your own, below.%s", where);
-        opt_choice("Suit colours", &g_settings.suit_style, styles, SUIT_STYLES, SUIT_ORIGINAL, d, true);
+        opt_choice("Suit colors", &g_settings.suit_style, styles, SUIT_STYLES, SUIT_ORIGINAL, d, true);
         if (g_settings.suit_style == SUIT_CUSTOM) {
             opt_indent(1);
-            snprintf(d, sizeof d, "The helmet's colour: its shell, the brow over the visor and the bulbs at its "
+            snprintf(d, sizeof d, "The helmet's color: its shell, the brow over the visor and the bulbs at its "
                                   "sides.%s", where);
-            opt_choice("Helmet", &g_settings.suit_helmet, g_suit_colour_names, N_SUIT_COLOURS, SUIT_COLOUR_BLUE, d, true);
-            snprintf(d, sizeof d, "The armour's colour: the Power Suit's chest and shoulders (maroon), the Varia and "
+            opt_choice("Helmet", &g_settings.suit_helmet, g_suit_color_names, N_SUIT_COLORS, SUIT_COLOR_BLUE, d, true);
+            snprintf(d, sizeof d, "The armor's color: the Power Suit's chest and shoulders (maroon), the Varia and "
                                   "Gravity Suits' chest, the Phazon Suit's light plates.%s", where);
-            opt_choice("Armour", &g_settings.suit_armour, g_suit_colour_names, N_SUIT_COLOURS, SUIT_COLOUR_RED, d, true);
+            opt_choice("Armor", &g_settings.suit_armor, g_suit_color_names, N_SUIT_COLORS, SUIT_COLOR_RED, d, true);
             snprintf(d, sizeof d, "The rest of the suit: the gold arms and legs, the Varia Suit's shoulders, the "
                                   "Gravity Suit's purple, the Phazon Suit's dark body.%s", where);
-            opt_choice("Body", &g_settings.suit_body, g_suit_colour_names, N_SUIT_COLOURS, SUIT_COLOUR_WHITE, d, true);
-            snprintf(d, sizeof d, "A white star on the helmet's brow, above the visor.%s", where);
+            opt_choice("Body", &g_settings.suit_body, g_suit_color_names, N_SUIT_COLORS, SUIT_COLOR_WHITE, d, true);
+            snprintf(d, sizeof d, "A white star on the helmet's brow, above the visor (a picture on the helmet, below, "
+                                  "takes its place).%s", where);
             opt_toggle("Star on the helmet", &g_settings.suit_star, true, d);
+            opt_indent(-1);
+        }
+        static const char *const places[SUIT_IMAGE_PLACES] = {"Off", "Helmet", "Chest"};
+        static const char *const pic =
+            "Your own picture on Samus: on the helmet's brow above the visor (in the star's place) or on her chest, "
+            "opposite the suit's own emblem. A PNG of any size; its transparent parts let the suit show through, and the suit's shading "
+            "shows on it. With any suit colors, Original too.";
+        snprintf(d, sizeof d, "%s\n\nChoose the picture in the row below: it's copied into PrimeRecomp's folder as "
+                              "suit_image.png.%s", pic, where);
+        opt_choice("Image on the suit", &g_settings.suit_image, places, SUIT_IMAGE_PLACES, SUIT_IMAGE_OFF, d, true);
+        if (g_settings.suit_image != SUIT_IMAGE_OFF) {
+            opt_indent(1);
+            snprintf(d, sizeof d, "Pick a PNG file. It's copied into PrimeRecomp's folder as suit_image.png (choosing "
+                                  "another replaces it), so it stays if you move the original.\n\n%s", pic);
+            if (opt_action("Choose image", suitmods_image_present() ? "suit_image.png" : "None yet", d, true))
+                g_want_suit_image_pick.store(true);
+            snprintf(d, sizeof d, "How big the picture is; it keeps its shape. On the helmet 100%% fills the brow "
+                                  "above the visor, and a bigger one is cut at its edges.\n\n%s", pic);
+            opt_int("Image size", &g_settings.suit_image_size, SUIT_IMAGE_SIZE_MIN, SUIT_IMAGE_SIZE_MAX, 10, 100, "%d%%",
+                    d, NULL);
             opt_indent(-1);
         }
     }
@@ -958,10 +993,10 @@ static void tab_audio(void) {
         else if (out)
             snprintf(now, sizeof now, "\n\nPlaying now: %s.", channels_name(out));
         snprintf(desc, sizeof desc,
-                 "The game mixes its sound in 5.1 surround - front, centre, rear and subwoofer - as a Switch does for a "
+                 "The game mixes its sound in 5.1 surround - front, center, rear and subwoofer - as a Switch does for a "
                  "TV or receiver with surround sound. Auto: as your sound output is set up (on Windows: Sound "
                  "settings, the output's speaker setup) - stereo on headphones and most TVs and monitors. Stereo: the "
-                 "centre and rear folded into the two sides. 5.1 surround: the game's six channels as they are. 7.1 "
+                 "center and rear folded into the two sides. 5.1 surround: the game's six channels as they are. 7.1 "
                  "surround: the same on eight speakers, each rear channel shared by the side and back speakers (the "
                  "game has no 7.1 mix of its own).%s", now);
         opt_choice("Speakers", &g_settings.speakers, outs, SPEAKERS_COUNT, SPEAKERS_AUTO, desc);
@@ -1078,7 +1113,7 @@ static void wiimote_section(void) {
         if (wiimote_calibrate_middle()) settings_save();
     }
     if (calibrate_at) ImGui::Text("Point at the middle of the screen... %llu", (unsigned long long)((calibrate_at - now) / 1000 + 1));
-    else if (ImGui::Button("Centre the pointer")) calibrate_at = now + 3000;
+    else if (ImGui::Button("Center the pointer")) calibrate_at = now + 3000;
     float a = g_settings.wiimote_area;
     ImGui::SetNextItemWidth(220 * k);
     if (ImGui::SliderFloat("Pointer area", &a, 0.2f, 1.0f, "%.2f")) g_settings.wiimote_area = a;
@@ -1091,7 +1126,7 @@ static void wiimote_section(void) {
     hint("Aiming uses the game's own Pointer controls: pause, Options -> Controls -> Control Scheme -> Pointer (it "
          "asks to calibrate: lay the remote down for a moment). Laid out like Metroid Prime: Trilogy: A shoots, B "
          "jumps, Z locks on, C morphs, + fires a missile, the d-pad picks visors, hold - and push the stick to pick "
-         "a beam, 2 the map, 1 the pause menu, the Nunchuk's stick moves. Centre the pointer once (it remembers): point at the middle of "
+         "a beam, 2 the map, 1 the pause menu, the Nunchuk's stick moves. Center the pointer once (it remembers): point at the middle of "
          "your screen and press Home - or click the button, then point there. A smaller area needs less movement to "
          "reach the screen's edges; the game's own Aim Sensitivity sets how fast the view turns.");
 }
@@ -1268,7 +1303,7 @@ extern "C" int menu_keyboard_run(const char *initial, int max_len, char *out, in
 }
 
 // The tab bar and its pages, into the current window: the in-game menu, and the start screen's Settings (in_game
-// false: nothing of the game is loaded yet - the tabs that need it are greyed out; prelaunch: the start screen's own
+// false: nothing of the game is loaded yet - the tabs that need it are grayed out; prelaunch: the start screen's own
 // first tab, game files and fonts, drawn by launcher.mm).
 static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     // (id: the page; -1 = Prelaunch)
@@ -1278,7 +1313,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
     // (ids 2-4 were LAS Recomp's Save Editor, Randomizer and Warp, 5 and 6 its Cheats and Gameplay - now Metroid
     // Prime's; ids stay: test hooks)
-    // (Cosmetics, id 7: LAS Recomp's tunic / heart colours - nothing to recolour in Metroid Prime, so not shown)
+    // (Cosmetics, id 7: LAS Recomp's tunic / heart colors - nothing to recolor in Metroid Prime, so not shown)
     // (Mods, id 2: emulator mods and texture mods)
     static const char *names[] = {"Video", "Audio", "Mods", "", "", "Cheats", "Gameplay", "", "Controls", "Quit"};
     static const int order[] = {6, 8, 0, 1, 2, 5, 9};  // Gameplay, Controls, Video, Audio, Mods, Cheats, Quit
@@ -1287,7 +1322,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     int cur = 0;  // g_tab / g_tab_request hold ids
     for (int i = 0; i < ntabs; i++) if (tabs[i].id == g_tab) cur = i;
     if (!tabs[cur].on) cur = 0;
-    // L/R (or Q/E) switch tabs, skipping greyed-out ones (not while typing: Q / E are letters then, and the on-screen
+    // L/R (or Q/E) switch tabs, skipping grayed-out ones (not while typing: Q / E are letters then, and the on-screen
     // keyboard has the controller)
     if (g_tab_request_ext >= 0) { g_tab_request = g_tab_request_ext; g_tab_request_ext = -1; }
     bool any_popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), typing = ui_text_busy();
@@ -1317,7 +1352,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
             ImGui::BeginDisabled(!t.on);  // (out of the game: Save Editor, Warp, Cheats)
             // focus (controller / keyboard): the tab lights up a little with a cyan bar along its bottom, instead of
             // ImGui's outline (it sits 4 px outside the tab and the tab bar's clipping could cut its top off on macOS)
-            // (focused_tab: from the frame before - colours go in before the tab is drawn)
+            // (focused_tab: from the frame before - colors go in before the tab is drawn)
             bool lit = focused_tab == t.id && ImGui::GetCurrentContext()->NavCursorVisible;
             ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
             if (lit) {

@@ -51,9 +51,10 @@ PC, with Vulkan for the graphics. No emulator runs.
   following your bindings - in the game's own style (F1 menu, Controls tab: Button icons; Auto follows what you used
   last)
 - Any cutscene skippable
-- Suit colours (F1 menu, Gameplay tab): Samus' suit - all four of them - in an American style (red armour, a white
-  suit, a blue helmet with a white star) or your own colours for the helmet, the armour and the rest, recoloured from
-  your own game files as the suit loads; seen on the pause screen's Samus and in cutscenes
+- Suit colors (F1 menu, Gameplay tab): Samus' suit - all four of them - in a Patriot style (red armor, a white
+  suit, a blue helmet with a white star) or your own colors for the helmet, the armor and the rest, and a picture of
+  your own (a PNG) on her helmet or chest; recolored from your own game files as the suit loads, seen on the pause
+  screen's Samus and in cutscenes
 - Cheats (F1 menu, Cheats tab): infinite energy, missiles and power bombs, a hint timer that cuts the game's
   15-40 minute wait for a hint down to as little as a second, and L3 (keyboard: H) to show the next hint at once;
   Samus' upgrades set as you like - missiles, power bombs, energy tanks, suit, beams, visors, morph ball upgrades,
@@ -345,7 +346,7 @@ PrimeRecomp is a fork of [LAS Recomp](https://github.com/peiikai/LASRecomp) (MIT
 - **[@dvilelaf](https://github.com/dvilelaf)** - the System language setting (#15), packaging fix for the game code
   generator helper (#10), and the task forwarder fix for the level-transition crash (#34, issue #19)
 - **[@Tensorlong](https://github.com/Tensorlong)** - Metal half-precision fix for the white Link on M1 Macs (#18)
-- **[@mansarip](https://github.com/mansarip)** - support for unrecognised controllers through a simple mapping file (#26)
+- **[@mansarip](https://github.com/mansarip)** - support for unrecognized controllers through a simple mapping file (#26)
 - **[@we11adam](https://github.com/we11adam)** - shared fonts served per language instead of one Japanese font (#27),
   and the zh-Hans / zh-Hant codes for Chinese (#25)
 - **[@Maganra](https://github.com/Maganra)** - Linux page write tracking (userfaultfd + PAGEMAP_SCAN) for the Vulkan
