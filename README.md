@@ -397,6 +397,9 @@ screen.
   (SIL Open Font License 1.1, `third_party/fonts/Baloo2/OFL.txt`)
 - [bcdec](https://github.com/iOrange/bcdec) by Sergii Kudlai - decodes the game's button prompt icons to redraw them
   (MIT or Unlicense, `third_party/bcdec/bcdec.h`)
+- [dr_mp3, dr_wav, dr_flac](https://github.com/mackron/dr_libs) by David Reid and
+  [stb_vorbis](https://github.com/nothings/stb) by Sean Barrett - decode the Patriot sound files you choose (public
+  domain or MIT-0 / MIT, `third_party/dr_libs`, `third_party/stb_vorbis`)
 - [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) - the renderer (MIT)
 - [miniz](https://github.com/richgel999/miniz) by Rich Geldreich - its inflater, for the shaders in the game's
   materials (MIT, `third_party/miniz/LICENSE`)
@@ -424,7 +427,7 @@ not in this repository and not in release builds. You must provide your own lega
 PrimeRecomp's code - LAS Recomp's code and the changes made for Metroid Prime Remastered - is open source under the
 [MIT License](LICENSE) (copyright Peiikai, and the PrimeRecomp contributors for their changes). Third-party
 components keep their own licenses: Dear ImGui (MIT), Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT),
-bcdec (MIT), miniz (MIT), code ported from Ryujinx (MIT), EoWRecomp's game package reader (MIT), the Baloo 2 font (SIL OFL 1.1), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked
+bcdec (MIT), miniz (MIT), dr_libs (public domain or MIT-0), stb_vorbis (public domain or MIT), code ported from Ryujinx (MIT), EoWRecomp's game package reader (MIT), the Baloo 2 font (SIL OFL 1.1), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked
 dynamically), shaderc (Apache 2.0), the Zig compiler (MIT; its LLVM / Clang / LLD: Apache 2.0 with LLVM exceptions;
 its C library headers keep their own licenses) and the game code generator helper's bundled libraries listed above
 (Unicorn is under the GPL: the helper is a separate program the setup runs, and its sources are this repository plus

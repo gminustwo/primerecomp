@@ -296,7 +296,7 @@ void menu_apply_window_requests(void *win) {
         SDL_ShowOpenFileDialog(picked_suit_image, NULL, w, png, 1, NULL, false);
     }
     if (int s = g_want_sound_pick.exchange(0)) {
-        static const SDL_DialogFileFilter snd[] = {{"Sound (MP3, OGG, WAV, FLAC, M4A)", "mp3;ogg;wav;flac;m4a;opus;aac"}};
+        static const SDL_DialogFileFilter snd[] = {{"Sound (MP3, OGG, WAV, FLAC, M4A)", "mp3;ogg;wav;flac;m4a"}};
         SDL_ShowOpenFileDialog(picked_sound, (void *)(intptr_t)(s - 1), w, snd, 1, NULL, false);
     }
     if (first || g_want_fullscreen_apply.exchange(false)) {
