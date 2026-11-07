@@ -62,7 +62,7 @@ static const int16_t k_bulb[][2] = {
     {687, 1508}, {669, 1520}, {664, 1532}, {647, 1544}, {646, 1556}, {656, 1560}, {645, 1564}, {643, 1572},
     {657, 1576}, {665, 1596}, {683, 1620}, {700, 1632}, {744, 1648}, {752, 1660}, {765, 1664}, {818, 1664},
     {874, 1656}, {896, 1636}, {894, 1616}, {905, 1536}, {885, 1516}, {756, 1512}, {747, 1508}};
-// The star: on the brow - the piece over the visor that faces forward (k_brow: its flat edge along the visor at y 1276,
+// The star (Patriot only): on the brow - the piece over the visor that faces forward (k_brow: its flat edge along the visor at y 1276,
 // +y up) - one point toward the helmet's top, as big as the piece takes. (At first radius 64 on the shell above it,
 // where the dome curves away: "the star on the helmet needs to be larger".)
 #define STAR_X 1099.0f
@@ -126,14 +126,14 @@ bool suitmods_import_image(const char *src) {  // (the menu's file dialog, on wh
 
 bool suitmods_on(void) { return colors_on() || image_on(); }
 
-static void chosen(int idx[3], bool *star) {  // helmet, armor, body
-    if (g_settings.suit_style == SUIT_PATRIOT) {
-        idx[0] = SUIT_COLOR_BLUE, idx[1] = SUIT_COLOR_RED, idx[2] = SUIT_COLOR_WHITE, *star = true;
+static void chosen(int idx[3], bool *star) {  // helmet, armor, body; the star is Patriot's alone (no setting)
+    *star = g_settings.suit_style == SUIT_PATRIOT;
+    if (*star) {
+        idx[0] = SUIT_COLOR_BLUE, idx[1] = SUIT_COLOR_RED, idx[2] = SUIT_COLOR_WHITE;
         return;
     }
     const int v[3] = {g_settings.suit_helmet, g_settings.suit_armor, g_settings.suit_body};
     for (int k = 0; k < 3; k++) idx[k] = v[k] >= 0 && v[k] < N_SUIT_COLORS ? v[k] : 0;
-    *star = g_settings.suit_star;
 }
 
 static _Atomic uint32_t g_gen = 1;
