@@ -100,6 +100,7 @@ typedef struct {
     bool suit_star;      // SUIT_CUSTOM: a white star on the helmet's brow
     int suit_image;      // SUIT_IMAGE_*: the player's picture on the helmet's brow (instead of the star) or the chest
     int suit_image_size; // its size, percent (SUIT_IMAGE_SIZE_MIN..MAX; 100: 9.4% of the texture's width)
+    bool suit_sounds;    // Patriot: the player's sound files as a save loads and a missile fires (runtime/hle/suitsounds.c)
     int hint_seconds;    // Cheats: the game waits at most this long before a hint shows, and before it shows it again
                          // (0: the game's own waits; one of g_hint_waits; runtime/hle/cheats.c)
     bool hint_on_l3;     // Cheats: the left stick pressed in shows the next hint due at once (runtime/hle/cheats.c)

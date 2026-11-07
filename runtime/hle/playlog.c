@@ -162,13 +162,17 @@ static void state_line(const float *pos, const char *why) {
     g_last_ns = plat_now_ns();
 }
 
-// Items: picked up (a capacity up), or all of them when a save comes in (many at once)
+// Items: picked up (a capacity up), or all of them when a save comes in (many at once): that's a save loaded (or a new
+// game begun) - counted for runtime/hle/suitsounds.c
+static _Atomic int g_save_loads;
+int playlog_save_loads(void) { return g_save_loads; }
 static void items_frame(uint64_t ps) {
     const int32_t *it = (const int32_t *)(uintptr_t)(ps + 0x2c);
     int changed = 0;
     for (int i = 0; i < 41; i++)
         if (k_items[i] && g_caps_set && it[2 * i + 1] != g_caps[i]) changed++;
     if (!g_caps_set || changed > 4) {
+        g_save_loads++;
         char line[1024];
         int k = 0;
         for (int i = 0; i < 41 && k < (int)sizeof line - 40; i++)
