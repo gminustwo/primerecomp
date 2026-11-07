@@ -1,7 +1,7 @@
 // Patriot sounds (Gameplay tab, with Suit colors on Patriot): the player's own sound files played at moments of the
 // game - one as a save is loaded (or a new game begins), one as Samus fires a missile. Nothing ships: the files are
 // the player's, copied into the data folder by the menu's file pickers as patriot_load.<ext> and
-// patriot_missile.<ext> (any format FFmpeg reads: MP3, OGG, WAV, FLAC, M4A...).
+// patriot_missile.<ext> (MP3, WAV, FLAC and Ogg Vorbis by runtime/hle/audiodec.c; M4A / AAC by FFmpeg).
 //
 // The moments, read from the game's own state each frame (runtime/hle/cheats.c cheats_frame, at CStateManager::
 // BeginFrame - before the Infinite missiles cheat fills them up again): a save loaded is the play log's (all of
@@ -11,7 +11,7 @@
 // 0.35 s of each other are one).
 //
 // Played on a stream of their own on the default output (SDL mixes it with the game's), at the menu's volume, decoded
-// as they play (a thread each). A sound started again stops the one before it on its own slot. LARECOMP_NO_AUDIO: decoded
+// as they play (a thread each; audiodec.c's decoders, else FFmpeg - the one shipped has no MP3). A sound started again stops the one before it on its own slot. LARECOMP_NO_AUDIO: decoded
 // (and logged) but not played - the test runs stay quiet.
 #include <SDL3/SDL.h>
 #include <libavcodec/avcodec.h>
@@ -28,6 +28,81 @@ enum { SLOT_LOAD, SLOT_MISSILE, SLOTS };
 static const char *const k_slot_names[SLOTS] = {"load", "missile"};
 static const char *const k_exts[] = {"mp3", "ogg", "wav", "flac", "m4a", "opus", "aac"};
 #define N_EXTS ((int)(sizeof k_exts / sizeof *k_exts))
+
+// ------------------------------------------------------------------ decoding: audiodec.c's, else FFmpeg's
+typedef struct AudioDec AudioDec;
+AudioDec *audiodec_open(const char *path);
+int audiodec_channels(const AudioDec *d), audiodec_rate(const AudioDec *d);
+int audiodec_read(AudioDec *d, float *out, int frames);
+void audiodec_close(AudioDec *d);
+
+typedef struct {
+    AudioDec *ad;
+    AVFormatContext *fc;
+    AVCodecContext *cc;
+    AVPacket *pkt;
+    AVFrame *fr;
+    int si, nch, rate;
+    bool eof;
+    float *buf;
+    size_t cap;  // (floats)
+} Src;
+
+static void src_close(Src *s) {
+    audiodec_close(s->ad);
+    av_frame_free(&s->fr);
+    av_packet_free(&s->pkt);
+    avcodec_free_context(&s->cc);
+    if (s->fc) avformat_close_input(&s->fc);
+    free(s->buf);
+    memset(s, 0, sizeof *s);
+}
+
+static bool src_open(Src *s, const char *path) {
+    memset(s, 0, sizeof *s);
+    if ((s->ad = audiodec_open(path))) {
+        s->nch = audiodec_channels(s->ad), s->rate = audiodec_rate(s->ad);
+        return true;
+    }
+    const AVCodec *codec = NULL;
+    if (avformat_open_input(&s->fc, path, NULL, NULL) < 0 || avformat_find_stream_info(s->fc, NULL) < 0 ||
+        (s->si = av_find_best_stream(s->fc, AVMEDIA_TYPE_AUDIO, -1, -1, &codec, 0)) < 0 || !(s->cc = avcodec_alloc_context3(codec)) ||
+        avcodec_parameters_to_context(s->cc, s->fc->streams[s->si]->codecpar) < 0 || avcodec_open2(s->cc, codec, NULL) < 0) {
+        src_close(s);
+        return false;
+    }
+    s->pkt = av_packet_alloc(), s->fr = av_frame_alloc();
+    s->nch = s->cc->ch_layout.nb_channels > 0 ? s->cc->ch_layout.nb_channels : 2;
+    s->rate = s->cc->sample_rate > 0 ? s->cc->sample_rate : 44100;
+    return s->pkt && s->fr;
+}
+
+static float sample_at(const AVFrame *f, int ch, int i);
+// The next piece of sound (interleaved float, s->nch channels) in *out: its frames, 0 at the end
+static int src_next(Src *s, float **out) {
+    if (s->ad) {
+        if (!s->buf) s->buf = malloc((s->cap = (size_t)4096 * s->nch) * sizeof *s->buf);
+        *out = s->buf;
+        return s->buf ? audiodec_read(s->ad, s->buf, 4096) : 0;
+    }
+    for (;;) {
+        if (avcodec_receive_frame(s->cc, s->fr) == 0) {
+            int n = s->fr->nb_samples, fch = s->fr->ch_layout.nb_channels;
+            if ((size_t)n * s->nch > s->cap) s->buf = realloc(s->buf, (s->cap = (size_t)n * s->nch) * sizeof *s->buf);
+            for (int i = 0; i < n; i++)
+                for (int c = 0; c < s->nch; c++) s->buf[(size_t)i * s->nch + c] = c < fch ? sample_at(s->fr, c, i) : 0;
+            *out = s->buf;
+            return n;
+        }
+        if (s->eof) return 0;
+        if (av_read_frame(s->fc, s->pkt) < 0) {
+            avcodec_send_packet(s->cc, NULL), s->eof = true;  // (the decoder's last frames)
+            continue;
+        }
+        if (s->pkt->stream_index == s->si) avcodec_send_packet(s->cc, s->pkt);
+        av_packet_unref(s->pkt);
+    }
+}
 
 // ------------------------------------------------------------------ the files
 // The slot's file in the data folder (patriot_<slot>.<ext>), or NULL; (test) LARECOMP_PATRIOT_<LOAD|MISSILE>=<path>
@@ -57,11 +132,9 @@ const char *suit_sound_file(int slot) {  // (the menu: the file's name, or NULL)
 // extension kept, the slot's file in any other format removed
 bool suit_sound_import(int slot, const char *src) {
     if (slot < 0 || slot >= SLOTS) return false;
-    AVFormatContext *fc = NULL;  // (a file FFmpeg reads with a sound in it, or nothing changes)
-    bool audio = avformat_open_input(&fc, src, NULL, NULL) >= 0 && avformat_find_stream_info(fc, NULL) >= 0 &&
-                 av_find_best_stream(fc, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0) >= 0;
-    if (fc) avformat_close_input(&fc);
-    if (!audio) { LOG("[sound] %s has no sound this can play\n", src); return false; }
+    Src probe;  // (a file with a sound this plays, or nothing changes)
+    if (!src_open(&probe, src)) { LOG("[sound] %s has no sound this can play\n", src); return false; }
+    src_close(&probe);
     const char *dot = strrchr(src, '.');
     char ext[8] = "mp3";
     if (dot && strlen(dot + 1) < sizeof ext) {
@@ -110,54 +183,31 @@ static float sample_at(const AVFrame *f, int ch, int i) {
 static void *play_thread(void *arg) {
     Play *pl = arg;
     bool muted = getenv("LARECOMP_NO_AUDIO") && strcmp(getenv("LARECOMP_NO_AUDIO"), "0");
-    AVFormatContext *fc = NULL;
-    AVCodecContext *cc = NULL;
     SDL_AudioStream *st = NULL;
-    AVPacket *pkt = av_packet_alloc();
-    AVFrame *fr = av_frame_alloc();
-    float *buf = NULL;
-    size_t bufcap = 0;
     double seconds = 0;
-    const AVCodec *codec = NULL;
-    int si = -1;
-    if (avformat_open_input(&fc, pl->path, NULL, NULL) < 0 || avformat_find_stream_info(fc, NULL) < 0 ||
-        (si = av_find_best_stream(fc, AVMEDIA_TYPE_AUDIO, -1, -1, &codec, 0)) < 0 || !(cc = avcodec_alloc_context3(codec)) ||
-        avcodec_parameters_to_context(cc, fc->streams[si]->codecpar) < 0 || avcodec_open2(cc, codec, NULL) < 0) {
+    Src src;
+    if (!src_open(&src, pl->path)) {
         LOG("[sound] %s: can't play %s\n", k_slot_names[pl->slot], pl->path);
-        goto out;
+        free(pl);
+        return NULL;
     }
-    int nch = cc->ch_layout.nb_channels > 0 ? cc->ch_layout.nb_channels : 2, rate = cc->sample_rate > 0 ? cc->sample_rate : 44100;
     if (!muted) {
         if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) { LOG("[sound] no audio: %s\n", SDL_GetError()); goto out; }
-        SDL_AudioSpec spec = {SDL_AUDIO_F32, nch, rate};
+        SDL_AudioSpec spec = {SDL_AUDIO_F32, src.nch, src.rate};
         st = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
         if (!st) { LOG("[sound] can't open the output: %s\n", SDL_GetError()); goto out; }
         SDL_SetAudioStreamGain(st, g_settings.volume);
         SDL_ResumeAudioStreamDevice(st);
     }
-    LOG("[sound] %s: playing %s%s\n", k_slot_names[pl->slot], pl->path, muted ? " (muted: LARECOMP_NO_AUDIO)" : "");
-    bool eof = false;
-    while (g_slot_gen[pl->slot] == pl->gen) {
-        int r = eof ? AVERROR_EOF : av_read_frame(fc, pkt);
-        if (r < 0) {
-            if (!eof) avcodec_send_packet(cc, NULL), eof = true;  // (the decoder's last frames)
-        } else {
-            if (pkt->stream_index == si) avcodec_send_packet(cc, pkt);
-            av_packet_unref(pkt);
-        }
-        bool any = false;
-        while (avcodec_receive_frame(cc, fr) == 0) {
-            any = true;
-            int n = fr->nb_samples, fch = fr->ch_layout.nb_channels;
-            if ((size_t)n * nch > bufcap) buf = realloc(buf, (bufcap = (size_t)n * nch) * sizeof *buf);
-            for (int i = 0; i < n; i++)
-                for (int c = 0; c < nch; c++) buf[(size_t)i * nch + c] = c < fch ? sample_at(fr, c, i) : 0;
-            seconds += (double)n / rate;
-            if (st) SDL_PutAudioStreamData(st, buf, (int)((size_t)n * nch * sizeof *buf));
-        }
-        if (eof && !any) break;
+    LOG("[sound] %s: playing %s (%d Hz, %d channels)%s\n", k_slot_names[pl->slot], pl->path, src.rate, src.nch,
+        muted ? " (muted: LARECOMP_NO_AUDIO)" : "");
+    float *chunk;
+    int n;
+    while (g_slot_gen[pl->slot] == pl->gen && (n = src_next(&src, &chunk)) > 0) {
+        seconds += (double)n / src.rate;
+        if (st) SDL_PutAudioStreamData(st, chunk, (int)((size_t)n * src.nch * sizeof(float)));
         // (decoded ahead about half a second, no more: a long song isn't held in memory, and a stop is heard at once)
-        while (st && g_slot_gen[pl->slot] == pl->gen && SDL_GetAudioStreamQueued(st) > rate * nch * (int)sizeof(float) / 2)
+        while (st && g_slot_gen[pl->slot] == pl->gen && SDL_GetAudioStreamQueued(st) > src.rate * src.nch * (int)sizeof(float) / 2)
             SDL_Delay(10);
     }
     while (st && g_slot_gen[pl->slot] == pl->gen && SDL_GetAudioStreamQueued(st) > 0) SDL_Delay(20);  // (played out)
@@ -165,11 +215,7 @@ static void *play_thread(void *arg) {
     else LOG("[sound] %s: done (%.1f s)\n", k_slot_names[pl->slot], seconds);
 out:
     if (st) SDL_DestroyAudioStream(st);
-    free(buf);
-    av_frame_free(&fr);
-    av_packet_free(&pkt);
-    avcodec_free_context(&cc);
-    if (fc) avformat_close_input(&fc);
+    src_close(&src);
     free(pl);
     return NULL;
 }
