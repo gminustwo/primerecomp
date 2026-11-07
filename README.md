@@ -54,7 +54,8 @@ PC, with Vulkan for the graphics. No emulator runs.
 - Suit colors (F1 menu, Gameplay tab): Samus' suit - all four of them - in a Patriot style (red armor, a white
   suit, a blue helmet with a white star) or your own colors for the helmet, the armor and the rest, and a picture of
   your own (a PNG) on her helmet or chest; recolored from your own game files as the suit loads, seen on the pause
-  screen's Samus and in cutscenes
+  screen's Samus and in cutscenes. With Patriot, sound files of your own can play as a save loads and as she fires a
+  missile
 - Cheats (F1 menu, Cheats tab): infinite energy, missiles and power bombs, a hint timer that cuts the game's
   15-40 minute wait for a hint down to as little as a second, and L3 (keyboard: H) to show the next hint at once;
   Samus' upgrades set as you like - missiles, power bombs, energy tanks, suit, beams, visors, morph ball upgrades,

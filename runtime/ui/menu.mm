@@ -43,6 +43,13 @@ static void SDLCALL picked_suit_image(void *, const char *const *files, int) {
     if (suitmods_import_image(files[0]) && g_settings.suit_image == SUIT_IMAGE_OFF) g_settings.suit_image = SUIT_IMAGE_HELMET;
     settings_save();
 }
+// ... and Patriot's sounds (runtime/hle/suitsounds.c): which one the dialog is for (1 the save's, 2 the missile's)
+static std::atomic<int> g_want_sound_pick{0};
+extern "C" bool suit_sound_import(int slot, const char *src);
+extern "C" const char *suit_sound_file(int slot);
+static void SDLCALL picked_sound(void *slot, const char *const *files, int) {
+    if (files && files[0]) suit_sound_import((int)(intptr_t)slot, files[0]);
+}
 
 struct QEvent {
     enum { KEY, ANALOG, MOUSE_POS, MOUSE_BUTTON, WHEEL, TEXT } kind;
@@ -287,6 +294,10 @@ void menu_apply_window_requests(void *win) {
     if (g_want_suit_image_pick.exchange(false)) {
         static const SDL_DialogFileFilter png[] = {{"PNG image", "png"}};
         SDL_ShowOpenFileDialog(picked_suit_image, NULL, w, png, 1, NULL, false);
+    }
+    if (int s = g_want_sound_pick.exchange(0)) {
+        static const SDL_DialogFileFilter snd[] = {{"Sound (MP3, OGG, WAV, FLAC, M4A)", "mp3;ogg;wav;flac;m4a;opus;aac"}};
+        SDL_ShowOpenFileDialog(picked_sound, (void *)(intptr_t)(s - 1), w, snd, 1, NULL, false);
     }
     if (first || g_want_fullscreen_apply.exchange(false)) {
         first = false;
@@ -651,6 +662,22 @@ static void tab_gameplay(void) {
         snprintf(d, sizeof d, "Samus' suit in other colors. Original: the game's. Patriot: red armor, a white suit "
                               "and a blue helmet with a white star. Custom: your own, below.%s", where);
         opt_choice("Suit colors", &g_settings.suit_style, styles, SUIT_STYLES, SUIT_ORIGINAL, d, true);
+        if (g_settings.suit_style == SUIT_PATRIOT) {
+            static const char *const snd =
+                "Sound files of your own played with Patriot: one as a save is loaded (or a new game begins), one each "
+                "time Samus fires a missile (a Super Missile counts once). MP3, OGG, WAV, FLAC or M4A; at the game's "
+                "volume, over its own sound. Each file you pick is copied into PrimeRecomp's folder (patriot_load, "
+                "patriot_missile), so it stays if you move the original.";
+            opt_indent(1);
+            opt_toggle("Patriot sounds", &g_settings.suit_sounds, true, snd);
+            if (g_settings.suit_sounds) {
+                const char *f = suit_sound_file(0);
+                if (opt_action("Save loaded sound", f ? f : "None yet", snd, true)) g_want_sound_pick.store(1);
+                f = suit_sound_file(1);
+                if (opt_action("Missile sound", f ? f : "None yet", snd, true)) g_want_sound_pick.store(2);
+            }
+            opt_indent(-1);
+        }
         if (g_settings.suit_style == SUIT_CUSTOM) {
             opt_indent(1);
             snprintf(d, sizeof d, "The helmet's color: its shell, the brow over the visor and the bulbs at its "

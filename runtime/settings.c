@@ -54,6 +54,7 @@ Settings g_settings = {
     .suit_body = SUIT_COLOR_WHITE,
     .suit_star = true,
     .suit_image_size = 100,
+    .suit_sounds = true,
 };
 
 const char *const g_suit_style_names[SUIT_STYLES] = {"original", "patriot", "custom"};
@@ -291,6 +292,7 @@ void settings_load(void) {
         else if (!strcmp(key, "suit_armor")) g_settings.suit_armor = suit_color_index(val, SUIT_COLOR_RED);
         else if (!strcmp(key, "suit_body")) g_settings.suit_body = suit_color_index(val, SUIT_COLOR_WHITE);
         else if (!strcmp(key, "suit_star")) g_settings.suit_star = atoi(val) != 0;
+        else if (!strcmp(key, "patriot_sounds")) g_settings.suit_sounds = atoi(val) != 0;
         else if (!strcmp(key, "suit_image")) {  // (anything else: off)
             g_settings.suit_image = SUIT_IMAGE_OFF;
             for (int i = 0; i < SUIT_IMAGE_PLACES; i++)
@@ -410,7 +412,8 @@ static void write_settings(void *o) {
         put(o, "suit_colors = %s\nsuit_helmet = %s\nsuit_armor = %s\nsuit_body = %s\nsuit_star = %d\n", g_suit_style_names[st],
             names[0], names[1], names[2], g_settings.suit_star);
         int im = g_settings.suit_image >= 0 && g_settings.suit_image < SUIT_IMAGE_PLACES ? g_settings.suit_image : SUIT_IMAGE_OFF;
-        put(o, "suit_image = %s\nsuit_image_size = %d\n", g_suit_image_names[im], g_settings.suit_image_size);
+        put(o, "suit_image = %s\nsuit_image_size = %d\npatriot_sounds = %d\n", g_suit_image_names[im],
+            g_settings.suit_image_size, g_settings.suit_sounds);
     }
     put(o, "menu_tip_seen = %d\n", g_settings.menu_tip_seen);
     put(o, "check_updates = %d\n", g_settings.check_updates);
