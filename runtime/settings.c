@@ -183,6 +183,9 @@ void settings_load(void) {
         else if (!strcmp(key, "fullscreen")) g_settings.fullscreen = atoi(val) != 0;
         else if (!strcmp(key, "volume")) g_settings.volume = (float)atof(val);
         else if (!strcmp(key, "reverb")) g_settings.reverb = atoi(val) != 0;
+        else if (!strcmp(key, "speakers"))  // ("auto" or anything unknown: Auto)
+            g_settings.speakers = !strcmp(val, "stereo") ? SPEAKERS_STEREO : !strcmp(val, "5.1") ? SPEAKERS_51
+                                : !strcmp(val, "7.1") ? SPEAKERS_71 : SPEAKERS_AUTO;
         else if (!strcmp(key, "rumble")) g_settings.rumble = atoi(val) != 0;
         else if (!strcmp(key, "rumble_strength")) g_settings.rumble_strength = (float)atof(val);
         else if (!strcmp(key, "hd_rumble")) g_settings.hd_rumble = atoi(val) != 0;
@@ -310,6 +313,8 @@ static void write_settings(void *o) {
     put(o, "fullscreen = %d\n", g_settings.fullscreen);
     put(o, "volume = %.2f\n", g_settings.volume);
     put(o, "reverb = %d\n", g_settings.reverb);
+    static const char *const speakers[SPEAKERS_COUNT] = {"auto", "stereo", "5.1", "7.1"};
+    put(o, "speakers = %s\n", speakers[(unsigned)g_settings.speakers < SPEAKERS_COUNT ? g_settings.speakers : 0]);
     put(o, "rumble = %d\nrumble_strength = %.2f\nhd_rumble = %d\n", g_settings.rumble, g_settings.rumble_strength,
             g_settings.hd_rumble);
     put(o, "deadzone_left = %.2f\ndeadzone_right = %.2f\n", g_settings.deadzone[0], g_settings.deadzone[1]);

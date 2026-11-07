@@ -38,6 +38,8 @@ PC, with Vulkan for the graphics. No emulator runs.
   adjustable field of view, and the arm cannon's apart from it (it keeps its size at a wide view)
 - 30, 60 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
 - Steam Deck presets
+- 5.1 and 7.1 surround sound: the game's own 5.1 mix, as a Switch plays it to a surround TV, on as many speakers as
+  your output has (F1 menu, Audio tab: Speakers; Auto follows your sound settings, stereo on headphones)
 - Gyro aiming with controllers that have one
 - Wii Remote + Nunchuk: point at the screen to aim, with the buttons laid out like Metroid Prime: Trilogy (a Mayflash
   DolphinBar or the PC's Bluetooth; F1 menu, Controls tab: Wii Remote)

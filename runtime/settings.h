@@ -23,6 +23,9 @@ enum { AA_OFF = 0, AA_SMAA = 1 };
 // (the bindings swapped: runtime/hle/bindings.c)
 enum { FACE_LABELS = 0, FACE_NINTENDO = 1, FACE_XBOX = 2, FACE_COUNT };
 enum { FOV_GAME = 55, FOV_MIN = 45, FOV_MAX = 90 };
+// Audio tab "Speakers" (runtime/services/audio.c out_channels): the game's 5.1 mix as the output device takes it
+// (Auto), folded to stereo, as it is, or spread over 7.1
+enum { SPEAKERS_AUTO = 0, SPEAKERS_STEREO = 1, SPEAKERS_51 = 2, SPEAKERS_71 = 3, SPEAKERS_COUNT };
 // Cheats tab "Hint timer": the waits it offers, seconds (0 = the game's own timing; then 1 s, 30 s, 1..30 minutes)
 enum { N_HINT_WAITS = 33 };
 extern const int g_hint_waits[N_HINT_WAITS];
@@ -52,6 +55,7 @@ typedef struct {
                          // the game's own (runtime/nvn/vulkan/textures.c vk_sampler)
     float volume;        // master volume, 1 = 100%
     bool reverb;         // room reverb effect
+    int speakers;        // SPEAKERS_*: the output's channels (runtime/services/audio.c), applied live
     bool rumble;         // controller rumble (runtime/hle/rumble.c)
     float rumble_strength;  // rumble: 1 = 100%, 0..RUMBLE_STRENGTH_MAX (rumble.c)
     bool hd_rumble;      // HD rumble: the game's own vibration on a Switch Pro Controller / Joy-Con, a wired DualSense's

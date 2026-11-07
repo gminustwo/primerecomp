@@ -15,8 +15,8 @@
 // Ryujinx's AudioRenderer (VoiceState / DataSourceHelper / StateUpdater, copies in notes/ryujinx_audio).
 // Voices decode PCM16 / ADPCM wave buffers, resample to 48 kHz, and mix into their destination mix's
 // buffers (or a splitter's destinations); sub mixes route into their destination; the final mix feeds the
-// device sink, which we downmix to stereo and push to an SDL audio stream. Effects: aux, reverb, I3DL2 reverb,
-// delay and biquad filter.
+// device sink (5.1), which goes to an SDL audio stream as the Speakers setting has it - folded to stereo, as it is, or
+// spread over 7.1 (speaker_layout). Effects: aux, reverb, I3DL2 reverb, delay and biquad filter.
 #define WB_COUNT 4
 #define MIXBUF_MAX 24
 #define HIST 4
@@ -107,7 +107,9 @@ typedef struct {
     uint8_t sink_used, sink_inputs, sink_input[6];
     Effect *fx;
     SDL_AudioStream *stream;
+    int out_ch;  // the stream's channels: 2, 6 or 8 (out_channels)
     FILE *wav;
+    int wav_ch;  // (the recording keeps the channels it started with)
     uint32_t wav_bytes;
     pthread_t thread;
     volatile bool quit;  // reboot (audio_reset)
@@ -932,7 +934,8 @@ static void apply_effects(Renderer *r, int32_t mix_id, Mix *m) {
 static int hf_log = -1;
 static double hf[1024];
 
-static void render_frame(Renderer *r, float *stereo) {
+// One frame of the device sink: sample_count frames of FL FR FC LFE BL BR, scaled to [-1, 1] (not clamped).
+static void render_frame(Renderer *r, float *sink) {
     if (hf_log < 0) hf_log = getenv("LARECOMP_AUDIO_HF") ? 1 : 0;
     static int no_splitters = -1;  // (A/B: LARECOMP_NO_SPLITTERS=1 drops what goes through splitters, as before)
     if (no_splitters < 0) no_splitters = getenv("LARECOMP_NO_SPLITTERS") ? atoi(getenv("LARECOMP_NO_SPLITTERS")) : 0;
@@ -1086,22 +1089,58 @@ static void render_frame(Renderer *r, float *stereo) {
             }
         }
     }
-    // final mix -> device sink (FL FR FC LFE BL BR) -> stereo
+    // final mix -> device sink (FL FR FC LFE BL BR)
     Mix *f = find_mix(r, 0);
     if (f) depop_apply(r, f), apply_effects(r, 0, f);
-    for (uint32_t i = 0; i < N; i++) {
-        float ch[6] = {0};
-        if (f && r->sink_used)
-            for (int c = 0; c < r->sink_inputs && c < 6; c++)
-                if (r->sink_input[c] < f->bufs) ch[c] = f->buf[r->sink_input[c] * N + i] * f->volume;
-        float L = ch[0], R = ch[1];
-        if (r->sink_inputs >= 6) {
-            L += 0.707f * ch[2] + 0.251f * ch[3] + 0.707f * ch[4];
-            R += 0.707f * ch[2] + 0.251f * ch[3] + 0.707f * ch[5];
+    for (uint32_t i = 0; i < N; i++)
+        for (int c = 0; c < 6; c++) {
+            float s = 0;
+            if (f && r->sink_used && c < r->sink_inputs && r->sink_input[c] < f->bufs)
+                s = f->buf[r->sink_input[c] * N + i] * f->volume;
+            sink[i * 6 + c] = s / 32768.f;
         }
-        stereo[i * 2] = clampf(L / 32768.f, -1, 1);
-        stereo[i * 2 + 1] = clampf(R / 32768.f, -1, 1);
+}
+
+// The sink's 5.1 (FL FR FC LFE BL BR, SDL's order for 6 channels too) as n interleaved output channels. 2: folded to
+// stereo, the centre and surrounds at -3 dB and the LFE at -12 dB in both sides. 6: as it is. 8 (SDL's 7.1: FL FR FC
+// LFE BL BR SL SR): each surround spread over its back and side speakers at -3 dB, heard between them - about where
+// a 5.1 surround speaker stands (the game has no 7.1 mix: the Switch's sink takes 6 channels at most).
+static void speaker_layout(const float *s, float *o, int n, uint32_t N) {
+    for (uint32_t i = 0; i < N; i++, s += 6, o += n) {
+        if (n == 2) {
+            o[0] = s[0] + 0.707f * s[2] + 0.251f * s[3] + 0.707f * s[4];
+            o[1] = s[1] + 0.707f * s[2] + 0.251f * s[3] + 0.707f * s[5];
+        } else {
+            for (int c = 0; c < 6; c++) o[c] = s[c];
+            if (n == 8) o[4] = o[6] = 0.707f * s[4], o[5] = o[7] = 0.707f * s[5];
+        }
+        for (int c = 0; c < n; c++) o[c] = clampf(o[c], -1, 1);
     }
+}
+
+// The output's channels for the Speakers setting. Auto: the device's own format - on Windows its speaker setup
+// (Sound settings), on PipeWire / PulseAudio the default sink's channels. Asked before the stream opens: those two then
+// take the stream's channel count as the device's. 3 to 7 channels (2.1, quad, 6.1...) get the 5.1, which SDL folds
+// to the device's layout.
+static int out_channels(SDL_AudioDeviceID dev, int *device_ch) {
+    SDL_AudioSpec spec;
+    int dc = dev && SDL_GetAudioDeviceFormat(dev, &spec, NULL) ? spec.channels : 0;
+    if (device_ch) *device_ch = dc;
+    switch (g_settings.speakers) {
+    case SPEAKERS_STEREO: return 2;
+    case SPEAKERS_51: return 6;
+    case SPEAKERS_71: return 8;
+    }
+    return dc >= 8 ? 8 : dc >= 3 ? 6 : 2;
+}
+
+static const char *layout_name(int ch) { return ch == 8 ? "7.1" : ch == 6 ? "5.1" : ch == 2 ? "stereo" : "?"; }
+
+// For the Audio tab: the channels the game's sound goes out on now and the output device's (0: no sound output).
+static int g_out_ch, g_device_ch;
+int audio_output_channels(int *device_ch) {
+    if (device_ch) *device_ch = g_device_ch;
+    return g_out_ch;
 }
 
 // Output gain: menu volume times LARECOMP_AUDIO_GAIN (applied live).
@@ -1112,35 +1151,54 @@ static void apply_gain(SDL_AudioStream *st) {
     if (st && SDL_GetAudioStreamGain(st) != g) SDL_SetAudioStreamGain(st, g);
 }
 
-static void wav_header(FILE *f, uint32_t bytes) {
-    uint32_t h[11] = {0x46464952, 36 + bytes, 0x45564157, 0x20746d66, 16, 0x00020003, 48000, 48000 * 8,
-                      0x00200008, 0x61746164, bytes};
+// (32-bit float at 48 kHz; more than 2 channels in SDL's order - FL FR FC LFE BL BR [SL SR] - which players assume)
+static void wav_header(FILE *f, int ch, uint32_t bytes) {
+    uint32_t h[11] = {0x46464952, 36 + bytes, 0x45564157, 0x20746d66, 16, 0x0003 | (uint32_t)ch << 16, 48000,
+                      48000 * 4 * (uint32_t)ch, (uint32_t)(4 * ch) | 32u << 16, 0x61746164, bytes};
     fseek(f, 0, SEEK_SET);
     fwrite(h, 4, 11, f);
     fseek(f, 0, SEEK_END);
 }
 
+// The stream's channels for the Speakers setting, when it has changed or (Auto) the device has: the default device
+// changed - headphones plugged in - or its speaker setup did. Data already queued plays out in its own format.
+static void renderer_speakers(Renderer *r) {
+    int dc, ch = out_channels(SDL_GetAudioStreamDevice(r->stream), &dc);
+    g_device_ch = dc;
+    if (ch == r->out_ch) return;
+    SDL_AudioSpec spec = {SDL_AUDIO_F32, ch, (int)r->sample_rate};
+    if (!SDL_SetAudioStreamFormat(r->stream, &spec, NULL)) {
+        LOG("[audren] speakers %s: %s\n", layout_name(ch), SDL_GetError());
+        return;
+    }
+    LOG("[audren] speakers now %s (device: %d channels)\n", layout_name(ch), dc);
+    r->out_ch = g_out_ch = ch;
+}
+
 static void *renderer_tick(void *arg) {
     Renderer *r = arg;
-    float out[2 * 4096];
-    uint32_t N = r->sample_count > 4096 ? 4096 : r->sample_count;
-    int frame_bytes = (int)(N * 2 * sizeof(float));
+    uint32_t N = r->sample_count;
+    float *sink = calloc((size_t)N * 6, sizeof(float)), *out = calloc((size_t)N * 8, sizeof(float));
+    float *wav = calloc((size_t)N * 8, sizeof(float));
     uint64_t next = 0;
     struct timespec now;
-    int target = 4 * frame_bytes;  // queued audio to keep ahead of the device: >= 2 device periods
+    int target = 4 * (int)N;  // frames queued ahead of the device: >= 2 device periods
     if (r->stream) {
         SDL_AudioSpec dev;
         int dev_frames = 0;
         if (SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(r->stream), &dev, &dev_frames) && dev_frames > 0) {
-            int t = (2 * dev_frames * (int)r->sample_rate / (dev.freq ? dev.freq : 48000) + (int)N) * 2 * (int)sizeof(float);
+            int t = 2 * dev_frames * (int)r->sample_rate / (dev.freq ? dev.freq : 48000) + (int)N;
             if (t > target) target = t;
-            LOG("[audren] device %d Hz, %d frames/period; queue target %d samples\n", dev.freq, dev_frames,
-                target / (2 * (int)sizeof(float)));
+            LOG("[audren] device %d Hz, %d channels, %d frames/period; queue target %d samples\n", dev.freq,
+                dev.channels, dev_frames, target);
         }
     }
+    int speakers = g_settings.speakers, since = 0;
     while (!r->quit) {
         if (r->stream) {
-            while (SDL_GetAudioStreamQueued(r->stream) >= target && !r->quit) {
+            // (the device looked at once a second: a lock each time, and a change can wait that long)
+            if (speakers != g_settings.speakers || ++since >= 200) speakers = g_settings.speakers, since = 0, renderer_speakers(r);
+            while (SDL_GetAudioStreamQueued(r->stream) / (r->out_ch * (int)sizeof(float)) >= target && !r->quit) {
                 struct timespec ts = {0, 1000000};
                 nanosleep(&ts, NULL);
             }
@@ -1152,23 +1210,31 @@ static void *renderer_tick(void *arg) {
             next += (uint64_t)N * 1000000000ull / r->sample_rate;
         }
         pthread_mutex_lock(&r->lock);
-        if (r->state == 0) {
-            render_frame(r, out);
+        bool playing = r->state == 0;
+        if (playing) {
+            render_frame(r, sink);
             r->elapsed_frames++;
         } else {
-            memset(out, 0, frame_bytes);
+            memset(sink, 0, (size_t)N * 6 * sizeof(float));
         }
         pthread_mutex_unlock(&r->lock);
-        if (r->stream) { apply_gain(r->stream); SDL_PutAudioStreamData(r->stream, out, frame_bytes); }
-        if (r->wav && r->state == 0) {
-            fwrite(out, 1, frame_bytes, r->wav);
-            r->wav_bytes += frame_bytes;
-            if ((r->elapsed_frames & 255) == 0) { wav_header(r->wav, r->wav_bytes); fflush(r->wav); }
+        if (r->stream) {
+            speaker_layout(sink, out, r->out_ch, N);
+            apply_gain(r->stream);
+            SDL_PutAudioStreamData(r->stream, out, (int)(N * r->out_ch * sizeof(float)));
+        }
+        if (r->wav && playing) {
+            int bytes = (int)(N * r->wav_ch * sizeof(float));
+            speaker_layout(sink, wav, r->wav_ch, N);
+            fwrite(wav, 1, bytes, r->wav);
+            r->wav_bytes += bytes;
+            if ((r->elapsed_frames & 255) == 0) { wav_header(r->wav, r->wav_ch, r->wav_bytes); fflush(r->wav); }
         }
         pthread_mutex_lock(&g_klock);
         kernel_signal(r->event);
         pthread_mutex_unlock(&g_klock);
     }
+    free(sink), free(out), free(wav);
     return NULL;
 }
 
@@ -1481,11 +1547,17 @@ static void request_update(Renderer *r, IpcReq *req, IpcResp *resp) {
     for (uint32_t i = 0; i < nsinks; i++, o += 0x20) {
         const uint8_t *s = sin + i * 0x140;
         if (s[0] == 1) {  // device sink
+            uint8_t was[8] = {r->sink_used, r->sink_inputs};
+            memcpy(was + 2, r->sink_input, 6);
             r->sink_used = s[1];
             uint32_t n;
             memcpy(&n, s + 0x20 + 0x100, 4);
             r->sink_inputs = n > 6 ? 6 : n;
             memcpy(r->sink_input, s + 0x124, 6);
+            if (was[0] != r->sink_used || was[1] != r->sink_inputs || memcmp(was + 2, r->sink_input, r->sink_inputs))
+                LOG("[audren] device sink: used %u, %u channels from final mix buffers %u %u %u %u %u %u\n", r->sink_used,
+                    r->sink_inputs, r->sink_input[0], r->sink_input[1], r->sink_input[2], r->sink_input[3],
+                    r->sink_input[4], r->sink_input[5]);
         }
     }
     uint64_t elapsed = r->elapsed_frames;
@@ -1502,15 +1574,24 @@ static void request_update(Renderer *r, IpcReq *req, IpcResp *resp) {
 }
 
 static void renderer_open_output(Renderer *r) {
-    if (getenv("LARECOMP_AUDIO_WAV")) {
-        r->wav = fopen(getenv("LARECOMP_AUDIO_WAV"), "wb");
-        if (r->wav) wav_header(r->wav, 0);
+    bool sound = !(getenv("LARECOMP_NO_AUDIO") && strcmp(getenv("LARECOMP_NO_AUDIO"), "0"));
+    if (sound && !SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+        LOG("[audren] SDL audio init failed: %s\n", SDL_GetError());
+        sound = false;
     }
-    if (getenv("LARECOMP_NO_AUDIO") && strcmp(getenv("LARECOMP_NO_AUDIO"), "0")) return;
-    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) { LOG("[audren] SDL audio init failed: %s\n", SDL_GetError()); return; }
-    SDL_AudioSpec spec = {SDL_AUDIO_F32, 2, (int)r->sample_rate};
+    int dc;
+    r->out_ch = out_channels(sound ? SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK : 0, &dc);
+    if (getenv("LARECOMP_AUDIO_WAV")) {  // (muted test runs too: the Speakers setting's channels, Auto = stereo)
+        r->wav = fopen(getenv("LARECOMP_AUDIO_WAV"), "wb");
+        r->wav_ch = r->out_ch;
+        if (r->wav) wav_header(r->wav, r->wav_ch, 0);
+    }
+    if (!sound) return;
+    SDL_AudioSpec spec = {SDL_AUDIO_F32, r->out_ch, (int)r->sample_rate};
     r->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
     if (!r->stream) { LOG("[audren] SDL audio open failed: %s\n", SDL_GetError()); return; }
+    g_out_ch = r->out_ch, g_device_ch = dc;
+    LOG("[audren] speakers %s (device: %d channels)\n", layout_name(r->out_ch), dc);
     if (getenv("LARECOMP_AUDIO_GAIN")) SDL_SetAudioStreamGain(r->stream, (float)atof(getenv("LARECOMP_AUDIO_GAIN")));
     SDL_ResumeAudioStreamDevice(r->stream);
 }
@@ -1554,9 +1635,14 @@ static void audio_device(Service *s, IpcReq *req, IpcResp *resp) {
         break;
     }
     case 4: case 11: case 12: resp->copy_handles[resp->ncopy++] = new_event_handle(); break;
-    case 5: OUT(uint32_t, 0) = 2; resp_size(resp, 4); break;  // GetActiveChannelCount
+    // GetActiveChannelCount: 6 on surround speakers, as a Switch tells a game on a 5.1 TV (MPR asks once at boot and
+    // mixes the same 5.1 either way - its sink takes six channels; checked 2026-11-06)
+    case 5: OUT(uint32_t, 0) = g_out_ch >= 6 ? 6 : 2; resp_size(resp, 4); break;
     case 8: OUT(float, 0) = 1.0f; resp_size(resp, 4); break;
-    default: break;
+    default: {
+        static uint32_t seen;
+        if (req->cmd < 32 && !(seen & 1u << req->cmd)) seen |= 1u << req->cmd, LOG("[audren] IAudioDevice cmd %u (ok)\n", req->cmd);
+    }
     }
 }
 
@@ -1664,7 +1750,7 @@ RT_ON_RESET(audio_reset) {
             r->quit = true;
             pthread_join(r->thread, NULL);
             if (r->stream) SDL_DestroyAudioStream(r->stream);
-            if (r->wav) { wav_header(r->wav, r->wav_bytes); fclose(r->wav); }
+            if (r->wav) { wav_header(r->wav, r->wav_ch, r->wav_bytes); fclose(r->wav); }
             for (uint32_t m = 0; m < r->nmix; m++) free(r->mix[m].buf);
             for (uint32_t s = 0; s < r->splitters; s++) free(r->spl[s].dest);
             free(r->voice), free(r->chres), free(r->chst), free(r->mix), free(r->fx);  // (reverb delay lines leak)
