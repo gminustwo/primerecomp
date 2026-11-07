@@ -36,7 +36,7 @@ PC, with Vulkan for the graphics. No emulator runs.
   Video tab: HDR, peak brightness, paper white)
 - Ultrawide and any aspect ratio, the HUD out at the screen's sides (or a 21:9 frame's, or the 16:9 middle);
   adjustable field of view, and the arm cannon's apart from it (it keeps its size at a wide view)
-- 30, 60 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
+- 30, 60, 90 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
 - Steam Deck presets
 - 5.1 and 7.1 surround sound: the game's own 5.1 mix, as a Switch plays it to a surround TV, on as many speakers as
   your output has (F1 menu, Audio tab: Speakers; Auto follows your sound settings, stereo on headphones)

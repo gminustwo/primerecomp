@@ -18,21 +18,23 @@ const char *game_level_name(void) { return "-"; }
 
 // Frame rate (Video tab "Frame rate", LARECOMP_FPS): the frames presented per second and the game's simulation rate.
 // The game steps a fixed 1/60 s per simulation tick (CGameArchitectureSupport::Update; rt_frame_step below says how
-// much time a frame adds); at 120 every place that builds that 1/60 builds 1/120 instead (tools/patches.py
-// STEP_SITES), so the game runs at the same speed with twice the steps. 30: a frame every 1/30 s, two ticks each
+// much time a frame adds); at 90 or 120 every place that builds that 1/60 builds 1/90 or 1/120 instead
+// (tools/patches.py STEP_SITES), so the game runs at the same speed with 1.5 or 2 times the steps (90: for 90 Hz
+// screens - a Steam Deck OLED's - and 180 Hz ones). 30: a frame every 1/30 s, two ticks each
 // (slower machines: a steady 30 at full speed). (No uncapped rate since 2026-10-27, at the user's request: the game
 // runs a tick every frame however short the frame was, so one needed a tick of each frame's own time.)
 int game_frame_rate(void) {
     static int env = -2;
     if (env == -2) {
         int e = getenv("LARECOMP_FPS") ? atoi(getenv("LARECOMP_FPS")) : -1;
-        env = e == 30 || e == 60 || e == 120 ? e : -1;
+        env = e == 30 || e == 60 || e == 90 || e == 120 ? e : -1;
     }
     return env > 0 ? env : g_settings.frame_rate;
 }
 
 uint32_t rt_sim_step_bits(int negative) {
-    float step = 1.0f / (game_frame_rate() == 120 ? 120 : 60);
+    int fps = game_frame_rate();
+    float step = 1.0f / (fps == 90 || fps == 120 ? fps : 60);
     uint32_t b;
     memcpy(&b, &step, 4);
     return negative ? b | 0x80000000u : b;
@@ -48,7 +50,7 @@ void rt_air_drag(Cpu *c) {
     memcpy(&a, &ab, 4);
     memcpy(&b, &bb, 4);
     r = a * b;
-    if (sb != 0x3c888889u) {  // (not 1/60: the 120 fps step)
+    if (sb != 0x3c888889u) {  // (not 1/60: the 90 or 120 fps step)
         float step;
         memcpy(&step, &sb, 4);
         r *= step * 60.0f;
