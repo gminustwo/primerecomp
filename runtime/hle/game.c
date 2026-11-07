@@ -312,6 +312,16 @@ void game_gui_screen(int *now, int *before) {
     *now = (int)LD32(g_gui_mgr + 0x2e4), *before = (int)LD32(g_gui_mgr + 0x2e0);
 }
 
+// The game's paused message is up, or going back to play from it: an item's "acquired" text or a paused hint
+// (CScriptHUDMemoMP1 -> CStateManagerGameLogicMP1::EnterMessageScreen -> CInGameGuiManagerMP1::ShowPauseGameHudMessage,
+// screen 6). The game isn't in play then, but its text tells how to play - "Press [Y] to activate Morph Ball mode" -
+// so its button icons are play's, not the menus' (runtime/hle/glyphs.c, input.c; issue #52)
+bool game_message_screen(void) {
+    int now, before;
+    game_gui_screen(&now, &before);
+    return now == 6 || (now == 1 && before == 6);
+}
+
 // The first-person camera when it's the current camera (not a cutscene's, the morph ball's...), else 0. Only in play
 // (at boot the state manager has no cameras yet, and looking one up crashed), found as the game does: the camera
 // manager, its current camera's id (the top of its two override stacks, else its own),
@@ -394,8 +404,42 @@ static void fov_frame(Cpu *c) {
 
 static void wide_frame(Cpu *c);
 
+// (debug) LARECOMP_MESSAGE_AT=<frame>[:<string table id, hex>]: from that frame on, the next gameplay frame opens the
+// game's paused message screen (an item's "acquired" text: in-game GUI screen 6) as a HUD memo of that kind does -
+// CStateManagerGameLogicMP1::EnterMessageScreen(id, 3 s, true, CObjectId::Invalid()); by default the aiming cursor's
+// message (CAimingCursorMP1::Update's id). For testing what's drawn there (runtime/hle/glyphs.c) without playing to it.
+// (Its text shows only if the id's string table is loaded - an item's message is the room's: "[9E6F9F49]", the Morph
+// Ball's, stays blank elsewhere; the frame and its button prompt show either way.)
+static void debug_message_screen(Cpu *c) {
+    static long at = -2;
+    static uint32_t id = 0x5a9d0217;
+    if (at == -2) {
+        const char *e = getenv("LARECOMP_MESSAGE_AT");
+        at = e ? atol(e) : -1;
+        if (e && strchr(e, ':')) id = (uint32_t)strtoul(strchr(e, ':') + 1, NULL, 16);
+    }
+    extern uint64_t vk_frame_counter(void);
+    if (at < 0 || (long)vk_frame_counter() < at || !game_in_play()) return;
+    at = -1;
+    uint64_t logic = LD64(c->x[0] + 0x4e0150);
+    if (!GUEST_PTR_OK(logic) || LD64(logic) != guest_sym("_ZTV25CStateManagerGameLogicMP1") + 0x10) return;
+    Cpu *saved = malloc(sizeof *saved);
+    *saved = *c;
+    guest_call(c, guest_sym("_ZN9CObjectId7InvalidEv"));
+    uint64_t invalid = c->x[0];
+    float t = 3;
+    uint32_t bits;
+    memcpy(&bits, &t, 4);
+    c->x[0] = logic, c->x[1] = id, c->x[2] = 1, c->x[3] = invalid, c->v[0] = bits;
+    guest_call(c, guest_sym("_ZN25CStateManagerGameLogicMP118EnterMessageScreenEjfbRK9CObjectId"));
+    LOG("[gui] LARECOMP_MESSAGE_AT: message screen %08x requested\n", id);
+    *c = *saved;
+    free(saved);
+}
+
 void rt_debug_autosave(Cpu *c) {
     debug_teleport(c);
+    debug_message_screen(c);
     fov_frame(c);
     wide_frame(c);
     extern void cheats_frame(Cpu *c);  // runtime/hle/cheats.c

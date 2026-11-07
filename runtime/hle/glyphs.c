@@ -162,15 +162,18 @@ uint32_t glyph_generation(void) { return g_gen; }
 // controller's face buttons labelled so (bind_label_host; Face buttons: Labels), and a button a menu key means shows
 // that key (Enter A, Esc B, Q / E the pause screen's pages - L / R -, the arrows the d-pad: issue #32, Shift / F were
 // shown for the pages); of the rest, one whose key means another button there (Space: A) shows none (the game's own).
+// The game's paused messages (an item's "acquired" text: game_message_screen) count as play: their text says what
+// to press in play ("Press [Y] to activate Morph Ball mode" showed the button labelled Y - a PlayStation controller's
+// triangle - where morphing is the left button, square; issue #52). input.c lets the A-labelled button confirm there too.
 static int16_t g_pad_now[BIND_PAD_COUNT], g_key_now[BIND_PAD_COUNT];
 static _Atomic bool g_now_set;  // (before the first glyphs_frame an icon stays the game's; that frame redraws it)
 
 void glyphs_frame(void) {  // what the icons depend on: the set, the bindings, menu or play; changed -> redraw
-    extern bool game_in_play(void);   // runtime/hle/game.c
+    extern bool game_in_play(void), game_message_screen(void);  // runtime/hle/game.c
     extern int input_menu_key(int sc);  // runtime/hle/input.c
     static uint64_t sig;
     int set = resolve_set();
-    bool menu = !game_in_play();
+    bool menu = !game_in_play() && !game_message_screen();
     static int menu_for[BIND_PAD_COUNT];  // the first menu key meaning each button (Enter before Space: their scancodes)
     static bool menu_for_set;
     if (!menu_for_set) {
