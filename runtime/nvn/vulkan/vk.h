@@ -129,6 +129,7 @@ typedef struct TexBackend {
     struct { uint64_t addr, stride; uint32_t target, scalable, width, height, depth, levels, format, samples; } key;
     struct TexBackend *share_next;
     bool hdr;             // one of the game's sRGB targets, made RGBA16F for HDR output (textures.c hdr_target)
+    bool movie;           // a movie's frames are decoded into it (runtime/hle/movie.c: renderer_upload_rgba)
     int16_t glyph;        // one of the game's button prompt icons (runtime/hle/glyphs.c): its id + 1, else 0
     uint32_t glyph_gen;   // the icons' generation it was drawn for (a newer one: uploaded again)
     // texture mods (texmods.c): the image is a replacement (mod: its size over the game's in mod_sx / mod_sy, for the

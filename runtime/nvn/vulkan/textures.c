@@ -1429,6 +1429,7 @@ void renderer_upload_rgba(NvnTexture *t, const void *rgba, uint32_t w, uint32_t 
     b->pending_rgba = copy;
     b->pending_w = w; b->pending_h = h; b->pending_stride = stride;
     b->gpu_owned = true;
+    b->movie = true;  // (exec.c shows_movie: not stretched to an ultrawide window's sides)
     pthread_mutex_unlock(&pending_lock);
 }
 
