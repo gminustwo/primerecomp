@@ -33,6 +33,11 @@ void controls_bindings_draw(float scale);  // controls_ui.mm
 static std::atomic<bool> g_open{false};
 static std::atomic<bool> g_text_busy{false};  // a text field / the on-screen keyboard has the keys (render thread: ui_text_busy)
 static std::atomic<bool> g_want_fullscreen_apply{false};
+static std::atomic<int> g_session_fullscreen{-1};
+static bool window_fullscreen(void) {
+    int fs = g_session_fullscreen.load();
+    return fs < 0 ? g_settings.fullscreen : fs != 0;
+}
 
 struct QEvent {
     enum { KEY, ANALOG, MOUSE_POS, MOUSE_BUTTON, WHEEL, TEXT } kind;
@@ -173,7 +178,8 @@ bool menu_handle_event(const SDL_Event *e) {
         if (!e->key.repeat && (e->key.scancode == SDL_SCANCODE_F11 ||
                                (e->key.scancode == SDL_SCANCODE_RETURN && (e->key.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI))) ||
                                (e->key.scancode == SDL_SCANCODE_F && (e->key.mod & SDL_KMOD_GUI) && (e->key.mod & SDL_KMOD_CTRL)))) {
-            g_settings.fullscreen = !g_settings.fullscreen;
+            g_settings.fullscreen = !window_fullscreen();
+            g_session_fullscreen = -1;
             g_want_fullscreen_apply.store(true);
             settings_save();
             return true;
@@ -275,8 +281,12 @@ void menu_apply_window_requests(void *win) {
     }
     static bool first = true;
     if (first || g_want_fullscreen_apply.exchange(false)) {
+        if (first) {
+            const char *mode = getenv("RECOMPLAUNCHER_MODE");
+            if (mode && !strcmp(mode, "bigpicture")) g_session_fullscreen = 1;
+        }
         first = false;
-        SDL_SetWindowFullscreen(w, g_settings.fullscreen);
+        SDL_SetWindowFullscreen(w, window_fullscreen());
     }
 }
 
@@ -436,9 +446,10 @@ static void tab_display(void) {
                    "(inventory, log book, options). Fill the screen: stretched sideways to the screen's edges - on a "
                    "32:9 screen, twice as wide. Middle 16:9: as the game draws them, in the middle of the screen.");
     }
-    bool fs = g_settings.fullscreen;
+    bool fs = window_fullscreen();
     if (opt_toggle("Fullscreen", &fs, false, "Fills the screen. Also: F11, Alt+Enter or Cmd+Ctrl+F.")) {
         g_settings.fullscreen = fs;
+        g_session_fullscreen = -1;
         g_want_fullscreen_apply.store(true);
     }
     opt_toggle("Show FPS", &g_settings.show_fps, false,
