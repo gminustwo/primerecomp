@@ -14,6 +14,7 @@
 
 #include "gamelib.h"
 #include "paths.h"
+#include "launcher_cli.h"
 #include "platform.h"
 
 static char g_root[1024], g_start[1024], g_exe_dir[1024];
@@ -71,7 +72,7 @@ static bool writable(const char *dir) {
 
 static void fail(const char *msg) {
     fprintf(stderr, "%s\n", msg);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "PrimeRecomp", msg, NULL);
+    if (!prime_headless) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "PrimeRecomp", msg, NULL);
     exit(1);
 }
 

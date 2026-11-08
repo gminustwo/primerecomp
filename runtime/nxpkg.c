@@ -804,7 +804,7 @@ NxRomfs *nx_romfs_open(const char *src_path, char *why, size_t why_size) {
 }
 
 // ------------------------------------------------------------------ setup
-static bool title_key(const Nca *nca, int fd, const Entries *files, const Keys *ks, const char *keys_path, int keygen,
+static bool title_key(const Nca *nca, int fd, const Entries *files, const Keys *ks, const char *keys_path, const char *title_keys, int keygen,
                       uint8_t out[16]) {
     const uint8_t *rights = nca->hdr + 0x230;
     uint8_t enc[16];
@@ -821,6 +821,7 @@ static bool title_key(const Nca *nca, int fd, const Entries *files, const Keys *
         snprintf(tk, sizeof tk, "%s", keys_path);
         char *a = strrchr(tk, '/'), *b = strrchr(tk, '\\'), *sl = a > b ? a : b;
         snprintf(sl ? sl + 1 : tk, sizeof tk - (sl ? (size_t)(sl + 1 - tk) : 0), "title.keys");
+        if (title_keys && *title_keys) snprintf(tk, sizeof tk, "%s", title_keys);
         Keys t = {0};
         hex(name, rights, 16);
         if (keys_load(tk, &t)) {
@@ -856,6 +857,11 @@ static bool write_file(const char *path, int fd, uint64_t nca_base, const Sectio
 
 int nx_setup(const char *package, const char *keys_path, const char *out_dir, uint64_t *title_id, char *why,
              size_t why_size) {
+    return nx_setup_keys(package, keys_path, NULL, out_dir, title_id, why, why_size);
+}
+
+int nx_setup_keys(const char *package, const char *keys_path, const char *title_keys, const char *out_dir,
+                  uint64_t *title_id, char *why, size_t why_size) {
     Keys ks = {0};
     int rc = NX_OK;
     Entries files = {0};
@@ -907,7 +913,7 @@ int nx_setup(const char *package, const char *keys_path, const char *out_dir, ui
     int keygen = gen ? gen - 1 : 0;
     static const uint8_t zero[16];
     if (memcmp(nca.hdr + 0x230, zero, 16)) {
-        if (!title_key(&nca, fd, &files, &ks, keys_path, keygen, nca.ctr_key)) {
+        if (!title_key(&nca, fd, &files, &ks, keys_path, title_keys, keygen, nca.ctr_key)) {
             FAIL(NX_ERR_KEYS, "the package needs a title key (no ticket in it, none in title.keys, or no titlekek_%02x)",
                  keygen);
             goto out;
@@ -969,7 +975,12 @@ int nx_setup(const char *package, const char *keys_path, const char *out_dir, ui
         snprintf(path, sizeof path, "%s/romfs.src", out_dir);
         snprintf(tmp, sizeof tmp, "%s.tmp", path);
         hex(ctr, romfs.ctr_hi, 8), hex(key, nca.ctr_key, 16), hex(comp, romfs.comp_hdr, 16);
-        FILE *f = fopen(tmp, "w");
+        int meta_fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0600);
+#ifndef _WIN32
+        if (meta_fd >= 0 && fchmod(meta_fd, 0600)) { close(meta_fd); meta_fd = -1; }
+#endif
+        FILE *f = meta_fd >= 0 ? fdopen(meta_fd, "w") : NULL;
+        if (!f && meta_fd >= 0) close(meta_fd);
         if (!f) { FAIL(NX_ERR_WRITE, "can't write %s", path); goto out; }
         fprintf(f, "package=%s\nsize=%llu\nnca=%llu\nsection=%llu %llu %u %s\nkey=%s\ndata=%llu %llu\ncomp=%llu %llu %s\n",
                 package, (unsigned long long)sb.st_size, (unsigned long long)nca.base, (unsigned long long)romfs.off,

@@ -20,6 +20,9 @@ enum { NX_OK = 0, NX_ERR_KEYS, NX_ERR_PACKAGE, NX_ERR_WRITE };
 // another keys file may), NX_ERR_PACKAGE (not a usable game package), NX_ERR_WRITE (the files couldn't be written);
 // why: a short message for the player.
 int nx_setup(const char *package, const char *keys, const char *out_dir, uint64_t *title_id, char *why, size_t why_size);
+// As above, with an explicit title.keys path (NULL keeps ticket / adjacent-file discovery).
+int nx_setup_keys(const char *package, const char *keys, const char *title_keys, const char *out_dir,
+                  uint64_t *title_id, char *why, size_t why_size);
 
 // Keys files that may open a package, best first: prod.keys / keys.txt beside it, then the emulators' own (Ryujinx,
 // yuzu and its successors) and ~/.switch. Up to max paths into out; returns the count.
