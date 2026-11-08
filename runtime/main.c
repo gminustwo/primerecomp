@@ -10,6 +10,8 @@
 
 #include "gamelib.h"
 #include "paths.h"
+#include "launcher_cli.h"
+#include <signal.h>
 #include "settings.h"
 #include "hle.h"
 #include "kernel.h"
@@ -190,6 +192,21 @@ void rt_log(const char *fmt, ...) {
 }
 
 int main(int argc, char **argv) {
+    PrimeLaunchOptions options;
+    int parsed = prime_cli_parse(argc, argv, &options);
+    if (parsed) return parsed;
+    if (options.help) { prime_cli_help(); return 0; }
+    prime_headless = options.prepare;
+    if (options.data_root[0]) {
+#ifdef _WIN32
+        _putenv_s("LARECOMP_DATA_ROOT", options.data_root);
+#else
+        setenv("LARECOMP_DATA_ROOT", options.data_root, 1);
+#endif
+    }
+#ifndef _WIN32
+    if (prime_headless) signal(SIGPIPE, SIG_IGN);
+#endif
     plat_init();
 #ifdef _WIN32
     setvbuf(stderr, NULL, _IONBF, 0);  // the Windows CRT treats _IOLBF as full buffering
@@ -198,18 +215,10 @@ int main(int argc, char **argv) {
 #endif
     const char *root = "extracted";  // (in the data root)
     bool skip_launcher = getenv("LARECOMP_NO_LAUNCHER") || getenv("LARECOMP_INPUT");  // tests boot straight in
-    static char arg_root[1024];
-    // Command line (README "Starting from a launcher"): --play goes straight into the game, past the start screen
-    // (a Video > Pre-load shaders that's on runs beside the game); --preload-shaders builds the shaders first, on the
-    // start screen's "Loading shaders" panel (B / Esc: play at once), whatever that setting, then plays (issue #38:
-    // Playnite). The start screen stays when the game files aren't set up.
-    extern bool g_cli_preload_shaders;  // (runtime/nvn/vulkan/exec.c vk_preload_start, runtime/ui/launcher.mm)
-    for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--play")) skip_launcher = true;
-        else if (!strcmp(argv[i], "--preload-shaders")) g_cli_preload_shaders = true;
-        else if (argv[i][0] != '-' && !realpath(argv[i], arg_root)) root = argv[i];  // (relative to where we started)
-        else if (argv[i][0] != '-') root = arg_root;
-    }
+    if (options.root[0]) root = options.root;
+    skip_launcher |= options.play;
+    extern bool g_cli_preload_shaders;
+    g_cli_preload_shaders = options.preload;
     if (g_cli_preload_shaders) skip_launcher = false;  // (the start screen shows the shaders' progress, then plays)
     extern const char *rt_version(void);  // runtime/ui/launcher.mm
 #if defined(_WIN32)
@@ -242,6 +251,12 @@ int main(int argc, char **argv) {
     skip_launcher = true;  // (for now: the start screen's setup builds the game code, which a phone can't)
 #endif
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
+    if (options.prepare) {
+        if (!freopen("primerecomp-setup.log", "w", stderr)) return 1;
+        setvbuf(stderr, NULL, _IONBF, 0);
+        return prime_prepare(options.game, options.keys, options.title_keys);
+    }
+    if (options.play && !prime_game_ready(root)) skip_launcher = false;
     {   // (known from here: the start screen reads game files too - the shader list, runtime/nvn/vulkan/exec.c)
         char romfs[1024];
         snprintf(romfs, sizeof romfs, "%s/romfs", root);

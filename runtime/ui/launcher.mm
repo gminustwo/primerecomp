@@ -32,6 +32,7 @@ extern "C" {
 #include "platform.h"
 #include "paths.h"
 #include "gamebuild.h"
+#include "launcher_cli.h"
 #include "gamelib.h"
 #include "nxpkg.h"
 #include "romfs_build.h"
@@ -155,6 +156,7 @@ static std::string parent_dir(const std::string &p) {
 // clones / hard links where the file system allows); the game reads romfs/ in place (runtime/services/fs.c).
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static std::string g_src;           // the picked folder, or game package (NSP / XCI)
+static std::string g_title_keys;     // explicit CLI title.keys; never staged beside the package
 static std::string g_keys;          // a keys file picked (prod.keys; "" = the ones nx_find_keys finds)
 static std::string g_job;           // current setup step / result for the status line
 static std::string g_job_hint;      // a failure: what to do about it (shown under it)
@@ -286,10 +288,10 @@ static bool build_id_ok(const std::string &main_path) {
 // progress (the overlay's bar): the romfs copy (bytes)
 static std::atomic<unsigned long long> g_done, g_total;
 // The bar: copying is the first tenth, building the game code (runtime/gamebuild.c) the rest
-static unsigned long long g_phase_base;
+static std::atomic<unsigned long long> g_phase_base;
 static std::atomic<float> g_build_frac{-1};  // -1: not building
-static bool g_copy_skipped;                  // (only the game code to build: the bar is all of that)
-static float g_copy_share = 0.1f;            // (1: an earlier copy's game code is used, nothing to build)
+static std::atomic<bool> g_copy_skipped;                  // (only the game code to build: the bar is all of that)
+static std::atomic<float> g_copy_share{0.1f};            // (1: an earlier copy's game code is used, nothing to build)
 // what the setup does, for the overlay's words: from the player's folder, the game code again after an update, an
 // earlier copy's files (find_earlier_copy, or such a folder picked)
 enum { SETUP_NEW, SETUP_UPDATE, SETUP_EARLIER };
@@ -312,7 +314,19 @@ static float extract_progress(void) {
 // over. Not one per logical core: every core at full load for minutes is what brings down a PC with an unstable CPU
 // (2026-10-31, an i9-14900K on a 2023 BIOS: 32 compiles, corrected machine-check errors all through, then a fatal one
 // and a reboot, twice), and the PC stays usable meanwhile. LARECOMP_BUILD_JOBS=<n> sets it.
+static std::string g_prepare_source;  // headless setup's validated source; never key contents
+static bool note_setup_source(void) {
+    if (g_prepare_source.empty()) return true;
+    FILE *f = fopen(".primerecomp-setup-source.tmp", "wb");
+    if (!f) return false;
+    bool ok = fwrite(g_prepare_source.data(), 1, g_prepare_source.size(), f) == g_prepare_source.size();
+    ok = fclose(f) == 0 && ok;
+    return ok && plat_replace_file(".primerecomp-setup-source.tmp", ".primerecomp-setup-source");
+}
+
 static bool build_game_code(void) {
+    // Only record a source after its staged files passed validation. A failed pick must never certify old files.
+    if (!note_setup_source()) { set_failure(FAIL_COPY); return false; }
     int cores = SDL_GetNumLogicalCPUCores(), ram_gb = SDL_GetSystemRAM() / 1024;
     int jobs = cores / 2;
     if (jobs > 16) jobs = 16;
@@ -367,7 +381,7 @@ static bool setup_from_package(const std::string &pkg, const std::string &chosen
     std::vector<std::string> keys;
     if (!chosen_keys.empty()) keys.push_back(chosen_keys);
     char found[16][1100];
-    int n = nx_find_keys(pkg.c_str(), found, 16);
+    int n = chosen_keys.empty() ? nx_find_keys(pkg.c_str(), found, 16) : 0;
     for (int i = 0; i < n; i++)
         if (std::find(keys.begin(), keys.end(), std::string(found[i])) == keys.end()) keys.push_back(found[i]);
     if (keys.empty()) { set_failure(FAIL_NO_KEYS); return false; }
@@ -379,7 +393,7 @@ static bool setup_from_package(const std::string &pkg, const std::string &chosen
     uint64_t tid = 0;
     for (auto &k : keys) {
         char why[512] = "";
-        rc = nx_setup(pkg.c_str(), k.c_str(), g_root.c_str(), &tid, why, sizeof why);
+        rc = nx_setup_keys(pkg.c_str(), k.c_str(), g_title_keys.c_str(), g_root.c_str(), &tid, why, sizeof why);
         fprintf(stderr, "[launcher] game package %s, keys %s: %s\n", pkg.c_str(), k.c_str(), rc == NX_OK ? "read" : why);
         if (rc == NX_OK) break;
         if (rc == NX_ERR_WRITE) { set_failure(FAIL_COPY); goto fail; }
@@ -395,7 +409,7 @@ fail:
     return false;
 }
 
-static void *extract_thread(void *) {
+static void prepare_game(void) {
     std::string src, keys;
     pthread_mutex_lock(&g_lock);
     src = g_src, keys = g_keys;
@@ -497,7 +511,89 @@ done:
     pthread_mutex_lock(&g_lock);
     g_busy = false;
     pthread_mutex_unlock(&g_lock);
+}
+
+static void *extract_thread(void *) {
+    prepare_game();
     return NULL;
+}
+
+extern "C" bool prime_game_ready(const char *root) { return check_game_files(root).empty(); }
+
+// Reuse the UI's setup state and progress, but never initialize its SDL window, Vulkan, audio or dialogs.
+static std::string setup_source(const char *source, const char *keys, const char *title_keys) {
+    std::string result;
+    for (const char *p : {source, keys, title_keys}) {
+        std::string path = p ? p : "";
+        result += std::to_string(path.size()) + ":" + path + "\n";
+        struct stat st;
+        const char *names[] = {"", "/exefs/main", "/exefs/sdk", "/exefs/main.npdm", "/main", "/sdk", "/main.npdm"};
+        for (const char *name : names)
+            if (!path.empty() && !stat((path + name).c_str(), &st))
+                result += std::string(name) + ":" + std::to_string((long long)st.st_size) + ":" +
+                          std::to_string((long long)st.st_mtime) + "\n";
+    }
+    return result;
+}
+
+extern "C" int prime_prepare(const char *source, const char *keys, const char *title_keys) {
+    g_root = "extracted";
+    g_src = source ? source : "";
+    g_keys = keys ? keys : "";
+    g_title_keys = title_keys ? title_keys : "";
+    g_job_failed = false;
+    g_job.clear();
+    g_job_hint.clear();
+    std::string stamp = setup_source(source, keys, title_keys), previous;
+    if (FILE *f = fopen(".primerecomp-setup-source", "rb")) {
+        char buf[1024]; size_t n;
+        while ((n = fread(buf, 1, sizeof buf, f))) previous.append(buf, n);
+        fclose(f);
+    }
+    if (previous == stamp && check_copied_files(g_root).empty() &&
+        (!is_dir(g_root + "/romfs") || missing_game_data(g_root + "/romfs").empty())) {
+        if (prime_game_ready(g_root.c_str())) {
+            const char *ini = getenv("LARECOMP_SETTINGS");
+            if (!ini || !*ini) ini = "primerecomp.ini";
+            if (!file_exists(ini)) { settings_load(); settings_save(); }
+            if (!file_exists(ini)) return 1;
+            return printf("progress 1.0000 Game files ready.\n") < 0 || fflush(stdout) ? 1 : 0;
+        }
+        g_src.clear();  // retry/rebuild game code from the already validated files
+    }
+    g_prepare_source = stamp;
+    g_busy = true;
+    pthread_t worker;
+    if (pthread_create(&worker, NULL, extract_thread, NULL)) return 1;
+    float last = -1;
+    std::string last_job;
+    uint64_t last_time = 0;
+    for (;;) {
+        pthread_mutex_lock(&g_lock);
+        bool busy = g_busy, failed = g_job_failed;
+        std::string job = g_job, hint = g_job_hint;
+        pthread_mutex_unlock(&g_lock);
+        float progress = extract_progress();
+        uint64_t now = plat_now_ns();
+        if (progress > last + 0.001f || job != last_job || now - last_time > 1000000000ull || !busy) {
+            if (progress < last) progress = last;
+            // A disconnected launcher's pipe means cancellation too (Linux SIGPIPE is ignored in main).
+            if (printf("progress %.4f %s\n", progress, job.c_str()) < 0 || fflush(stdout))
+                exit(130);  // gamebuild's atexit handler ends its subprocess groups
+            last = progress, last_job = job, last_time = now;
+        }
+        if (!busy) {
+            pthread_join(worker, NULL);
+            if (failed) fprintf(stderr, "[setup] %s: %s\n", job.c_str(), hint.c_str());
+            if (failed || !prime_game_ready(g_root.c_str()) || !note_setup_source()) return 1;
+            const char *ini = getenv("LARECOMP_SETTINGS");
+            if (!ini || !*ini) ini = "primerecomp.ini";
+            if (!file_exists(ini)) { settings_load(); settings_save(); }
+            if (!file_exists(ini)) return 1;
+            return printf("progress 1.0000 Game files ready.\n") < 0 || fflush(stdout) ? 1 : 0;
+        }
+        plat_sleep_until_ns(now + 100000000ull);
+    }
 }
 
 // ------------------------------------------------------------------ folder dialog (SDL calls back on any thread)
