@@ -1,0 +1,86 @@
+name: RecompLauncher integration
+on:
+  workflow_dispatch:
+  push:
+    branches: ["feat/recomplauncher-integration"]
+  pull_request:
+    paths:
+      - "runtime/**"
+      - "tools/recomplauncher.py"
+      - "tools/test_*launcher*"
+      - "tools/linux/**"
+      - "Makefile"
+      - ".github/workflows/recomplauncher.yml"
+permissions:
+  contents: read
+concurrency:
+  group: recomplauncher-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  manifests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install jsonschema
+      - name: Validate against the PR 22 interface
+        run: |
+          curl -fL https://raw.githubusercontent.com/Xarishark/RecompLauncher/4898a5909f94ab316016fc29783386dc0a696cfa/docs/recomplauncher.schema.json -o /tmp/recomplauncher.schema.json
+          python tools/test_recomplauncher.py --schema /tmp/recomplauncher.schema.json -v
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make git
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-binutils
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-sdl3
+            mingw-w64-ucrt-x86_64-ffmpeg
+            mingw-w64-ucrt-x86_64-vulkan-devel
+            mingw-w64-ucrt-x86_64-shaderc
+            mingw-w64-ucrt-x86_64-vulkan-memory-allocator
+      - name: Build runtime without game content
+        run: make -j2
+      - name: Run native parser and headless setup tests
+        run: |
+          clang -Wall -Wextra -Iruntime tools/test_launcher_cli.c runtime/launcher_cli.c build/rt/platform/windows_rc.o -o build/test_launcher_cli.exe
+          python -X utf8 tools/test_recomplauncher.py --exe build/primerecomp.exe --parser build/test_launcher_cli.exe -v
+      - name: Stage runtime and manifest for review
+        run: |
+          mkdir -p build/launcher-review
+          cp build/primerecomp.exe build/launcher-review/
+          python tools/recomplauncher.py --platform windows --program primerecomp.exe --output build/launcher-review/recomplauncher.json
+          ldd build/primerecomp.exe | awk '/ucrt64/ && !/vulkan-1/ {print $3}' | sort -u | xargs -I{} cp -u {} build/launcher-review/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PrimeRecomp-Windows-runtime-review
+          path: build/launcher-review
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the documented Linux environment
+        run: docker build -t primerecomp-integration -f tools/linux/Containerfile tools/linux
+      - name: Build and test the AppImage without game content
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src -e JOBS=2 primerecomp-integration bash tools/test_recomplauncher_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PrimeRecomp-Linux-AppImage-review
+          path: build/dist/*.AppImage
