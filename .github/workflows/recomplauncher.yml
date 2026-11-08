@@ -54,7 +54,7 @@ jobs:
             mingw-w64-ucrt-x86_64-shaderc
             mingw-w64-ucrt-x86_64-vulkan-memory-allocator
       - name: Build runtime without game content
-        run: make -j2
+        run: make -j2 build/primerecomp.exe
       - name: Run native parser and headless setup tests
         run: |
           clang -Wall -Wextra -Iruntime tools/test_launcher_cli.c runtime/launcher_cli.c build/rt/platform/windows_rc.o -o build/test_launcher_cli.exe
