@@ -143,3 +143,4 @@ void backend_execute(uint64_t handle);            // run a recorded command list
 void backend_present(NvnTexture *tex);            // show a texture in the window
 void backend_texture_destroyed(NvnTexture *tex);
 void backend_pool_written(uint64_t addr, uint64_t size);
+void backend_pool_created(uint64_t addr, uint64_t size, uint32_t flags);  // nvnMemoryPoolInitialize
