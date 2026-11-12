@@ -35,6 +35,7 @@ Settings g_settings = {
     .frame_rate = 60,
     .vsync = true,
     .hint_on_l3 = true,
+    .crosshair = true,
     .texture_mods = true,
     .hdr_peak = 1000,
     .hdr_paper = 200,
@@ -233,6 +234,7 @@ void settings_load(void) {
         else if (!strcmp(key, "weapon_fov"))
             g_settings.weapon_fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
         else if (!strcmp(key, "skippable_cutscenes")) g_settings.skippable_cutscenes = atoi(val) != 0;
+        else if (!strcmp(key, "crosshair")) g_settings.crosshair = atoi(val) != 0;
         else if (!strcmp(key, "hint_on_l3")) g_settings.hint_on_l3 = atoi(val) != 0;
         else if (!strcmp(key, "hint_seconds")) g_settings.hint_seconds = g_hint_waits[settings_hint_wait_index(atoi(val))];
         else if (!strcmp(key, "hint_minutes"))  // (before 2026-10-29: whole minutes)
@@ -363,6 +365,7 @@ static void write_settings(void *o) {
             g_settings.hdr_paper);
     put(o, "fov = %d\nweapon_fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.weapon_fov,
             g_settings.skippable_cutscenes, g_settings.gyro);
+    put(o, "crosshair = %d\n", g_settings.crosshair);
     put(o, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
             g_settings.mouse_invert);
     put(o, "flick_stick = %d\n", g_settings.flick_stick);

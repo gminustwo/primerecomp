@@ -446,6 +446,9 @@ static void tab_display(void) {
                    "(inventory, log book, options). Fill the screen: stretched sideways to the screen's edges - on a "
                    "32:9 screen, twice as wide. Middle 16:9: as the game draws them, in the middle of the screen.");
     }
+    opt_toggle("Crosshair", &g_settings.crosshair, true,
+               "The aiming crosshair in the middle of the Combat Visor (and the Pointer control scheme's). Off: no "
+               "crosshair; the lock-on, scan and grapple markers still show what you can target.");
     bool fs = window_fullscreen();
     if (opt_toggle("Fullscreen", &fs, false, "Fills the screen. Also: F11, Alt+Enter or Cmd+Ctrl+F.")) {
         g_settings.fullscreen = fs;
