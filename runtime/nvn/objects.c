@@ -207,6 +207,7 @@ NVN(nvnMemoryPoolInitialize) {
     p->storage = G(uint64_t, A(1), 0x10);
     p->size = G(uint64_t, A(1), 0x18);
     p->flags = G(uint32_t, A(1), 8);
+    backend_pool_created(p->storage, p->size, p->flags);
     SET_HOST(A(0), p);
     RET(1);
 }
