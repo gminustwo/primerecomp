@@ -20,6 +20,14 @@
 #include "../inflate.h"
 #include "../../settings.h"
 
+// Global memory as a window onto the heap, placed by gbase (exec.c gmem_info, translate.c maxwell_gmem_window): on
+// macOS, where an import's pinned pages count against what the GPU may use at once, only the game's memory pools.
+#ifdef __APPLE__
+#define GMEM_WINDOW true
+#else
+#define GMEM_WINDOW false
+#endif
+
 static uint64_t stat_draws, stat_skipped, stat_passes, stat_dispatches, stat_wait_ns, stat_flushes, stat_feedback_copies;
 // skipped draws / dispatches by reason (the stats line): compute program not ready, no program, graphics program not
 // ready (translation failed or still compiling), topology, pipeline not ready, skip lists
@@ -1640,6 +1648,7 @@ static void translate_program(void *arg) {
     Prog *p = arg;
     maxwell_gmem_base = HEAP_BASE;
     maxwell_gmem_size = HEAP_MAX;
+    maxwell_gmem_window = GMEM_WINDOW;
     pthread_mutex_lock(&translate_lock);
     p->vi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[0], p->cmax[0], STAGE_VERTEX, &p->vkey);
     if (p->vi->msl && (p->has_gs || p->gs_emul)) {  // the geometry shader reads the vertex shader's outputs, the fragment
@@ -3237,9 +3246,16 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
     return ubo_span(guest_copy(r.addr, size), size);
 }
 
-// Global memory (shader LDG/STG, maxwell_gmem_base = HEAP_BASE): the guest heap imported as a GPU buffer
-// (VK_EXT_external_memory_host), zero-copy, so compute results land in guest
-// memory. The import pins its pages, so it covers only the heap the game set up (SetHeapSize), made on first use.
+// Global memory (shader LDG/STG, maxwell_gmem_base = HEAP_BASE): a window onto the guest heap imported as a GPU buffer
+// (VK_EXT_external_memory_host), zero-copy, so compute results land in guest memory. Shaders find the window through
+// gbase (translate.c: its heap offset and size); vertex / index data outside it is copied. The import pins its pages,
+// so it covers only the heap the game set up (SetHeapSize), made on first use - and on macOS only the part holding the
+// game's memory pools, all the GPU can address on the Switch (a pool's GPU address is its CPU address: objects.c).
+// There the GPU's memory is the Mac's own and pinned pages count against what the GPU may use at once: the whole
+// 3.3 GB heap left an 8 GB MacBook (5.4 GB for the GPU) out of memory - "Insufficient Memory", device lost - wherever
+// a new effect's resources came on top (issue #66); the pools take ~1.8 GB of it in the first rooms. The window grows
+// in GMEM_PIECE steps as pools appear (the game makes them from the top of the heap down while loading); a window
+// replaced by a larger one stays alive until the submissions that may use it are done (gmem_dead).
 // It stops at the device's largest allocation (g_vk.max_alloc: 2 GB on Mesa's llvmpipe, whose vertex fetches from a
 // larger import came out empty - the title screen's logo and movie): vertex / index data past that is copied.
 // LARECOMP_VK_NO_GMEM=1: no import, reads return zero.
@@ -3256,20 +3272,61 @@ static VkDeviceMemory gmem_mem;                              // (host-pointer im
 static VkDeviceMemory gmem_piece[HEAP_MAX / GMEM_PIECE + 1];  // (dma-buf import) bound into gmem_buf
 static int gmem_npiece;
 static bool gmem_untracked;  // (Linux) a host-pointer import: no write tracking, no vertex cache
-static uint64_t gmem_size;
+static uint64_t gmem_base, gmem_size;  // the window: heap offsets [gmem_base, gmem_base + gmem_size)
+// The heap span of the game's memory pools (nvnMemoryPoolInitialize on the game's threads; heap offsets)
+static _Atomic uint64_t pool_lo = UINT64_MAX, pool_hi;
+
+void backend_pool_created(uint64_t addr, uint64_t size, uint32_t flags) {
+    if ((flags & NVN_POOL_VIRTUAL) || !size || addr < HEAP_BASE || addr - HEAP_BASE >= HEAP_MAX) return;  // (virtual:
+    uint64_t lo = addr - HEAP_BASE, hi = lo + size, v;                                                       // other pools' pages)
+    for (v = atomic_load(&pool_lo); lo < v && !atomic_compare_exchange_weak(&pool_lo, &v, lo);) {}
+    for (v = atomic_load(&pool_hi); hi > v && !atomic_compare_exchange_weak(&pool_hi, &v, hi);) {}
+}
+
+// Windows replaced by a larger one: freed once the submissions that may still use them are done.
+#define GMEM_DEAD 8
+static struct { VkBuffer buf; VkDeviceMemory mem, pieces[HEAP_MAX / GMEM_PIECE + 1]; int npieces; uint64_t seq; } gmem_dead[GMEM_DEAD];
+static int gmem_ndead;
+
+static void gmem_free(VkBuffer buf, VkDeviceMemory mem, const VkDeviceMemory *pieces, int npieces) {
+    if (buf) vkDestroyBuffer(g_vk.dev, buf, NULL);
+    if (mem) vkFreeMemory(g_vk.dev, mem, NULL);
+    for (int i = 0; i < npieces; i++) vkFreeMemory(g_vk.dev, pieces[i], NULL);
+}
+
+static void gmem_free_dead(bool all) {
+    uint64_t done = all ? ~0ull : vk_completed_seq();
+    int k = 0;
+    for (int i = 0; i < gmem_ndead; i++) {
+        if (gmem_dead[i].seq > done) { gmem_dead[k++] = gmem_dead[i]; continue; }
+        gmem_free(gmem_dead[i].buf, gmem_dead[i].mem, gmem_dead[i].pieces, gmem_dead[i].npieces);
+    }
+    gmem_ndead = k;
+}
 
 static void gmem_release(void) {  // (nothing submitted may still use it)
-    if (gmem_buf) vkDestroyBuffer(g_vk.dev, gmem_buf, NULL);
-    if (gmem_mem) vkFreeMemory(g_vk.dev, gmem_mem, NULL);
-    for (int i = 0; i < gmem_npiece; i++) vkFreeMemory(g_vk.dev, gmem_piece[i], NULL);
+    gmem_free(gmem_buf, gmem_mem, gmem_piece, gmem_npiece);
     gmem_buf = VK_NULL_HANDLE;
     gmem_mem = VK_NULL_HANDLE;
     gmem_npiece = 0;
 }
 
-static bool gmem_import_dmabuf(uint64_t size, VkBuffer *pbuf, VkDeviceMemory *pieces, int *npieces) {
+// The current window, replaced: freed after the pending submission (draws recorded into it may use it). The caller
+// has made room (gmem_import: no waiting here - the pending submission isn't submitted yet).
+static void gmem_retire(void) {
+    gmem_dead[gmem_ndead].buf = gmem_buf;
+    gmem_dead[gmem_ndead].mem = gmem_mem;
+    memcpy(gmem_dead[gmem_ndead].pieces, gmem_piece, sizeof gmem_piece[0] * (size_t)gmem_npiece);
+    gmem_dead[gmem_ndead].npieces = gmem_npiece;
+    gmem_dead[gmem_ndead++].seq = vk_pending_seq();
+    gmem_buf = VK_NULL_HANDLE;
+    gmem_mem = VK_NULL_HANDLE;
+    gmem_npiece = 0;
+}
+
+static bool gmem_import_dmabuf(uint64_t base, uint64_t size, VkBuffer *pbuf, VkDeviceMemory *pieces, int *npieces) {
 #ifndef __linux__
-    (void)size; (void)pbuf; (void)pieces; (void)npieces;
+    (void)base; (void)size; (void)pbuf; (void)pieces; (void)npieces;
     return false;
 #else
     static int no = -1;
@@ -3291,7 +3348,7 @@ static bool gmem_import_dmabuf(uint64_t size, VkBuffer *pbuf, VkDeviceMemory *pi
     if (GMEM_PIECE % req.alignment) why = "piece alignment";
     for (uint64_t off = 0; off < size && !why; off += GMEM_PIECE, n++) {
         uint64_t len = size - off < GMEM_PIECE ? size - off : GMEM_PIECE;
-        int fd = plat_guest_dmabuf(HEAP_BASE + off, len);
+        int fd = plat_guest_dmabuf(HEAP_BASE + base + off, len);
         if (fd < 0) { why = "no dma-buf (udmabuf)"; break; }
         VkMemoryFdPropertiesKHR fp = {.sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR};
         uint32_t types = fdprops(g_vk.dev, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT, fd, &fp) == VK_SUCCESS
@@ -3333,21 +3390,26 @@ static bool gmem_import_dmabuf(uint64_t size, VkBuffer *pbuf, VkDeviceMemory *pi
 #endif
 }
 
-static bool gmem_import(uint64_t size) {
+// The window [base, base + size) (heap offsets, GMEM_PIECE-aligned base) imported, replacing the current one.
+static bool gmem_import(uint64_t base, uint64_t size) {
+    if (gmem_buf && gmem_ndead == GMEM_DEAD) gmem_free_dead(false);
+    if (gmem_buf && gmem_ndead == GMEM_DEAD) return false;  // (old windows still in use: the current one meanwhile)
     VkBuffer buf;
     VkDeviceMemory mem = VK_NULL_HANDLE, pieces[HEAP_MAX / GMEM_PIECE + 1];
     int npieces = 0;
-    if (!gmem_import_dmabuf(size, &buf, pieces, &npieces)) {
+    void *host = (void *)(uintptr_t)(HEAP_BASE + base);
+    uint64_t t0 = SDL_GetTicksNS();
+    if (!gmem_import_dmabuf(base, size, &buf, pieces, &npieces)) {
         PFN_vkGetMemoryHostPointerPropertiesEXT props =
             (PFN_vkGetMemoryHostPointerPropertiesEXT)vkGetDeviceProcAddr(g_vk.dev, "vkGetMemoryHostPointerPropertiesEXT");
         VkMemoryHostPointerPropertiesEXT mp = {.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
         if (!g_vk.host_import || !props ||
-            props(g_vk.dev, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, (void *)(uintptr_t)HEAP_BASE, &mp) != VK_SUCCESS ||
+            props(g_vk.dev, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, host, &mp) != VK_SUCCESS ||
             !mp.memoryTypeBits)
             return false;
         VkImportMemoryHostPointerInfoEXT imp = {.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
                                                 .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
-                                                .pHostPointer = (void *)(uintptr_t)HEAP_BASE};
+                                                .pHostPointer = host};
         VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .pNext = &imp, .allocationSize = size,
                                    .memoryTypeIndex = (uint32_t)__builtin_ctz(mp.memoryTypeBits)};
         if (vkAllocateMemory(g_vk.dev, &ai, NULL, &mem) != VK_SUCCESS) return false;
@@ -3361,36 +3423,65 @@ static bool gmem_import(uint64_t size) {
         gmem_untracked = true;
 #endif
     }
-    if (gmem_buf) {  // the heap grew: the old import may still be in use by submitted work
-        vk_wait_seq(submit_seq);
-        gmem_release();
-    }
+    if (gmem_buf) gmem_retire();  // (the window grew: draws recorded since the last submission may use the old one)
     gmem_buf = buf;
     gmem_mem = mem;
     memcpy(gmem_piece, pieces, sizeof pieces[0] * (size_t)npieces);
     gmem_npiece = npieces;
+    gmem_base = base;
     gmem_size = size;
-    if (npieces) LOG("[vk] guest heap imported for shader global memory: %llu MB, %d dma-bufs\n", (unsigned long long)(size >> 20), npieces);
-    else LOG("[vk] guest heap imported for shader global memory: %llu MB\n", (unsigned long long)(size >> 20));
+    LOG("[vk] guest heap imported for shader global memory: %llu MB", (unsigned long long)(size >> 20));
+    if (base || size < kernel_heap_size()) LOG(" at heap +%llu MB (the game's memory pools)", (unsigned long long)(base >> 20));
+    LOG(", %.1f ms", (SDL_GetTicksNS() - t0) / 1e6);
+    if (npieces) LOG(", %d dma-bufs", npieces);
+    LOG("\n");
     return true;
 }
 
-static uint64_t gmem_tried;  // heap size the import was last attempted for (gmem_info imports / re-imports)
+// The window wanted now: the heap the game set up; on macOS the span of its memory pools (in GMEM_PIECE steps).
+static bool gmem_want(uint64_t *lo, uint64_t *hi) {
+    uint64_t l = 0, h = (kernel_heap_size() + 0xFFFF) & ~0xFFFFull;
+    if (h > HEAP_MAX) h = HEAP_MAX;
+#if GMEM_WINDOW
+    uint64_t pl = atomic_load(&pool_lo), ph = atomic_load(&pool_hi);
+    if (pl >= ph) return false;  // (no pools yet: nothing the GPU can address)
+    l = pl & ~(GMEM_PIECE - 1);
+    if ((ph + GMEM_PIECE - 1) / GMEM_PIECE * GMEM_PIECE < h) h = (ph + GMEM_PIECE - 1) / GMEM_PIECE * GMEM_PIECE;
+#endif
+    if (h <= l) return false;  // (no heap yet, or pools past it)
+    if (g_vk.max_alloc && h - l > (g_vk.max_alloc & ~0xFFFFull)) {
+        h = l + (g_vk.max_alloc & ~0xFFFFull);
+        static bool said;
+        if (!said) said = true, LOG("[vk] guest heap import limited to %llu MB (the device's largest allocation)\n",
+                                    (unsigned long long)((h - l) >> 20));
+    }
+    *lo = l, *hi = h;
+    return h > l;
+}
+
+static uint64_t gmem_tried_lo, gmem_tried_hi;  // the window last attempted (gmem_info: not again and again)
 
 static VkDescriptorBufferInfo gmem_info(void) {
     static int off = -1;
     if (off < 0) off = getenv("LARECOMP_VK_NO_GMEM") != NULL || (!g_vk.host_import && !g_vk.dmabuf_import);
-    uint64_t want = (kernel_heap_size() + 0xFFFF) & ~0xFFFFull;
-    if (want > HEAP_MAX) want = HEAP_MAX;
-    if (g_vk.max_alloc && want > (g_vk.max_alloc & ~0xFFFFull)) {
-        want = g_vk.max_alloc & ~0xFFFFull;
-        static bool said;
-        if (!said) said = true, LOG("[vk] guest heap import limited to %llu MB (the device's largest allocation)\n",
-                                    (unsigned long long)(want >> 20));
-    }
-    if (!off && want > gmem_size && !gmem_import(want)) {
-        LOG("[vk] guest heap import failed (%llu MB): shader global memory reads return zero\n", (unsigned long long)(want >> 20));
-        off = 1;
+    if (gmem_ndead) gmem_free_dead(false);
+    uint64_t lo, hi;
+    if (!off && gmem_want(&lo, &hi) && (!gmem_buf || lo < gmem_base || hi > gmem_base + gmem_size)) {
+        if (gmem_buf) {  // (a window only grows: what it covered stays covered)
+            if (gmem_base < lo) lo = gmem_base;
+            if (gmem_base + gmem_size > hi) hi = gmem_base + gmem_size;
+        }
+        if ((lo != gmem_tried_lo || hi != gmem_tried_hi) && (gmem_tried_lo = lo, gmem_tried_hi = hi, !gmem_import(lo, hi - lo))) {
+            if (!gmem_buf) {
+                LOG("[vk] guest heap import failed (%llu MB): shader global memory reads return zero\n", (unsigned long long)((hi - lo) >> 20));
+                off = 1;
+            } else if (gmem_ndead < GMEM_DEAD) {  // (else: old windows still in use - tried again later)
+                LOG("[vk] guest heap window not grown to %llu MB (heap +%llu MB): the current one kept\n",
+                    (unsigned long long)((hi - lo) >> 20), (unsigned long long)(lo >> 20));
+            } else {
+                gmem_tried_lo = gmem_tried_hi = 0;
+            }
+        }
     }
     if (gmem_buf) return (VkDescriptorBufferInfo){gmem_buf, 0, gmem_size};
     static uint32_t zero[1024];
@@ -3411,6 +3502,7 @@ static VkBuffer gfast_buf;
 static VmaAllocation gfast_mem;
 static uint32_t gmap_tab[(GMAP_MAX + 1) * 4];  // this dispatch's table (stage_set copies it into binding 20)
 static VkBufferCopy gfast_cp[GMAP_MAX];       // its copies heap -> gfast_buf (reversed after a storing dispatch)
+static VkBuffer gfast_src;                    // the heap window they were made from (its offsets; kept alive: gmem_retire)
 static int gfast_n;
 
 static VkDescriptorBufferInfo gfast_info(void) {
@@ -3436,9 +3528,10 @@ static void gfast_prepare(VkCommandBuffer cb) {
     int n = 0;
     for (int i = 0; i < 16; i++) {  // heap offsets of the bound storage buffers, 256-aligned
         uint64_t a = st.sbuf[5][i].addr, sz = st.sbuf[5][i].size;
-        if (!a || !sz || a < HEAP_BASE || a - HEAP_BASE + sz > gmem_size) continue;
+        if (!a || !sz || a < HEAP_BASE + gmem_base || a - HEAP_BASE + sz > gmem_base + gmem_size) continue;
         uint64_t lo = (a - HEAP_BASE) & ~255ull, hi = (a - HEAP_BASE + sz + 255) & ~255ull;
-        if (hi > gmem_size) hi = gmem_size;
+        if (lo < gmem_base) lo = gmem_base;
+        if (hi > gmem_base + gmem_size) hi = gmem_base + gmem_size;
         int k = n++;
         while (k > 0 && r[k - 1].lo > lo) { r[k] = r[k - 1]; k--; }  // (insertion sort by start)
         r[k].lo = lo; r[k].hi = hi;
@@ -3453,7 +3546,7 @@ static void gfast_prepare(VkCommandBuffer cb) {
     for (int i = 0; i < m; i++) {
         uint64_t len = r[i].hi - r[i].lo;
         if (m > GMAP_MAX || off + len > GFAST_SIZE) return;  // (too much: the heap as before)
-        cp[i] = (VkBufferCopy){r[i].lo, off, len};
+        cp[i] = (VkBufferCopy){r[i].lo - gmem_base, off, len};
         gmap_tab[i * 4 + 0] = (uint32_t)r[i].lo;
         gmap_tab[i * 4 + 1] = (uint32_t)len;
         gmap_tab[i * 4 + 2] = (uint32_t)(off >> 2);
@@ -3472,6 +3565,7 @@ static void gfast_prepare(VkCommandBuffer cb) {
     vk_full_barrier(cb);
     gmap_tab[GMAP_MAX * 4] = (uint32_t)m;
     memcpy(gfast_cp, cp, (size_t)m * sizeof cp[0]);
+    gfast_src = gmem_buf;
     gfast_n = m;
 }
 
@@ -3481,7 +3575,7 @@ static void gfast_finish(VkCommandBuffer cb) {
     VkBufferCopy back[GMAP_MAX];
     for (int i = 0; i < gfast_n; i++) back[i] = (VkBufferCopy){gfast_cp[i].dstOffset, gfast_cp[i].srcOffset, gfast_cp[i].size};
     vk_full_barrier(cb);
-    vkCmdCopyBuffer(cb, gfast_buf, gmem_buf, (uint32_t)gfast_n, back);
+    vkCmdCopyBuffer(cb, gfast_buf, gfast_src, (uint32_t)gfast_n, back);
     vk_full_barrier(cb);
     gfast_n = 0;
 }
@@ -3599,7 +3693,7 @@ static bool vcache_lookup(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceS
     }
     if (!vc_on || gmem_untracked || !gmem_buf || size > VC_MAX_RANGE) return false;
     uint64_t lo = (addr - HEAP_BASE) & ~(VC_PAGE - 1), hi = (addr - HEAP_BASE + size + VC_PAGE - 1) & ~(VC_PAGE - 1);
-    if (hi > gmem_size) return false;
+    if (lo < gmem_base || hi > gmem_base + gmem_size) return false;  // (windows only grow: still inside at vc_flush)
     uint64_t pend = vk_pending_seq();
     uint64_t h = (lo * 0x9E3779B97F4A7C15ull) ^ (hi * 0xC2B2AE3D27D4EB4Full);
     uint32_t slot = (uint32_t)(h ^ (h >> 32)) & (VC_TAB - 1), free_slot = ~0u, old_slot = ~0u;
@@ -3683,9 +3777,9 @@ void vc_flush(void) {
         for (uint64_t p = e->lo / VC_PAGE; p < e->hi / VC_PAGE; p++) {
             if (e->gen && vc_page_gen[p] <= e->gen) continue;
             uint64_t o = p * VC_PAGE;
-            if (nc && cp[nc - 1].srcOffset + cp[nc - 1].size == o) { cp[nc - 1].size += VC_PAGE; continue; }
-            if (nc == 64) { nc = 1; cp[0] = (VkBufferCopy){e->lo, 0, e->hi - e->lo}; break; }  // (scattered: the whole range)
-            cp[nc++] = (VkBufferCopy){o, o - e->lo, VC_PAGE};
+            if (nc && cp[nc - 1].srcOffset + cp[nc - 1].size == o - gmem_base) { cp[nc - 1].size += VC_PAGE; continue; }
+            if (nc == 64) { nc = 1; cp[0] = (VkBufferCopy){e->lo - gmem_base, 0, e->hi - e->lo}; break; }  // (scattered: the whole range)
+            cp[nc++] = (VkBufferCopy){o - gmem_base, o - e->lo, VC_PAGE};
         }
         if (nc) {
             vkCmdCopyBuffer(cb, gmem_buf, e->buf, (uint32_t)nc, cp);
@@ -3704,11 +3798,15 @@ static bool guest_direct(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceSi
     static int copy = -1;
     if (copy < 0) copy = getenv("LARECOMP_VK_COPY_VERTICES") != NULL;
     if (copy || addr < HEAP_BASE) return false;
-    if (addr + size > HEAP_BASE + gmem_size && kernel_heap_size() != gmem_tried) { gmem_tried = kernel_heap_size(); gmem_info(); }
-    if (!gmem_buf || addr + size > HEAP_BASE + gmem_size) return false;
+    bool in = addr >= HEAP_BASE + gmem_base && addr + size <= HEAP_BASE + gmem_base + gmem_size;
+    if (!in) {  // (the window made / grown: a new pool's data)
+        gmem_info();
+        in = addr >= HEAP_BASE + gmem_base && addr + size <= HEAP_BASE + gmem_base + gmem_size;
+    }
+    if (!gmem_buf || !in) return false;
     if (vcache_lookup(addr, size, buf, off)) return true;
     *buf = gmem_buf;
-    *off = addr - HEAP_BASE;
+    *off = addr - HEAP_BASE - gmem_base;
     return true;
 }
 
@@ -3726,7 +3824,9 @@ void vk_exec_reset(void) {
     g_cs_n = 0;
     gcopy_gen++;
     gmem_release();
-    gmem_size = gmem_tried = 0;
+    gmem_free_dead(true);
+    gmem_base = gmem_size = gmem_tried_lo = gmem_tried_hi = 0;
+    atomic_store(&pool_lo, UINT64_MAX), atomic_store(&pool_hi, 0);  // (guest threads stopped: the next boot's pools)
     gmem_untracked = false;
     for (int i = 0; i < VC_TAB; i++)  // (the vertex cache: copies of the old pages)
         if (vc_tab[i].buf) vmaDestroyBuffer(g_vk.vma, vc_tab[i].buf, vc_tab[i].mem);
@@ -3878,11 +3978,14 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
     for (int i = 0; i < p->nbinds; i++) {
         VkBindingInfo *b = &p->binds[i];
         if (b->set != set || b->type != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
-            (b->binding != 18 && b->binding != GMAP_BUFFER_INDEX)) continue;
+            (b->binding != 18 && b->binding != GMAP_BUFFER_INDEX && b->binding != GBASE_BUFFER_INDEX)) continue;
         w[n] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = b->binding,
                                       .descriptorCount = 1, .descriptorType = b->type};
         if (b->binding == GMAP_BUFFER_INDEX) {  // (compute) this dispatch's fast-copy table: gfast_prepare
             bi[n] = ubo_span(vk_transient_copy(gmap_tab, sizeof gmap_tab, 256), sizeof gmap_tab);
+        } else if (b->binding == GBASE_BUFFER_INDEX) {  // the heap window binding 17 holds (gmem_info, above): where, how big
+            uint32_t gb[4] = {(uint32_t)gmem_base, gmem_buf ? (uint32_t)gmem_size : 0, 0, 0};
+            bi[n] = ubo_span(vk_transient_copy(gb, sizeof gb, 256), sizeof gb);
         } else {
             for (int t = 0; t < si->ntex && t < 64; t++) { rs[1 + t][0] = tex_sc[sg][t][0]; rs[1 + t][1] = tex_sc[sg][t][1]; }
             bi[n] = ubo_span(copy_dedupe(sg ? DEDUPE_RSCALE_F : DEDUPE_RSCALE_V, rs, sizeof rs, 256), sizeof rs);
@@ -3931,6 +4034,7 @@ static CsProg *compute_program(NvnProgram *np) {
     if (n < 256) { tab[n].addr = ss->code_addr; tab[n].cp = cp; g_cs_n = n + 1; }
     maxwell_gmem_base = HEAP_BASE;
     maxwell_gmem_size = HEAP_MAX;
+    maxwell_gmem_window = GMEM_WINDOW;
     ShaderKey k = {0};
     k.glsl = 1;
     pthread_mutex_lock(&translate_lock);
@@ -5172,7 +5276,7 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
             LOG("[draw]   sbuf%d: vs %llx+%llu fs %llx+%llu (gmem window %llx+%llx)\n", i,
                 (unsigned long long)st.sbuf[0][i].addr, (unsigned long long)st.sbuf[0][i].size,
                 (unsigned long long)st.sbuf[1][i].addr, (unsigned long long)st.sbuf[1][i].size,
-                (unsigned long long)HEAP_BASE, (unsigned long long)gmem_size);
+                (unsigned long long)(HEAP_BASE + gmem_base), (unsigned long long)gmem_size);
     const char *dd = getenv("LARECOMP_DUMP_DRAW");  // (test) <count>: that draw's indices, vertex streams and vertex
     if (dd && strtoull(dd, NULL, 10) == r->x[2]) {   // cbufs, as build/draw_<count>_*.bin (+ .txt: what they are)
         char path[160];
