@@ -22,7 +22,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "nxpkg.h"
 #include "paths.h"
 #include "platform.h"  // (Windows: a POSIX mkdir)
 
@@ -266,10 +265,58 @@ static int newest_first(const void *a, const void *b) {
     return x < y ? 1 : x > y ? -1 : 0;
 }
 
+// The Switch emulators' data folders on this computer: Ryujinx's (saves in bis/) and yuzu's and its successors'
+// (nand/), in the user's config / data folder
+typedef struct { char name[16]; char root[1100]; bool ryujinx; } EmuDir;
+static int emu_dirs(EmuDir *out, int max) {
+    static const struct { const char *dir, *name; } EMUS[] = {
+        {"Ryujinx", "Ryujinx"}, {"yuzu", "yuzu"}, {"suyu", "suyu"}, {"sudachi", "Sudachi"},
+        {"citron", "Citron"},   {"eden", "Eden"}, {"torzu", "torzu"}};
+    int n = 0;
+    char p[1100];
+#define ADD(i, ...)                                                                                    \
+    do {                                                                                               \
+        snprintf(p, sizeof p, __VA_ARGS__);                                                            \
+        bool dup = false;                                                                              \
+        for (int k = 0; k < n; k++) dup |= !strcmp(out[k].root, p);                                    \
+        if (n < max && !dup && is_dir(p)) {                                                            \
+            snprintf(out[n].root, sizeof out[n].root, "%s", p);                                        \
+            snprintf(out[n].name, sizeof out[n].name, "%s", EMUS[i].name);                             \
+            out[n++].ryujinx = (i) == 0;                                                               \
+        }                                                                                              \
+    } while (0)
+    const char *home = getenv("HOME");
+    (void)home;
+#ifdef _WIN32
+    const char *appdata = getenv("APPDATA");
+    if (appdata)
+        for (int i = 0; i < (int)(sizeof EMUS / sizeof *EMUS); i++) ADD(i, "%s\\%s", appdata, EMUS[i].dir);
+#elif defined(__APPLE__)
+    if (home)
+        for (int i = 0; i < (int)(sizeof EMUS / sizeof *EMUS); i++)
+            ADD(i, "%s/Library/Application Support/%s", home, EMUS[i].dir);
+#else
+    const char *cfg = getenv("XDG_CONFIG_HOME"), *data = getenv("XDG_DATA_HOME");
+    if (cfg && *cfg) ADD(0, "%s/Ryujinx", cfg);
+    else if (home) ADD(0, "%s/.config/Ryujinx", home);
+    if (home) {  // (Flatpak: its own config folder)
+        ADD(0, "%s/.var/app/io.github.ryubing.Ryujinx/config/Ryujinx", home);
+        ADD(0, "%s/.var/app/org.ryujinx.Ryujinx/config/Ryujinx", home);
+    }
+    for (int i = 1; i < (int)(sizeof EMUS / sizeof *EMUS); i++) {
+        if (data && *data) ADD(i, "%s/%s", data, EMUS[i].dir);
+        else if (home) ADD(i, "%s/.local/share/%s", home, EMUS[i].dir);
+    }
+    if (home) ADD(1, "%s/.var/app/org.yuzu_emu.yuzu/data/yuzu", home);
+#endif
+#undef ADD
+    return n;
+}
+
 int saves_find(FoundSave *out, int max) {
     int n = 0;
-    NxEmuDir emu[16];
-    for (int i = 0, ne = nx_emu_dirs(emu, 16); i < ne; i++) {
+    EmuDir emu[16];
+    for (int i = 0, ne = emu_dirs(emu, 16); i < ne; i++) {
         if (emu[i].ryujinx) find_ryujinx(emu[i].root, emu[i].name, out, &n, max);
         else find_yuzu(emu[i].root, emu[i].name, out, &n, max);
     }

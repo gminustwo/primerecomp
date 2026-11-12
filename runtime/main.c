@@ -254,7 +254,7 @@ int main(int argc, char **argv) {
     if (options.prepare) {
         if (!freopen("primerecomp-setup.log", "w", stderr)) return 1;
         setvbuf(stderr, NULL, _IONBF, 0);
-        return prime_prepare(options.game, options.keys, options.title_keys);
+        return prime_prepare(options.game);
     }
     if (options.play && !prime_game_ready(root)) skip_launcher = false;
     {   // (known from here: the start screen reads game files too - the shader list, runtime/nvn/vulkan/exec.c)

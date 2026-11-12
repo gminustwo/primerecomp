@@ -34,7 +34,6 @@ extern "C" {
 #include "gamebuild.h"
 #include "launcher_cli.h"
 #include "gamelib.h"
-#include "nxpkg.h"
 #include "romfs_build.h"
 #include "saveimport.h"
 #include "settings.h"
@@ -80,8 +79,6 @@ static bool file_exists(const std::string &p) {
     return stat(p.c_str(), &st) == 0;
 }
 
-static const char *const PKG_MOVED = "Game package moved or changed";  // (check_copied_files: set up from it)
-
 // The copied game files alone ("" = there), without the game code built from them
 static std::string check_copied_files(const std::string &root) {
     FILE *f = fopen((root + "/exefs/main").c_str(), "rb");
@@ -91,15 +88,8 @@ static std::string check_copied_files(const std::string &root) {
     size_t n = fread(id, 1, 8, f);
     fclose(f);
     if (n != 8 || memcmp(id, BUILD_ID, 8)) return "Wrong game version (needs v1.0.0)";
-    if (file_exists(root + "/romfs/Worlds")) return "";
-    if (file_exists(root + "/romfs.src")) {  // set up from a game package: read from there (runtime/nxpkg.c)
-        char why[512];
-        NxRomfs *r = nx_romfs_open((root + "/romfs.src").c_str(), why, sizeof why);
-        if (!r) return PKG_MOVED;
-        nx_romfs_close(r);
-        return "";
-    }
-    return "Game data missing";
+    if (!file_exists(root + "/romfs/Worlds")) return "Game data missing";
+    return "";
 }
 
 // The game's own data files all in a romfs folder (runtime/romfs_files.h; 341 stat calls, so not every frame): "" =
@@ -121,7 +111,7 @@ static const char *const FILES_INCOMPLETE = "Game files incomplete";  // (check_
 // "" = ready to play, else what is wrong (detail: for FILES_INCOMPLETE, which files)
 static std::string check_game_files(const std::string &root, std::string *detail = NULL) {
     std::string why = check_copied_files(root);
-    if (why.empty() && file_exists(root + "/romfs/Worlds")) {  // (not read from a game package: romfs.src)
+    if (why.empty()) {
         std::string m = missing_game_data(root + "/romfs");
         if (!m.empty()) {
             if (detail) *detail = m;
@@ -130,6 +120,19 @@ static std::string check_game_files(const std::string &root, std::string *detail
     }
     if (why.empty() && !gamelib_present(root.c_str())) return "Game code not built yet";
     return why;
+}
+
+// v0.0.7 - v0.0.10 could set up from a game package (NSP / XCI), its game data read from the package as the game
+// played. That's gone: what such a setup left (romfs.src, which said how to read the package) is deleted, and the start
+// screen asks for the extracted folders instead. true: there was one.
+static bool remove_package_setup(void) {
+    bool had = false;
+    for (const char *n : {"romfs.src", "romfs.src.tmp"})
+        if (file_exists(g_root + "/" + n)) {
+            had = true;
+            if (rt_remove_game_file(g_root.c_str(), n)) fprintf(stderr, "[launcher] removed %s (a game package setup)\n", n);
+        }
+    return had;
 }
 
 // Updates keep the game files: in the same data root (macOS, Linux; on Windows a copy unpacked over the earlier one)
@@ -155,9 +158,7 @@ static std::string parent_dir(const std::string &p) {
 // The player brings their own game files: a folder holding exefs/ and romfs/. They're copied into the data root (APFS
 // clones / hard links where the file system allows); the game reads romfs/ in place (runtime/services/fs.c).
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
-static std::string g_src;           // the picked folder, or game package (NSP / XCI)
-static std::string g_title_keys;     // explicit CLI title.keys; never staged beside the package
-static std::string g_keys;          // a keys file picked (prod.keys; "" = the ones nx_find_keys finds)
+static std::string g_src;           // the picked folder
 static std::string g_job;           // current setup step / result for the status line
 static std::string g_job_hint;      // a failure: what to do about it (shown under it)
 static bool g_busy, g_job_failed;
@@ -171,26 +172,24 @@ static void set_job(const std::string &s, bool failed = false, const std::string
     pthread_mutex_unlock(&g_lock);
 }
 
-// Setup failures: a short headline and what to do next (also LARECOMP_LAUNCHER_SHOT=<f>:fail<1-14>, screenshots);
-// detail: the reader's own words, after the hint
+// Setup failures: a short headline and what to do next (also LARECOMP_LAUNCHER_SHOT=<f>:fail<1-8>, screenshots);
+// detail: which files, after the hint
 enum { FAIL_NOT_FOUND = 1, FAIL_UNUSABLE, FAIL_COPY, FAIL_VERSION, FAIL_MISSING, FAIL_BUILD, FAIL_NO_EXEFS, FAIL_NO_ROMFS,
-       FAIL_NO_KEYS, FAIL_KEYS, FAIL_PACKAGE, FAIL_OTHER_GAME, FAIL_PACKAGES, FAIL_COMPRESSED, FAIL_COUNT };
+       FAIL_COUNT };
 static void set_failure(int k, const std::string &detail = "") {
     static const char *const head[] = {"", "No game files found in that folder", "Those files can't be used",
                                        "Setup didn't finish", "Wrong version of the game", "Game files incomplete",
                                        "The game code didn't build", "Found the romfs, but no exefs",
-                                       "Found the exefs, but no romfs", "No keys file found",
-                                       "Your keys can't open that game package", "That game package can't be read",
-                                       "That's another game", "More than one game package in that folder",
-                                       "Compressed game packages can't be used"};
+                                       "Found the exefs, but no romfs"};
     static const char *const hint[] = {
         "",
-        "Choose the folder that holds the game files, or the game's NSP / XCI file.",
-        "Choose the folder that holds the game files, or the game's NSP / XCI file.",
+        "Choose the folder that holds the game's extracted exefs and romfs folders.",
+        "Game packages (NSP, XCI) can't be used: choose the folder that holds the game's extracted exefs and romfs "
+        "folders.",
         "Make sure there's about 16 GB free and try again.",
         "PrimeRecomp needs version 1.0.0 of the game, without updates.",
         "Some of the game's files are missing. Extract the game's romfs again (in Ryujinx: right-click the game, "
-        "Extract Data -> RomFS) and choose that folder, or choose the game's NSP / XCI file.",
+        "Extract Data -> RomFS) and choose that folder.",
         "Make sure there's about 2 GB free and try again. If it keeps happening, report it on GitHub.",
         // (issue #8: a romfs alone chosen, "no game files" didn't say what was missing)
         "The game's code is in its exefs folder (main, main.npdm), extracted apart from the romfs: in Ryujinx, "
@@ -198,18 +197,7 @@ static void set_failure(int k, const std::string &detail = "") {
         "one, or the folder holding both.",
         "The game's data is in its romfs folder (with Worlds inside), extracted apart from the exefs: in Ryujinx, "
         "right-click the game, Extract Data -> RomFS. Put the exefs and romfs folders side by side and choose either "
-        "one, or the folder holding both.",
-        // (a game package: NSP / XCI, read with the player's own console keys)
-        "Reading a game package takes your Switch's keys (prod.keys, dumped from your own console). Put prod.keys "
-        "next to the package - or in Ryujinx's or yuzu's keys folder, where they already are if you play the game "
-        "there - and try again.",
-        "The keys may be from an older system version than the game: dump them again from your console, and put "
-        "prod.keys next to the package.",
-        "Make sure the whole file was copied, or dump the game again.",
-        "Choose Metroid Prime Remastered's game package.",
-        "Choose the game's NSP or XCI file itself.",
-        "NSZ / XCZ files are compressed: decompress the game to an NSP or XCI first (as with nsz -D), or use its "
-        "extracted exefs and romfs folders."};
+        "one, or the folder holding both."};
     static_assert(sizeof head / sizeof *head == FAIL_COUNT && sizeof hint / sizeof *hint == FAIL_COUNT, "a line each");
     if (k >= 1 && k < FAIL_COUNT) set_job(head[k], true, detail.empty() ? hint[k] : std::string(hint[k]) + " (" + detail + ")");
 }
@@ -219,21 +207,10 @@ static bool is_dir(const std::string &p) {
     return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 }
 
-static std::string lower_ext(const std::string &n) {
-    std::string ext = n.size() > 4 ? n.substr(n.size() - 4) : "";
-    for (auto &ch : ext) ch = (char)tolower((unsigned char)ch);
-    return ext;
-}
-static bool is_package(const std::string &p) {  // (NSP / XCI: read as they are, runtime/nxpkg.c)
-    std::string ext = lower_ext(p);
-    return (ext == ".nsp" || ext == ".xci") && file_exists(p) && !is_dir(p);
-}
-
 // exefs: the folder with main and main.npdm; romfs: the folder with Worlds (the game's data root). Found
-// in the picked folder or a few levels below it (some folder layouts nest them). pkgs: the game packages (NSP / XCI)
-// there; compressed: NSZ / XCZ, or loose NCAs (an unpacked package), which can't be used.
-static void find_game(const std::string &dir, int depth, std::string &exefs, std::string &romfs,
-                      std::vector<std::string> &pkgs, bool &compressed) {
+// in the picked folder or a few levels below it (some folder layouts nest them). unusable: game packages there (NSP,
+// XCI, NSZ, XCZ, NCA), which PrimeRecomp doesn't read.
+static void find_game(const std::string &dir, int depth, std::string &exefs, std::string &romfs, bool &unusable) {
     if (depth > 4 || (!exefs.empty() && !romfs.empty())) return;
     if (exefs.empty() && file_exists(dir + "/main") && file_exists(dir + "/main.npdm")) exefs = dir;
     if (romfs.empty() && is_dir(dir + "/Worlds")) romfs = dir;
@@ -243,28 +220,14 @@ static void find_game(const std::string &dir, int depth, std::string &exefs, std
     while (struct dirent *e = readdir(d)) {
         std::string n = e->d_name;
         if (n[0] == '.') continue;
-        std::string ext = lower_ext(n);
-        if (ext == ".nca" || ext == ".nsz" || ext == ".xcz") compressed = true;
-        if (is_package(dir + "/" + n)) pkgs.push_back(dir + "/" + n);
+        std::string ext = n.size() > 4 ? n.substr(n.size() - 4) : "";
+        for (auto &ch : ext) ch = (char)tolower((unsigned char)ch);
+        if (ext == ".xci" || ext == ".nsp" || ext == ".nca" || ext == ".nsz" || ext == ".xcz") unusable = true;
         if (n != "Worlds" && is_dir(dir + "/" + n)) sub.push_back(dir + "/" + n);
     }
     closedir(d);
     std::sort(sub.begin(), sub.end());
-    for (auto &s : sub) find_game(s, depth + 1, exefs, romfs, pkgs, compressed);
-}
-
-// Of several packages, this game's: by its name or title id in the file name, else the only one
-static std::string pick_package(const std::vector<std::string> &pkgs) {
-    if (pkgs.size() == 1) return pkgs[0];
-    std::vector<std::string> hits;
-    for (auto &p : pkgs) {
-        std::string n = p.substr(p.find_last_of("/\\") + 1);
-        for (auto &ch : n) ch = (char)tolower((unsigned char)ch);
-        if (n.find("010012101468c000") != std::string::npos ||
-            (n.find("prime") != std::string::npos && n.find("remaster") != std::string::npos))
-            hits.push_back(p);
-    }
-    return hits.size() == 1 ? hits[0] : "";
+    for (auto &s : sub) find_game(s, depth + 1, exefs, romfs, unusable);
 }
 
 // The ExeFS's own files (main, main.npdm, rtld, sdk, subsdk0-9): an exefs and a romfs extracted into one folder are
@@ -314,7 +277,7 @@ static float extract_progress(void) {
 // over. Not one per logical core: every core at full load for minutes is what brings down a PC with an unstable CPU
 // (2026-10-31, an i9-14900K on a 2023 BIOS: 32 compiles, corrected machine-check errors all through, then a fatal one
 // and a reboot, twice), and the PC stays usable meanwhile. LARECOMP_BUILD_JOBS=<n> sets it.
-static std::string g_prepare_source;  // headless setup's validated source; never key contents
+static std::string g_prepare_source;  // headless setup's validated source
 static bool note_setup_source(void) {
     if (g_prepare_source.empty()) return true;
     FILE *f = fopen(".primerecomp-setup-source.tmp", "wb");
@@ -358,11 +321,8 @@ static bool take_copy(const std::string &from) {
     g_total = rbytes;
     set_job("Bringing over your game files...");
     fprintf(stderr, "[launcher] game files from %s%s\n", from.c_str(), reuse_code ? " (game code too)" : "");
-    // (set up there from a game package: its romfs.src, which says where the package is)
-    bool from_pkg = !is_dir(from + "/romfs") && file_exists(from + "/romfs.src");
     if (!romfs_copy_tree((from + "/exefs").c_str(), (g_root + "/exefs").c_str(), NULL) ||
-        !(from_pkg ? romfs_copy_file((from + "/romfs.src").c_str(), (g_root + "/romfs.src").c_str(), NULL)
-                   : romfs_copy_tree((from + "/romfs").c_str(), (g_root + "/romfs").c_str(), setup_progress))) {
+        !romfs_copy_tree((from + "/romfs").c_str(), (g_root + "/romfs").c_str(), setup_progress)) {
         set_failure(FAIL_COPY);
         return false;
     }
@@ -374,51 +334,15 @@ static bool take_copy(const std::string &from) {
     return build_game_code();
 }
 
-// The game files from a game package (NSP / XCI, issue #19): its ExeFS written out, its RomFS read from the package
-// itself as the game plays (romfs.src: runtime/nxpkg.c, runtime/services/fs.c) - nothing big copied. Keys: the file
-// chosen, then the ones nx_find_keys finds (beside the package, the emulators'), until one opens it.
-static bool setup_from_package(const std::string &pkg, const std::string &chosen_keys) {
-    std::vector<std::string> keys;
-    if (!chosen_keys.empty()) keys.push_back(chosen_keys);
-    char found[16][1100];
-    int n = chosen_keys.empty() ? nx_find_keys(pkg.c_str(), found, 16) : 0;
-    for (int i = 0; i < n; i++)
-        if (std::find(keys.begin(), keys.end(), std::string(found[i])) == keys.end()) keys.push_back(found[i]);
-    if (keys.empty()) { set_failure(FAIL_NO_KEYS); return false; }
-    rt_remove_game_files(g_root.c_str());  // (an earlier or interrupted setup's)
-    mkdir(g_root.c_str(), 0755);
-    set_job("Reading the game package...");
-    int rc = NX_ERR_KEYS;
-    std::string why_keys;
-    uint64_t tid = 0;
-    for (auto &k : keys) {
-        char why[512] = "";
-        rc = nx_setup_keys(pkg.c_str(), k.c_str(), g_title_keys.c_str(), g_root.c_str(), &tid, why, sizeof why);
-        fprintf(stderr, "[launcher] game package %s, keys %s: %s\n", pkg.c_str(), k.c_str(), rc == NX_OK ? "read" : why);
-        if (rc == NX_OK) break;
-        if (rc == NX_ERR_WRITE) { set_failure(FAIL_COPY); goto fail; }
-        if (rc != NX_ERR_KEYS) { set_failure(FAIL_PACKAGE, why); goto fail; }
-        if (why_keys.empty()) why_keys = why;  // (another keys file may open it)
-    }
-    if (rc != NX_OK) { set_failure(FAIL_KEYS, why_keys); goto fail; }
-    if ((tid & ~0xFFFull) != 0x010012101468C000ull) { set_failure(FAIL_OTHER_GAME); goto fail; }
-    if (tid != 0x010012101468C000ull || !build_id_ok(g_root + "/exefs/main")) { set_failure(FAIL_VERSION); goto fail; }  // (an update)
-    return true;
-fail:
-    rt_remove_game_files(g_root.c_str());
-    return false;
-}
-
 static void prepare_game(void) {
-    std::string src, keys;
+    std::string src;
     pthread_mutex_lock(&g_lock);
-    src = g_src, keys = g_keys;
+    src = g_src;
     pthread_mutex_unlock(&g_lock);
     g_done = 0, g_total = 0, g_phase_base = 0, g_build_frac = -1, g_copy_skipped = false, g_copy_share = 0.1f;
     g_setup_kind = SETUP_NEW;
-    std::string exefs, romfs, pkg;
-    std::vector<std::string> pkgs;  // (game packages in the folder)
-    bool compressed = false;        // (NSZ / XCZ / loose NCAs there)
+    std::string exefs, romfs;
+    bool unusable = false;  // (game packages rather than its files)
     if (src.empty() && check_copied_files(g_root).empty()) {  // copied already (an update needs new game code)
         {
             std::string detail;  // (short of files: no use building the game code for them)
@@ -434,31 +358,17 @@ static void prepare_game(void) {
         goto check;
     }
     set_job("Looking for the game files...");
-    if (is_package(src)) pkg = src;  // (the package itself chosen)
-    else {
-        find_game(src, 0, exefs, romfs, pkgs, compressed);
-        // one of the two chosen itself (romfs/ or exefs/): the other is usually beside it (not another game's beside it)
-        if (exefs.empty() != romfs.empty()) {
-            std::string e = exefs, r = romfs;
-            std::vector<std::string> p;
-            bool c = false;
-            find_game(parent_dir(src), 3, e, r, p, c);
-            if (exefs.empty() && !e.empty() && build_id_ok(e + "/main")) exefs = e;
-            if (romfs.empty()) romfs = r;
-        }
-        if ((exefs.empty() || romfs.empty()) && !pkgs.empty()) {  // no extracted files, but a package
-            pkg = pick_package(pkgs);
-            if (pkg.empty()) { set_failure(FAIL_PACKAGES); goto done; }
-        }
-    }
-    if (!pkg.empty()) {
-        if (!setup_from_package(pkg, keys)) goto done;
-        g_copy_skipped = true;  // (the bar: all of it the game code's build)
-        if (!build_game_code()) goto done;
-        goto check;
+    find_game(src, 0, exefs, romfs, unusable);
+    // one of the two chosen itself (romfs/ or exefs/): the other is usually beside it (not another game's beside it)
+    if (exefs.empty() != romfs.empty()) {
+        std::string e = exefs, r = romfs;
+        bool u = false;
+        find_game(parent_dir(src), 3, e, r, u);
+        if (exefs.empty() && !e.empty() && build_id_ok(e + "/main")) exefs = e;
+        if (romfs.empty()) romfs = r;
     }
     if (exefs.empty() || romfs.empty()) {
-        set_failure(compressed && exefs.empty() && romfs.empty() ? FAIL_COMPRESSED : exefs.empty() && !romfs.empty() ? FAIL_NO_EXEFS :
+        set_failure(unusable && exefs.empty() && romfs.empty() ? FAIL_UNUSABLE : exefs.empty() && !romfs.empty() ? FAIL_NO_EXEFS :
                     romfs.empty() && !exefs.empty() ? FAIL_NO_ROMFS : FAIL_NOT_FOUND);
         goto done;
     }
@@ -521,30 +431,25 @@ static void *extract_thread(void *) {
 extern "C" bool prime_game_ready(const char *root) { return check_game_files(root).empty(); }
 
 // Reuse the UI's setup state and progress, but never initialize its SDL window, Vulkan, audio or dialogs.
-static std::string setup_source(const char *source, const char *keys, const char *title_keys) {
-    std::string result;
-    for (const char *p : {source, keys, title_keys}) {
-        std::string path = p ? p : "";
-        result += std::to_string(path.size()) + ":" + path + "\n";
-        struct stat st;
-        const char *names[] = {"", "/exefs/main", "/exefs/sdk", "/exefs/main.npdm", "/main", "/sdk", "/main.npdm"};
-        for (const char *name : names)
-            if (!path.empty() && !stat((path + name).c_str(), &st))
-                result += std::string(name) + ":" + std::to_string((long long)st.st_size) + ":" +
-                          std::to_string((long long)st.st_mtime) + "\n";
-    }
-    return result;
+static std::string setup_source(const char *source) {
+    std::string path = source ? source : "", result = std::to_string(path.size()) + ":" + path + "\n";
+    struct stat st;
+    const char *names[] = {"", "/exefs/main", "/exefs/sdk", "/exefs/main.npdm", "/main", "/sdk", "/main.npdm"};
+    for (const char *name : names)
+        if (!path.empty() && !stat((path + name).c_str(), &st))
+            result += std::string(name) + ":" + std::to_string((long long)st.st_size) + ":" +
+                      std::to_string((long long)st.st_mtime) + "\n";
+    return result + "0:\n0:\n";  // (two empty fields: a stamp written by an earlier version still matches)
 }
 
-extern "C" int prime_prepare(const char *source, const char *keys, const char *title_keys) {
+extern "C" int prime_prepare(const char *source) {
     g_root = "extracted";
     g_src = source ? source : "";
-    g_keys = keys ? keys : "";
-    g_title_keys = title_keys ? title_keys : "";
     g_job_failed = false;
     g_job.clear();
     g_job_hint.clear();
-    std::string stamp = setup_source(source, keys, title_keys), previous;
+    remove_package_setup();
+    std::string stamp = setup_source(source), previous;
     if (FILE *f = fopen(".primerecomp-setup-source", "rb")) {
         char buf[1024]; size_t n;
         while ((n = fread(buf, 1, sizeof buf, f))) previous.append(buf, n);
@@ -603,12 +508,6 @@ static void SDLCALL picked(void *, const char *const *files, int) {
     g_src = files[0];
     pthread_mutex_unlock(&g_lock);
 }
-static void SDLCALL picked_keys(void *, const char *const *files, int) {
-    if (!files || !files[0]) return;
-    pthread_mutex_lock(&g_lock);
-    g_keys = files[0];
-    pthread_mutex_unlock(&g_lock);
-}
 
 // ------------------------------------------------------------------ background: the game's Tallon IV movie
 // Metroid Prime's movies sit in its UI archive (romfs/UI/MPR1/UIMP1.pak) as plain MP4s. The start screen plays the
@@ -637,26 +536,16 @@ static std::string bg_movie_file(void) {
     struct stat st;
     if (stat(out.c_str(), &st) == 0 && st.st_size > 1000000) return out;
     std::vector<uint8_t> d;
-    if (FILE *f = fopen((g_root + "/romfs/UI/MPR1/UIMP1.pak").c_str(), "rb")) {
-        fseek(f, 0, SEEK_END);
-        long n = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        if (n > 0 && n < (512l << 20)) {
-            d.resize((size_t)n);
-            if (fread(d.data(), 1, d.size(), f) != d.size()) d.clear();
-        }
-        fclose(f);
-    } else {  // (set up from a game package: the archive read from there)
-        char why[512];
-        uint64_t off = 0, size = 0;
-        NxRomfs *r = nx_romfs_open((g_root + "/romfs.src").c_str(), why, sizeof why);
-        if (!r) return "";
-        if (nx_romfs_find(r, "UI/MPR1/UIMP1.pak", &off, &size) && size < (512ull << 20)) {
-            d.resize((size_t)size);
-            if (nx_romfs_pread(r, d.data(), size, off) != (ssize_t)size) d.clear();
-        }
-        nx_romfs_close(r);
+    FILE *f = fopen((g_root + "/romfs/UI/MPR1/UIMP1.pak").c_str(), "rb");
+    if (!f) return "";
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (n > 0 && n < (512l << 20)) {
+        d.resize((size_t)n);
+        if (fread(d.data(), 1, d.size(), f) != d.size()) d.clear();
     }
+    fclose(f);
     auto be32 = [&](size_t o) { return (uint32_t)d[o] << 24 | (uint32_t)d[o + 1] << 16 | (uint32_t)d[o + 2] << 8 | d[o + 3]; };
     for (size_t i = 4; i + 8 <= d.size(); i++) {
         if (memcmp(&d[i], "ftypisom", 8)) continue;
@@ -1382,12 +1271,13 @@ extern "C" void launcher_run(const char *root) {
     if (check_copied_files(g_root).empty() && file_exists(g_root + "/romfs.bin") &&
         rt_remove_game_file(g_root.c_str(), "romfs.bin"))
         fprintf(stderr, "[launcher] removed the old game data image (romfs.bin)\n");
+    bool was_package = remove_package_setup();
     std::string incomplete, status = check_game_files(g_root, &incomplete);
     if (status.empty()) load_background(), rt_note_copy();
     Page page = status.empty() ? MAIN : SETUP;
-    if (status == PKG_MOVED)  // (the game data is read from the package: it isn't where it was)
-        set_job("The game package moved or changed", true, "Choose it again where it is now (Or its game package), "
-                "then Set up. Your saves and settings stay.");
+    if (was_package && !status.empty())
+        set_job("Game packages can't be used anymore", true, "PrimeRecomp takes the game's extracted exefs and romfs "
+                "folders now: choose the folder that holds them, then Set up. Your saves and settings stay.");
     if (status == FILES_INCOMPLETE) set_failure(FAIL_MISSING, incomplete);  // (not set up by itself: it'd fail the same)
     bool play = false;
     // LARECOMP_LAUNCHER_SHOT=<frame>[:<page>] (test): save build/launcher.png at that frame and exit; page: settings[:<tab>] / askdelete / setup
@@ -1398,7 +1288,7 @@ extern "C" void launcher_run(const char *root) {
                    !strncmp(pg + 1, "import", 6)))
             page = SETTINGS, menu_tabs_focus(true);
         if (pg && !strcmp(pg + 1, "setup")) page = SETUP;
-        if (const char *p = getenv("LARECOMP_LAUNCHER_PICK")) g_src = p;  // (as if chosen: a folder or a package)
+        if (const char *p = getenv("LARECOMP_LAUNCHER_PICK")) g_src = p;  // (as if chosen)
         if (pg && !strncmp(pg + 1, "fail", 4)) page = SETUP, set_failure(atoi(pg + 5));  // (the failure messages)
         if (pg && !strncmp(pg + 1, "settings", 8) && pg[9] == ':') g_tab_request_ext = atoi(pg + 10);  // settings:<tab>
         if (pg && !strcmp(pg + 1, "delete")) page = SETUP, g_confirm_delete = true;
@@ -1709,25 +1599,16 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::Spacing();
 
                 pthread_mutex_lock(&g_lock);
-                std::string src = g_src, keys = g_keys, job = g_job, job_hint = g_job_hint;
+                std::string src = g_src, job = g_job, job_hint = g_job_hint;
                 bool failed = g_job_failed;
                 pthread_mutex_unlock(&g_lock);
                 bool ready = status.empty() && !busy;  // (set up: the window offers to delete them)
                 static double files_gb = -1;
                 // chosen: "Selected" with a green check (long paths ran over the label); the path is in the
-                // explanation, and choosing again opens the picker again. A folder or a game package (NSP / XCI),
-                // whichever was chosen last; a package's keys found by themselves unless one is chosen.
-                bool src_pkg = is_package(src);
-                std::string src_v = src.empty() || src_pkg ? "Choose..." : "Selected";
-                std::string pkg_v = src_pkg ? "Selected" : "Choose...";
-                static std::string keys_for = "\x01", keys_found;  // (looked for again when the package changes)
-                if (keys_for != src) {
-                    char k[1][1100];
-                    keys_for = src, keys_found = nx_find_keys(src_pkg ? src.c_str() : NULL, k, 1) ? k[0] : "";
-                }
-                std::string keys_v = !keys.empty() ? "Selected" : !keys_found.empty() ? "Found" : "Choose...";
+                // explanation, and choosing again opens the picker again
+                std::string src_v = src.empty() ? "Choose..." : "Selected";
                 auto check_left_of_value = [&](const std::string &v) {
-                    if (v != "Selected" && v != "Found") return;
+                    if (v != "Selected") return;
                     ImVec2 rb = ImGui::GetItemRectMax(), ra = ImGui::GetItemRectMin();
                     float fs = ImGui::GetFontSize(), vw = ImGui::CalcTextSize(v.c_str()).x;
                     float x = rb.x - 16 * sc - vw - fs * 0.95f, cy = (ra.y + rb.y) * 0.5f, u = fs * 0.62f;
@@ -1737,30 +1618,18 @@ extern "C" void launcher_run(const char *root) {
                     dl->AddLine(ImVec2(x + u * 0.35f, cy + u * 0.35f), ImVec2(x + u, cy - u * 0.4f), g, fs * 0.11f);
                 };
                 std::string src_d = "The folder with your own game folders (exefs/romfs) of Metroid Prime Remastered for "
-                                    "Nintendo Switch, version 1.0.0 - or the folder its NSP / XCI file is in. The game "
-                                    "isn't included with PrimeRecomp.";
-                if (!src.empty() && !src_pkg) src_d += "\n\nChosen: " + src;
-                std::string pkg_d = "Your own dump of Metroid Prime Remastered, version 1.0.0, as one NSP or XCI file. "
-                                    "The game plays from it as it is, so nothing big is copied: keep it where it is.";
-                if (src_pkg) pkg_d += "\n\nChosen: " + src;
-                std::string keys_d = "Your Switch's keys (prod.keys, dumped from your own console) read the game package. "
-                                     "They're found by themselves next to the package, or in Ryujinx's or yuzu's keys "
-                                     "folder; choose the file here if it's somewhere else.";
-                if (!keys.empty()) keys_d += "\n\nChosen: " + keys;
-                else if (!keys_found.empty()) keys_d += "\n\nFound: " + keys_found;
+                                    "Nintendo Switch, version 1.0.0. The game isn't included with PrimeRecomp.";
+                if (!src.empty()) src_d += "\n\nChosen: " + src;
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
-                std::string ex_d = src_pkg ? "Reads the game package and recompiles the game from it. This only needs to "
-                                             "be done once and may take a while. The package isn't changed."
-                                           : "Copies the game files PrimeRecomp needs and recompiles the game from them. "
-                                             "This only needs to be done once and may take a while. Your own files "
-                                             "aren't changed.";
+                std::string ex_d = "Copies the game files PrimeRecomp needs and recompiles the game from them. This only "
+                                   "needs to be done once and may take a while. Your own files aren't changed.";
                 if (src.empty() && !g_earlier.empty())
                     ex_d = "Uses the game files of your earlier copy of PrimeRecomp, in " + g_earlier + " (that copy stays "
                            "as it is), and brings over its saves and settings.";
                 else if (src.empty() && status == FILES_INCOMPLETE)
-                    ex_d = "Choose your game files folder or game package above first: some of the game's files are "
-                           "missing from PrimeRecomp's copy.";
+                    ex_d = "Choose your game files folder above first: some of the game's files are missing from "
+                           "PrimeRecomp's copy.";
                 else if (src.empty() && check_copied_files(g_root).empty())
                     ex_d = "Recompiles the game for this version of PrimeRecomp. Your game files and saves stay as they are.";
                 if (!job.empty()) ex_d += "\n\n" + job + (job_hint.empty() ? "" : ".\n" + job_hint);
@@ -1780,18 +1649,6 @@ extern "C" void launcher_run(const char *root) {
                         SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
                     check_left_of_value(src_v);
                     first_row();
-                    static const SDL_DialogFileFilter pkg_filter[] = {{"Switch game package (NSP, XCI)", "nsp;xci"}};
-                    if (busy) opt_disable_next();
-                    if (opt_action("Or its game package", pkg_v.c_str(), pkg_d.c_str(), true))
-                        SDL_ShowOpenFileDialog(picked, NULL, win, pkg_filter, 1, NULL, false);
-                    check_left_of_value(pkg_v);
-                    if (src_pkg) {  // (its keys: only for a package)
-                        static const SDL_DialogFileFilter keys_filter[] = {{"Keys file (prod.keys)", "keys;txt"}};
-                        if (busy) opt_disable_next();
-                        if (opt_action("Keys", keys_v.c_str(), keys_d.c_str(), true))
-                            SDL_ShowOpenFileDialog(picked_keys, NULL, win, keys_filter, 1, NULL, false);
-                        check_left_of_value(keys_v);
-                    }
                     opt_section("Set up");
                     if (busy || (src.empty() && g_earlier.empty() &&
                                  (!check_copied_files(g_root).empty() || status == FILES_INCOMPLETE)))

@@ -36,9 +36,9 @@ int prime_cli_parse(int argc, char **argv, PrimeLaunchOptions *o) {
         else if (!strcmp(a, "--preload-shaders")) o->preload = true;
         else if (!strcmp(a, "--help") || !strcmp(a, "-h")) o->help = true;
         else {
-            static const char *const names[] = {"--game", "--keys", "--title-keys", "--data-root"};
-            char *paths[] = {o->game, o->keys, o->title_keys, o->data_root};
-            for (int k = 0; k < 4; k++) {
+            static const char *const names[] = {"--game", "--data-root"};
+            char *paths[] = {o->game, o->data_root};
+            for (int k = 0; k < 2; k++) {
                 size_t n = strlen(names[k]);
                 if (!strncmp(a, names[k], n) && (a[n] == '=' || !a[n])) {
                     value = a[n] == '=' ? a + n + 1 : i + 1 < argc ? argv[++i] : NULL;
@@ -55,27 +55,24 @@ int prime_cli_parse(int argc, char **argv, PrimeLaunchOptions *o) {
     }
     if (o->help) return 0;
     if ((o->prepare && (!o->game[0] || o->play || o->preload || o->root[0])) ||
-        (!o->prepare && (o->game[0] || o->keys[0] || o->title_keys[0]))) {
-        fprintf(stderr, "Use --prepare --game=<path> [--keys=<path>] [--title-keys=<path>].\n");
+        (!o->prepare && o->game[0])) {
+        fprintf(stderr, "Use --prepare --game=<folder>.\n");
         return 2;
     }
-    for (int k = 0; k < 3; k++) {
-        const char *path = k == 0 ? o->game : k == 1 ? o->keys : o->title_keys;
-        struct stat st;
-        if (*path && (stat(path, &st) || (k ? !S_ISREG(st.st_mode) : !S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)))) {
-            fprintf(stderr, "The selected %s is unavailable.\n", k ? "keys file" : "game path");
-            return 2;
-        }
+    struct stat st;
+    if (o->game[0] && (stat(o->game, &st) || !S_ISDIR(st.st_mode))) {
+        fprintf(stderr, "The selected game folder is unavailable.\n");
+        return 2;
     }
     return 0;
 }
 
 void prime_cli_help(void) {
     puts("PrimeRecomp\n"
-         "  --prepare --game=<folder|NSP|XCI> [--keys=<prod.keys>] [--title-keys=<title.keys>]\n"
-         "      Set up Metroid Prime Remastered v1.0.0 without a window; exit 0 when ready.\n"
-         "      Prints progress <0..1> <message>. Details: primerecomp-setup.log in the data folder.\n"
-         "      Without explicit keys, use the package's folder or supported emulator key locations.\n"
+         "  --prepare --game=<folder>\n"
+         "      Set up Metroid Prime Remastered v1.0.0 from its extracted exefs and romfs folders without a\n"
+         "      window; exit 0 when ready. Prints progress <0..1> <message>. Details: primerecomp-setup.log in\n"
+         "      the data folder.\n"
          "  --play               Start the prepared game directly.\n"
          "  --preload-shaders    Preload shaders, then play.\n"
          "  --data-root=<path>    Use this data folder for setup, settings and saves.\n"

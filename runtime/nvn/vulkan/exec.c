@@ -2536,7 +2536,7 @@ static int preload_count(void) {
 // code is in the game's own files instead. Metroid Prime Remastered's shader binaries are in its materials - zlib
 // streams inside the zlib-packed MTRL assets of its .pak files, and in MaterialArchive.arc. At the pre-load's start the
 // ones this player's record doesn't have are added to it, their code inflated from the player's files (the romfs
-// folder or the game package) and checked against the program's hash, so the pre-load builds them too: a first visit
+// folder) and checked against the program's hash, so the pre-load builds them too: a first visit
 // anywhere the list covers draws at once, with no pop-in and no build hitch. Once per list (cache/shader_list.done
 // holds its hash). Pipelines are made this device's: depth / stencil and vertex formats as draw_ picks them here (an
 // AMD GPU, the Steam Deck's, has no D24S8: the list's pipelines come from an NVIDIA one), and each with an 8-bit sRGB

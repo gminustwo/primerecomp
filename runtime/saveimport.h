@@ -1,5 +1,5 @@
 // Saves from elsewhere (start screen: Settings > Prelaunch, "Saves"): Metroid Prime Remastered's save as the Switch
-// emulators keep it - Ryujinx, yuzu and the projects that carried it on (their folders: nx_emu_dirs) - or a folder of
+// emulators keep it - Ryujinx, yuzu and the projects that carried it on (their folders: saveimport.c emu_dirs) - or a folder of
 // its files (a backup made on a Switch, a portable emulator's), copied into PrimeRecomp's save folder (save/save_0, the
 // game's save mount: runtime/services/fs.c). Only while no game is running: the start screen comes after teardown.
 #pragma once
