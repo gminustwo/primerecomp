@@ -8,7 +8,10 @@
 //    cbuf_dynamic has bit k (the renderer binds up to 64 KB). Register-indexed reads are clamped to N - 1.
 //  - global memory (LDG/STG) -> binding GMEM_BUFFER_INDEX (17):
 //    `layout(std430, set=S, binding=17) [readonly] buffer GMem { uint w[]; } gmem_;`, 32-bit words relative to
-//    maxwell_gmem_base. `readonly` unless the shader stores (needs vertexPipeline/fragmentStoresAndAtomics then);
+//    maxwell_gmem_base - or, with maxwell_gmem_window, to the start of the renderer's window onto the heap:
+//    `uniform GBase { uvec4 gbase; };` at binding GBASE_BUFFER_INDEX (22) holds its offset from maxwell_gmem_base (.x)
+//    and its size (.y); accesses outside it read 0 and store nothing.
+//    `readonly` unless the shader stores (needs vertexPipeline/fragmentStoresAndAtomics then);
 //    byte / short stores are atomicAnd + atomicOr on the containing word.
 //  - rscale table -> binding 18: `uniform RScale { vec4 rscale[65]; };` (std140, the MSL buffer 18 contents).
 //  - texture slot i (ShaderInfo.tex[i]) -> binding 32 + i, a combined image sampler: sampler1D/2D/3D/Cube/
@@ -106,9 +109,13 @@ typedef struct {
 // (GLSL compute, Vulkan) the fast copy of a dispatch's storage buffers: its address table and its data
 #define GMAP_BUFFER_INDEX 20
 #define GFAST_BUFFER_INDEX 21
+// (GLSL, maxwell_gmem_window) where the global memory buffer sits in the heap: gbase.x = its offset from
+// maxwell_gmem_base, .y = its size (exec.c gmem_info: on macOS only the part holding the game's memory pools)
+#define GBASE_BUFFER_INDEX 22
 #define GMAP_MAX 16  // ranges in the table (GMap { uvec4 gmap[GMAP_MAX + 1]; }: [i] = addr lo, addr hi, size, word offset;
                      // [GMAP_MAX].x = count)
 extern uint64_t maxwell_gmem_base, maxwell_gmem_size;
+extern bool maxwell_gmem_window;  // (GLSL) global memory is a window onto the heap: GBase says where (set by the renderer)
 // Debug: when translating the shader whose code starts at maxwell_dbg_code, output register
 // maxwell_dbg_reg as captured after the instruction at maxwell_dbg_pc (greyscale, all targets).
 extern const uint8_t *maxwell_dbg_code;
