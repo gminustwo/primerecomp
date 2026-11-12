@@ -58,7 +58,8 @@ typedef struct {
     uint64_t ds_addr;
     uint16_t behaviour;
     uint8_t bq_on[2], bq_reset[2];
-    float bq[2][5];  // a0 a1 a2 b1 b2
+    uint8_t bq_was[2];  // the filter was applied last frame (switched on or off: faded over a frame, mix_voices)
+    float bq[2][5];  // a0 a1 a2 b1 b2 (the last enabled ones: a filter switched off fades out with them)
     WaveBuf wb[WB_COUNT];
 } Voice;
 
@@ -211,6 +212,7 @@ static int voice_prepare(Renderer *r, Voice *v) {
     if (v->is_new) {
         for (int c = 0; c < nch; c++) memset(&r->chst[v->chan_ids[c] % r->voices], 0, sizeof(ChanState));
         v->prev_volume = v->volume;
+        v->bq_was[0] = v->bq_on[0], v->bq_was[1] = v->bq_on[1];  // (a voice starting filtered: no fade in)
         v->is_new = 0;
     }
     if (v->flush) {
@@ -982,15 +984,25 @@ static void render_frame(Renderer *r, float *sink) {
                 float c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
                 smp[i] = ((c3 * f + c2) * f + c1) * f + y1;
             }
+            // The voice's biquad filters. One switched on or off (the game's underwater muffle as Samus goes in or out
+            // of water, issue #55) is faded in or out over this frame: switched outright, the sound jumped from the
+            // filtered signal to the unfiltered one (or from the filter's empty state) - a pop on a loud sound.
             for (int fi = 0; fi < 2; fi++) {
-                if (!v->bq_on[fi]) continue;
+                bool on = v->bq_on[fi], was = v->bq_was[fi];
+                if (!on && !was) continue;
                 float *st = cs->bq[fi], *k = v->bq[fi];
                 if (v->bq_reset[fi]) st[0] = st[1] = 0;
+                float fade = on != was && N ? 1.0f / N : 0;
                 for (uint32_t i = 0; i < N; i++) {
                     float in = smp[i], o = in * k[0] + st[0];
                     st[0] = in * k[1] + o * k[3] + st[1];
                     st[1] = in * k[2] + o * k[4];
-                    smp[i] = o;
+                    if (fade) {
+                        float t = (float)(i + 1) * fade;
+                        smp[i] = in + (o - in) * (on ? t : 1 - t);
+                    } else {
+                        smp[i] = o;
+                    }
                 }
             }
             cs->fraction = cs->fraction + ratio * N - need;
@@ -1023,6 +1035,7 @@ static void render_frame(Renderer *r, float *sink) {
             memcpy(cr->prev, cr->mix, sizeof cr->prev);
         }
         v->bq_reset[0] = v->bq_reset[1] = 0;
+        v->bq_was[0] = v->bq_on[0], v->bq_was[1] = v->bq_on[1];
         v->prev_volume = v->volume;
     }
     for (uint32_t i = 0; i < r->split_dests; i++) {
@@ -1281,7 +1294,8 @@ static void update_voice(Renderer *r, Voice *v, const uint8_t *p, uint8_t *out) 
         v->bq_on[f] = b[0];
         int16_t c[5];
         memcpy(c, b + 2, 10);
-        for (int k = 0; k < 5; k++) v->bq[f][k] = c[k] / 16384.0f;
+        if (b[0])
+            for (int k = 0; k < 5; k++) v->bq[f][k] = c[k] / 16384.0f;
     }
     ChanState *cs0 = &r->chst[v->chan_ids[0] % r->voices];
     if (is_new)
