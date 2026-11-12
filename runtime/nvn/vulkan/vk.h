@@ -43,6 +43,8 @@ typedef struct {
     bool dmabuf_import;  // the guest heap as dma-bufs in a sparse buffer (exec.c gmem_import_dmabuf)
     uint64_t max_alloc;  // largest single allocation / buffer (maxMemoryAllocationSize, maxBufferSize)
     bool output_layer;  // vertex shaders may write gl_Layer (shaderOutputLayer)
+    bool tex_nonuniform;  // sampler arrays indexed per pixel (shaderSampledImageArrayNonUniformIndexing: the translator's
+                          // bindless texture arrays; without it those programs are left out)
     bool occlusion_precise;  // occlusion queries count samples (occlusionQueryPrecise), not just any-passed
     bool geometry;  // geometry shaders (geometryShader): programs with one are translated with it (else exec.c gs_emul)
     // window

@@ -86,6 +86,17 @@ typedef struct {
     bool gs_writes_layer;
     uint32_t gs_out_topo, gs_max_verts, gs_invocations;  // from the SPH
     int gs_emits;            // (geometry) ShaderInfo.gs_emits
+    // (GLSL) bindless handles read from an array in a constant buffer (TEX.B, the handle from LDC c[k][Ri + off] with
+    // Ri = element * stride): the register's word as 1 + (cbuf << 16 | off) and the stride, the body offset just
+    // before that LDC (where hix<r> = Ri / stride is put once a TEX.B uses r), and which hix<r> are declared
+    uint32_t reg_cbuf_dyn[256];
+    uint32_t reg_dyn_stride[256];
+    uint8_t reg_dyn_src[256];  // (and Ri)
+    size_t reg_dyn_pos[256];
+    uint32_t reg_scale[256]; // a register known to be a whole number times this (SHL / XMAD by an immediate), else 0
+    uint8_t hix_used[256];
+    uint8_t tex_hix[64];     // a texture array slot's index register (hix<r>)
+    uint32_t pc;             // the instruction being translated (error messages)
 } Ctx;
 
 static uint64_t bits(uint64_t w, int lo, int n) { return (w >> lo) & ((n == 64) ? ~0ull : ((1ull << n) - 1)); }
@@ -187,6 +198,8 @@ static void set_reg(Ctx *c, int r, const char *expr) {
     if (r == RZ) return;
     c->reg_used[r] = 1;
     c->reg_cbuf[r] = 0;
+    c->reg_cbuf_dyn[r] = 0;
+    c->reg_scale[r] = 0;
     sp(&c->body, "    r%d = %s;\n", r, expr);
 }
 
@@ -573,6 +586,51 @@ static int tex_slot(Ctx *c, uint32_t index, int type, bool shadow, bool array) {
     return s;
 }
 
+// A bindless texture (TEX.B): its handle in a register the shader loaded from a constant buffer word, which the runtime
+// reads at draw time (as SUST's bindless images). One slot per word.
+// count > 1 (GLSL): an array of them, element k's handle at off + k * stride, the one sampled hix<r> (one slot per
+// array and index register).
+static int tex_slot_bindless(Ctx *c, uint32_t src, int type, bool shadow, bool array, uint32_t count, uint32_t stride, int r) {
+    uint32_t cb = (src - 1) >> 16, off = (src - 1) & 0xFFFF;
+    if (count < 1) count = 1;
+    for (int s = 0; s < c->info->ntex; s++) {
+        ShaderTexture *t = &c->info->tex[s];
+        if (!t->bindless || t->bindless_cbuf != cb || t->bindless_offset != off || t->count != count ||
+            (count > 1 && (t->bindless_stride != stride || c->tex_hix[s] != r)))
+            continue;
+        if (c->glsl && (t->type != type || t->shadow != shadow)) fail(c, "bindless texture c%u[%#x] used as two types", cb, off);
+        return s;
+    }
+    int s = c->info->ntex++;
+    if (s >= 31) { fail(c, "too many textures"); return 0; }
+    c->tex_weak[s] = false;
+    ShaderTexture *t = &c->info->tex[s];
+    *t = (ShaderTexture){.type = (uint8_t)type, .shadow = shadow, .is_array = array, .bindless = true,
+                         .bindless_cbuf = cb, .bindless_offset = off, .count = count, .bindless_stride = count > 1 ? stride : 0};
+    c->tex_hix[s] = (uint8_t)r;
+    c->info->cbuf_mask |= 1u << cb;  // (the runtime reads the handle from it)
+    return s;
+}
+
+// A handle from an array in a constant buffer (LDC c[k][Ri + off], Ri = element * stride: one record per light, the
+// handle a word of it): the texture is an array of the first TEXB_ARRAY elements' (tex_slot_bindless), indexed by
+// hix<r> = Ri / stride, taken just before the load (Ri may be reused after it). Inserted into the body only once a TEX.B
+// uses the handle, so shaders without one translate as before (the same source: their SPIR-V cache entries hold).
+#define TEXB_ARRAY 8
+static void hix_insert(Ctx *c, int r) {
+    c->hix_used[r] = 1;
+    size_t at = c->reg_dyn_pos[r];
+    char line[64];
+    int n = snprintf(line, sizeof line, "    hix%d = r%d / %uu;\n", r, c->reg_dyn_src[r], c->reg_dyn_stride[r]);
+    if (at + n <= c->body.len && !strncmp(c->body.buf + at, line, (size_t)n)) return;  // (an earlier lookup's)
+    sp(&c->body, "%s", line);  // (grows the buffer; then moved into place)
+    memmove(c->body.buf + at + n, c->body.buf + at, c->body.len - n - at);
+    memcpy(c->body.buf + at, line, (size_t)n);
+    c->reg_used[c->reg_dyn_src[r]] = 1;
+    for (int i = 0; i < 256; i++)
+        if (i != r && c->reg_cbuf_dyn[i] && c->reg_dyn_pos[i] > at) c->reg_dyn_pos[i] += (size_t)n;
+}
+
 static const char *tex_type_name(int t) {
     switch (t) {
     case TEXTYPE_1D: return "1d";
@@ -612,6 +670,7 @@ static void write_tex_result(Ctx *c, int slot, const char *call, uint32_t mask, 
     for (int comp = 0; comp < 4; comp++) {
         if (!(mask & (1u << comp))) continue;
         int r = regs[n++];
+        if (r != RZ) c->reg_cbuf[r] = c->reg_cbuf_dyn[r] = c->reg_scale[r] = 0;  // (no longer what was tracked)
         if (r != RZ) { c->reg_used[r] = 1; sp(&c->body, "      r%d = as_type<uint>(t[%d]);\n", r, comp); }
     }
     sp(&c->body, "    }\n");
@@ -879,7 +938,8 @@ static void emit_texs(Ctx *c, uint64_t w, bool fetch) {
     write_tex_result(c, slot, call, mask, d0, d1, true, !bits(w, 59, 1));  // 0xd0/0xd2: .F16 results
 }
 
-// TEX (full form): coordinates from consecutive registers at gpr8, extra parameters at gpr20.
+// TEX (full form): coordinates from consecutive registers at gpr8, extra parameters at gpr20. TEX.B (bindless): the
+// texture's handle is the first of them (gpr20), the rest follow it; the handle must come from a constant buffer word.
 static void emit_tex(Ctx *c, uint64_t w, bool bindless) {
     int d = (int)bits(w, 0, 8), a = (int)bits(w, 8, 8), b = (int)bits(w, 20, 8);
     uint32_t index = bindless ? 0 : (uint32_t)bits(w, 36, 13);
@@ -887,13 +947,30 @@ static void emit_tex(Ctx *c, uint64_t w, bool bindless) {
     bool array = bits(w, 28, 1), dc = bits(w, 50, 1), aoffi = bindless ? bits(w, 36, 1) : bits(w, 54, 1);
     uint32_t mask = (uint32_t)bits(w, 31, 4);
     int lod_mode = bindless ? (int)bits(w, 37, 3) : (int)bits(w, 55, 3);  // 0 none, 1 lz, 2 lb, 3 ll, 6 lba, 7 lla
-    if (bindless) { fail(c, "bindless tex"); return; }
     int type = target == 0 ? (array ? TEXTYPE_1D_ARRAY : TEXTYPE_1D)
              : target == 1 ? (array ? TEXTYPE_2D_ARRAY : TEXTYPE_2D)
              : target == 2 ? TEXTYPE_3D
                            : (array ? TEXTYPE_CUBE_ARRAY : TEXTYPE_CUBE);
     int ncoord = target == 0 ? 1 : target == 1 ? 2 : 3;
-    int slot = tex_slot(c, index, type, dc, array);
+    int slot;
+    if (bindless) {
+        uint32_t src = b == RZ ? 0 : c->reg_cbuf[b], dsrc = b == RZ ? 0 : c->reg_cbuf_dyn[b];
+        if (src) {
+            slot = tex_slot_bindless(c, src, type, dc, array, 1, 0, 0);
+        } else if (dsrc && c->glsl) {  // an element of a handle array (the character gallery's per-light shadow maps)
+            uint32_t stride = c->reg_dyn_stride[b], off = (dsrc - 1) & 0xFFFF, n = 0;
+            while (n < TEXB_ARRAY && off + n * stride + 4 <= 0x10000) n++;
+            hix_insert(c, b);
+            slot = tex_slot_bindless(c, dsrc, type, dc, array, n, stride, b);
+        } else {
+            fail(c, "bindless tex: handle r%d not from a cbuf (pc %#x)", b, c->pc);
+            return;
+        }
+        c->reg_used[b] = 1;
+        b++;
+    } else {
+        slot = tex_slot(c, index, type, dc, array);
+    }
     if (c->glsl) {  // same register layout as below
         char cs[3][40], lay[96], lodv[48], offv[96], drv[48], gcall[4096];
         const char *co[3], *layp = NULL, *lodp = NULL, *offp = NULL, *drp = NULL;
@@ -1063,6 +1140,7 @@ static void video_operand(char *out, const char *v, int sel, int width, bool sig
 }
 
 static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
+    c->pc = pc;
     char t[2048], u[2048];
     int d = (int)bits(w, 0, 8), a = (int)bits(w, 8, 8);
     int pr = (int)bits(w, 16, 3);
@@ -1210,6 +1288,8 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         // LDC.64 R24, c[4][R24-0x18]: the first register written is the address. Read it once, before - the second
         // half read through the loaded value (the pause screen's Samus: bones 3-4 of a vertex off, spikes from her hand).
         bool hold = dyn && n > 1 && a >= d && a < d + n;
+        size_t pos = c->body.len;  // (before the load: where a TEX.B handle's element index is taken from Ri)
+        uint32_t scale = dyn ? c->reg_scale[a] : 0;
         if (hold) sp(&c->body, "    { uint ldc_addr_ = %s;\n", dyn), dyn = "ldc_addr_";
         for (int i = 0; i < n; i++) {
             char cb[256];
@@ -1218,6 +1298,12 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
             if (dyn) c->info->cbuf_size[idx] = 0x10000;
             set_reg(c, d + i, cb);
             if (!dyn && d + i != RZ) c->reg_cbuf[d + i] = 1 + ((uint32_t)idx << 16 | (uint32_t)(off + 4 * i));
+            if (dyn && !hold && scale && d + i != RZ && off + 4 * i >= 0 && off + 4 * i < 0x10000) {
+                c->reg_cbuf_dyn[d + i] = 1 + ((uint32_t)idx << 16 | (uint32_t)(off + 4 * i));
+                c->reg_dyn_stride[d + i] = scale;
+                c->reg_dyn_src[d + i] = (uint8_t)a;
+                c->reg_dyn_pos[d + i] = pos;
+            }
         }
         if (hold) sp(&c->body, "    }\n");
     } else if (OPM(0xdf00000000000000ull, 0xff40000000000000ull)) {  // TLD4S
@@ -1509,6 +1595,9 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         if (bits(w, 39, 1)) sprintf(t, "(%s << (%s & 31u))", R(a), bv);
         else sprintf(t, "((%s) >= 32u ? 0u : (%s << (%s)))", bv, R(a), bv);
         set_reg(c, d, t);
+        uint32_t sh = (uint32_t)bits(w, 20, 19);  // (an array element's offset: TEX.B handle arrays)
+        if (OPM(0x3848000000000000ull, 0xfef8000000000000ull) && !bits(w, 56, 1) && sh < 16 && d != RZ)
+            c->reg_scale[d] = 1u << sh;
     } else if (OPM(0x5c28000000000000ull, 0xfff8000000000000ull) || OPM(0x4c28000000000000ull, 0xfff8000000000000ull) ||
                OPM(0x3828000000000000ull, 0xfef8000000000000ull)) {  // SHR
         const char *bv = B(false);
@@ -1625,6 +1714,17 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         else sp(&c->body, "      uint res = prod + cc_;\n");
         if (wcc) sp(&c->body, "      cc = (res < prod) ? 1u : 0u;\n");
         if (mrg) sp(&c->body, "      res = (res & 0xFFFFu) | (xbu << 16);\n");
+        uint32_t scale = 0;  // (a TEX.B handle array's element offset, a * K by the usual pair of XMADs)
+        if ((top & 0xfe) == 0x36 && !sa && !sb && !mrg && !ext && cmode == 0) {
+            uint32_t k = (uint32_t)bits(w, 20, 16);
+            int rc = (int)bits(w, 39, 8);
+            if (!ha && !psl && rc == RZ) scale = k;                              // a.lo * K (an element under 65536)
+            else if (ha && psl && rc != RZ && c->reg_scale[rc] == k) scale = k;  // (a.hi * K << 16) + a.lo * K
+        }
+        if (d != RZ) {
+            c->reg_cbuf[d] = c->reg_cbuf_dyn[d] = 0;
+            c->reg_scale[d] = scale;
+        }
         if (d != RZ) { c->reg_used[d] = 1; sp(&c->body, "      r%d = res;\n", d); }
         sp(&c->body, "    }\n");
     } else if (OPM(0x5090000000000000ull, 0xfff8000000000000ull)) {  // PSETP
@@ -2182,9 +2282,11 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     if (stage == STAGE_VERTEX && key && key->layer_attr >= 0x80 && key->layer_attr < 0x280 &&
         (c->out_attr_mask & (1u << ((key->layer_attr - 0x80) >> 4))))
         layer_out = key->layer_attr - 0x80;
-    if (layer_out >= 0)  // (#extension before the prelude's functions)
-        sp(&s, "#version 460\n#extension GL_ARB_shader_viewport_layer_array : require\n%s",
-           glsl_prelude + strlen("#version 460\n"));
+    bool tex_arrays = false;  // (bindless texture arrays, indexed per pixel)
+    for (int i = 0; i < info->ntex; i++) tex_arrays |= info->tex[i].count > 1;
+    if (layer_out >= 0 || tex_arrays)  // (#extension before the prelude's functions)
+        sp(&s, "#version 460\n%s%s%s", layer_out >= 0 ? "#extension GL_ARB_shader_viewport_layer_array : require\n" : "",
+           tex_arrays ? "#extension GL_EXT_nonuniform_qualifier : require\n" : "", glsl_prelude + strlen("#version 460\n"));
     else if (!(lib && stage == STAGE_GEOMETRY))  // (gs_lib: inside the host's source, after its prelude)
         sp(&s, "%s", glsl_prelude);
     for (int i = 0; i < 18; i++) {
@@ -2217,9 +2319,15 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
                                             [TEXTYPE_2D_ARRAY] = "image2DArray", [TEXTYPE_3D] = "image3D"};
         sp(&s, "layout(set = %d, binding = %d) writeonly uniform %s img%d;\n", set, IMAGE_BINDING + i, names[info->img[i].type], i);
     }
+    for (int i = 0; i < 256; i++)  // (the texture arrays' indices: read in tsize<i> too)
+        if (c->hix_used[i]) sp(&s, "uint hix%d = 0u;\n", i);
     for (int i = 0; i < info->ntex; i++) {
         ShaderTexture *t = &info->tex[i];
-        sp(&s, "layout(set = %d, binding = %d) uniform %s t%d;\n", set, 32 + i, glsl_sampler_type(t), i);
+        if (t->count > 1)  // (t<i> names the element hix<r> picks, the last for any past them)
+            sp(&s, "layout(set = %d, binding = %d) uniform %s ta%d[%u];\n#define t%d ta%d[nonuniformEXT(min(hix%d, %uu))]\n",
+               set, 32 + i, glsl_sampler_type(t), i, t->count, i, i, c->tex_hix[i], t->count - 1);
+        else
+            sp(&s, "layout(set = %d, binding = %d) uniform %s t%d;\n", set, 32 + i, glsl_sampler_type(t), i);
         // size of level l as (width, height, depth or layers)
         switch (t->type) {
         case TEXTYPE_1D: sp(&s, "ivec3 tsize%d(int l) { return ivec3(textureSize(t%d, l), 1, 1); }\n", i, i); break;

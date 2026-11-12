@@ -68,6 +68,9 @@ typedef struct {
     uint8_t type;            // TEXTYPE_*
     bool shadow, is_array, is_image, bindless;
     uint32_t bindless_cbuf, bindless_offset;
+    // (GLSL) count > 1: an array of bindless textures (`ta<i>[count]`, indexed per pixel: nonuniformEXT), element k's
+    // handle at bindless_offset + k * bindless_stride - a TEX.B handle from a record array (one per light)
+    uint32_t count, bindless_stride;
 } ShaderTexture;
 
 typedef struct {

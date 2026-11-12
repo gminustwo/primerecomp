@@ -1479,6 +1479,7 @@ static void clear(int index, int kind, const void *color, uint32_t mask, bool de
 
 // ================================================================== programs
 #define MAX_BIND 96
+#define TEX_ARRAY_MAX 8  // (the translator's bindless texture arrays: TEXB_ARRAY elements)
 typedef struct {
     ShaderInfo *vi, *fi, *gi;
     uint64_t code[3], cmax[3];  // translation inputs (copied: translated on the translator thread); [2]: geometry
@@ -1561,6 +1562,17 @@ static void compile_program(void *arg) {
     Prog *p = arg;
     size_t nv = 0, nf = 0;
     size_t ng = 0;
+    bool arrays = false;  // (bindless texture arrays need non-uniform indexing: g_vk.tex_nonuniform)
+    for (int i = 0; i < p->fi->ntex; i++) arrays |= p->fi->tex[i].count > 1;
+    for (int i = 0; i < p->vi->ntex; i++) arrays |= p->vi->tex[i].count > 1;
+    if (arrays && !g_vk.tex_nonuniform) {
+        static int nlog;
+        if (nlog++ < 3) LOG("[shader] program left out: bindless texture arrays need shaderSampledImageArrayNonUniformIndexing\n");
+        record_program(p, false);
+        if (p->pre) preload_compiled(p, false);
+        atomic_store(&p->state, 2);
+        return;
+    }
     uint32_t *sv = vk_glsl_to_spirv(p->vi->msl, STAGE_VERTEX, "vs", &nv);
     uint32_t *sf = sv ? vk_glsl_to_spirv(p->fi->msl, STAGE_FRAGMENT, "fs", &nf) : NULL;
     uint32_t *sg = sf && p->has_gs ? vk_glsl_to_spirv(p->gi->msl, STAGE_GEOMETRY, "gs", &ng) : NULL;
@@ -2881,9 +2893,29 @@ typedef struct { NvnTexture *key; TexBackend copy; } Snap;
 static Snap snaps[16];
 static int nsnaps;
 
-static NvnTexture *shader_texture_object(int stage, ShaderTexture *st_) {
+// A bindless handle (TEX.B, SUST): the constant buffer word the shader read it from. Hardware cbuf c >= 3 is the game's
+// uniform buffer c - 3 (cbuf_info); cbuf 2 is the driver's handle table (bound textures at 0x20 + 8 * slot, then bound
+// images at 0x120 + 8 * slot) - the volumetric fog writer reads its image's handle there. (Indexing the game's buffers
+// with c itself read the game's buffer 2 once it bound one: no image in the first corridor of the frigate, the fog
+// volume empty, the screen black.)
+static uint64_t bindless_handle(int stage, uint32_t cb, uint32_t off) {
+    Range u = cb >= 3 && cb - 3 < 18 ? st.ubuf[stage][cb - 3] : (Range){0, 0};
+    if (u.addr && off + 4 <= u.size) return *(const uint32_t *)(uintptr_t)(u.addr + off);
+    if (cb == 2 && off >= 0x20 && off < 0x160) return off < 0x120 ? st.tex[stage][(off - 0x20) / 8] : st.img[stage][(off - 0x120) / 8];
+    return 0;
+}
+
+// A shader texture's handle: from the texture bindings (64-bit handles from offset 0x20 of the bound texture cbuf) or,
+// bindless (TEX.B: the character gallery's lighting, issue #61), from a constant buffer word. The low 20 bits index
+// the texture pool, the next 12 the sampler pool.
+static uint64_t shader_tex_handle(int stage, const ShaderTexture *st_) {
+    if (st_->bindless) return bindless_handle(stage, st_->bindless_cbuf, st_->bindless_offset);
     int slot = ((int)st_->handle_offset - 0x20) / 8;
-    uint64_t h = (slot >= 0 && slot < 32) ? st.tex[stage][slot] : 0;
+    return slot >= 0 && slot < 32 ? st.tex[stage][slot] : 0;
+}
+
+static NvnTexture *shader_texture_object(int stage, ShaderTexture *st_) {
+    uint64_t h = shader_tex_handle(stage, st_);
     uint32_t tic = h & 0xFFFFF;
     if (!h || !st.tpool || tic >= (uint32_t)st.tpool->count) return NULL;
     return ((NvnTexEntry *)st.tpool->entries)[tic].tex;
@@ -3739,10 +3771,12 @@ void vk_exec_reset(void) {
     st_defaults();
 }
 
-static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo *out, float sc[2], uint32_t wh[2]) {
-    ShaderTexture *st_ = &si->tex[i];
-    int slot = ((int)st_->handle_offset - 0x20) / 8;  // 64-bit handles from offset 0x20
-    uint64_t h = (slot >= 0 && slot < 32) ? st.tex[stage][slot] : 0;
+// A shader texture's descriptor (elem: an element of a bindless texture array, ShaderTexture.count > 1 - its handle
+// bindless_stride further on per element)
+static void texture_info_elem(int stage, const ShaderTexture *st_, uint32_t elem, VkDescriptorImageInfo *out, float sc[2],
+                              uint32_t wh[2]) {
+    uint64_t h = elem ? bindless_handle(stage, st_->bindless_cbuf, st_->bindless_offset + elem * st_->bindless_stride)
+                      : shader_tex_handle(stage, st_);
     VkImageView view = VK_NULL_HANDLE;
     VkSampler smp = VK_NULL_HANDLE;
     uint32_t tic = h & 0xFFFFF, tsc = (uint32_t)(h >> 20) & 0xFFF;
@@ -3788,21 +3822,16 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
     *out = (VkDescriptorImageInfo){smp, view, VK_IMAGE_LAYOUT_GENERAL};
 }
 
+static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo *out, float sc[2], uint32_t wh[2]) {
+    texture_info_elem(stage, &si->tex[i], 0, out, sc, wh);
+}
+
 // A storage image (SUST): its handle from the image bindings or (bindless) from a constant buffer word; the handle's
 // low 20 bits index the texture pool, as for textures. Written by the GPU from now on (no uploads over it).
 static VkImageView image_view(int stage, const ShaderTexture *im) {
     uint64_t h = 0;
     if (im->bindless) {
-        // hardware cbuf c >= 3 is the game's uniform buffer c - 3 (cbuf_info); cbuf 2 is the driver's handle table
-        // (bound textures at 0x20 + 8 * slot, then bound images at 0x120 + 8 * slot) - the volumetric fog writer
-        // reads its image's handle there. (Indexing the game's buffers with c itself read the game's buffer 2 once
-        // it bound one: no image in the first corridor of the frigate, the fog volume empty, the screen black.)
-        Range u = im->bindless_cbuf >= 3 && im->bindless_cbuf - 3 < 18 ? st.ubuf[stage][im->bindless_cbuf - 3] : (Range){0, 0};
-        if (u.addr && im->bindless_offset + 4 <= u.size) h = *(const uint32_t *)(uintptr_t)(u.addr + im->bindless_offset);
-        else if (im->bindless_cbuf == 2 && im->bindless_offset >= 0x20 && im->bindless_offset < 0x160) {
-            uint32_t off = im->bindless_offset;
-            h = off < 0x120 ? st.tex[stage][(off - 0x20) / 8] : st.img[stage][(off - 0x120) / 8];
-        }
+        h = bindless_handle(stage, im->bindless_cbuf, im->bindless_offset);
     } else {
         int slot = ((int)im->handle_offset - 0x20) / 8;
         if (slot >= 0 && slot < 8) h = st.img[stage][slot];
@@ -3835,6 +3864,8 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
     VkWriteDescriptorSet w[MAX_BIND];
     VkDescriptorBufferInfo bi[MAX_BIND];
     VkDescriptorImageInfo ii[MAX_BIND];
+    VkDescriptorImageInfo arr[4 * TEX_ARRAY_MAX];  // (bindless texture arrays' elements)
+    uint32_t narr = 0;
     int n = 0;
     int sg = stage == 1 ? 1 : 0;
     float rs[66][4] = {{1, 1, 0, 0}};  // ([65]: mirror mode)
@@ -3864,6 +3895,17 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
                 tex_wh[sg][ti][0] = wh[0]; tex_wh[sg][ti][1] = wh[1];
             }
             w[n].pImageInfo = &ii[n];
+            if (b->count > 1 && ti < si->ntex && si->tex[ti].count == b->count && b->count <= TEX_ARRAY_MAX &&
+                narr + b->count <= sizeof arr / sizeof *arr) {  // (a bindless texture array: element 0 above, the rest)
+                VkDescriptorImageInfo *a = &arr[narr];
+                narr += b->count;
+                a[0] = ii[n];
+                for (uint32_t k = 1; k < b->count; k++) texture_info_elem(stage, &si->tex[ti], k, &a[k], sc, wh);
+                w[n].pImageInfo = a;
+                w[n].descriptorCount = b->count;
+            } else if (b->count > 1) {
+                continue;  // (not the translator's array: left unwritten)
+            }
         } else if (b->type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER && b->binding < 17) {
             bi[n] = cbuf_info(stage, si, (int)b->binding, gx, gy, gz);
             w[n].pBufferInfo = &bi[n];
@@ -5302,8 +5344,7 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
         }
         {   // its sampler (the handle's upper bits index the sampler pool) and the pool entry's view
             ShaderTexture *stx = &pr->fi->tex[i];
-            int sl = ((int)stx->handle_offset - 0x20) / 8;
-            uint64_t h = sl >= 0 && sl < 32 ? st.tex[1][sl] : 0;
+            uint64_t h = shader_tex_handle(1, stx);
             uint32_t tic = h & 0xFFFFF, tsc = (uint32_t)(h >> 20) & 0xFFF;
             if (h && st.spool && tsc < (uint32_t)st.spool->count) {
                 const NvnSamplerDesc *sd = &((NvnSamplerDesc *)st.spool->entries)[tsc];

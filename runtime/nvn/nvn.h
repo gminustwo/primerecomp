@@ -38,6 +38,10 @@ typedef struct NvnTexture {
     int live_slot;  // renderer's list of textures with a backend: slot + 1
     uint64_t debug_id;
     char label[64];
+    // texture pool entries it was registered in (cleared when it's finalized: a stale bindless handle - the
+    // character gallery's unused light slots, #61 - must not reach freed memory); nreg past 4: the pools are scanned
+    struct NvnDescPool *reg_pool[4];
+    int reg_id[4], nreg;
 } NvnTexture;
 
 typedef struct {
