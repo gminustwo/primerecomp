@@ -25,7 +25,7 @@ PC, with Vulkan for the graphics. No emulator runs.
 
 ![Samus at the Landing Site on Tallon IV](docs/landing_site.jpg)
 
-## Status: v0.0.9
+## Status: v0.0.10
 
 ## Features
 
@@ -85,6 +85,13 @@ PC, with Vulkan for the graphics. No emulator runs.
 > - Lava rising animation appears in Transport Tunnel A in magmoor when it shouldn't
 >
 > Found something else? See [Bugs and feature requests](#bugs-and-feature-requests).
+
+**New in v0.0.10: the Character Gallery lit, a crosshair switch, and 8 GB Macs.** Extras -> Character Gallery's
+models are lit instead of almost black. Two new options in the F1 menu: Video -> Crosshair hides the Combat Visor's
+aiming crosshair, and Controls -> Left stick straight ahead helps you walk straight with the game's Classic controls.
+Fixed: Macs with 8 GB of memory could lose the GPU ("device lost") when a new effect or menu appeared, and the Linux
+AppImage didn't find a Wii U GameCube adapter. The underwater sound now fades in and out instead of switching at once
+(it could pop). What's still being looked into is in [Coming next release](docs/coming-next-release.md).
 
 **New in v0.0.9: suit colors, and shots under water at 90 and 120 fps.** Samus' suit in your own colors - the
 helmet, the armor and the rest, each one of 20 colors - on all four suits (F1 menu, Gameplay tab: Suit colors).
@@ -184,7 +191,7 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 
 ### Windows
 
-1. Download `PrimeRecomp-v0.0.9-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
+1. Download `PrimeRecomp-v0.0.10-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
    extract it somewhere you can write to (e.g. Documents or a games folder - not Program Files).
 2. Run `primerecomp.exe`. The start screen asks for your game files: choose the folder that holds `exefs` and
    `romfs` - or, under **Or its game package**, the game's NSP / XCI file - then **Set up**. It copies what it needs
@@ -198,7 +205,7 @@ from a short note of where that folder is (`%LOCALAPPDATA%\PrimeRecomp\copies.tx
 
 ### macOS (Apple Silicon)
 
-1. Download `PrimeRecomp-v0.0.9-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
+1. Download `PrimeRecomp-v0.0.10-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
    it and drag **PrimeRecomp** onto **Applications**.
 2. PrimeRecomp isn't notarized by Apple, so macOS won't open it as downloaded. Open Terminal once and run:
 
@@ -217,7 +224,7 @@ appears, MoltenVK compiles its shader for Metal, which can show as a brief hitch
 
 ### Linux
 
-1. Download `PrimeRecomp-v0.0.9-linux-x86_64.AppImage` from
+1. Download `PrimeRecomp-v0.0.10-linux-x86_64.AppImage` from
    [Releases](https://github.com/gminustwo/primerecomp/releases) and make it executable (`chmod +x`, or in your file
    manager: Properties -> Permissions -> executable).
 2. Run it. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs` (or the game's
