@@ -1,7 +1,5 @@
 # PrimeRecomp
 
-[![Buy me a coffee](https://img.shields.io/badge/Buy_me_a_coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/rengar)
-
 **PrimeRecomp** runs *Metroid Prime Remastered* (Nintendo Switch, 2023) natively on Windows, macOS (Apple Silicon) and
 Linux, including the Steam Deck. The game's code is statically recompiled - translated ahead of time from the Switch's
 ARM64 code into C and compiled for your PC - and the Switch's system services and NVN graphics are reimplemented on the
