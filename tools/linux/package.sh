@@ -48,6 +48,7 @@ mkdir "$APPDIR/usr/bin/gamelib-src"
 cp runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
    "$APPDIR/usr/bin/gamelib-src/"
 cp tools/linux/AppRun "$APPDIR/" && chmod +x "$APPDIR/AppRun"
+python3 tools/recomplauncher.py --platform linux --program "$(basename "$OUT")" --output "$APPDIR/recomplauncher.json"
 cp tools/linux/primerecomp.desktop "$APPDIR/"
 cp docs/icon/icon_1024.png "$APPDIR/primerecomp.png" && ln -sf primerecomp.png "$APPDIR/.DirIcon"
 
@@ -95,5 +96,5 @@ esac
 chmod +x "build/linux/src/$TOOL"
 mkdir -p build/dist && rm -f "$OUT"
 APPIMAGE_EXTRACT_AND_RUN=1 ARCH=$ARCH "build/linux/src/$TOOL" --no-appstream \
-    --runtime-file "build/linux/src/runtime-$ARCH" "$APPDIR" "$OUT"
+    --runtime-file "build/linux/src/runtime-$ARCH" --mksquashfs-opt=-no-xattrs "$APPDIR" "$OUT"
 ls -la "$OUT"

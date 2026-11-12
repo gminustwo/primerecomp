@@ -276,6 +276,12 @@ Choose one to play on from it. For a save backed up from a Switch (JKSV, Checkpo
 **Choose a folder...** and pick its folder. The save you had is kept: it's moved aside, and the same list shows it as
 "Your save before an import" so you can go back to it.
 
+### RecompLauncher
+
+Release builds include a setup/settings/save profile for RecompLauncher. See
+[RecompLauncher integration](docs/recomplauncher.md) for the required launcher features, game inputs
+and headless setup options. Linux keeps its standalone AppImage.
+
 ### Starting from a launcher (Playnite, Steam, ...)
 
 Two arguments start PrimeRecomp without its start screen, for a game launcher's shortcut (Playnite: the game's
