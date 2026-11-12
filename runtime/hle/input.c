@@ -176,6 +176,17 @@ static void dead_zone(_Atomic int32_t *xa, _Atomic int32_t *ya, int32_t x, int32
     *xa = x, *ya = y;
 }
 
+// The left stick's straight ahead (Controls tab; issue #59): within straight_deg of straight up or down it reads
+// straight, its full tilt kept. In the Classic scheme the stick's sideways turns Samus, and a stick in a round gate is
+// rarely pushed dead straight (a GameCube stick's gate has notches there), so she walked in curves.
+static void straight_snap(_Atomic int32_t *xa, _Atomic int32_t *ya) {
+    int32_t x = *xa, y = *ya;
+    if (g_settings.straight_deg <= 0 || !x || !y) return;
+    if (fabsf((float)x) > fabsf((float)y) * tanf((float)g_settings.straight_deg * 3.14159265f / 180)) return;
+    float m = fminf(sqrtf((float)x * x + (float)y * y), 32767);
+    *xa = 0, *ya = (int32_t)lroundf(y < 0 ? -m : m);
+}
+
 // The controller's sticks as they are (the Controls tab's dead zone picture): x, y of the left then the right, -1..1
 // (y up); false with no controller
 // Flick stick (runtime/hle/game.c flick_frame): the controller's right stick before its dead zone, and whether it's
@@ -240,11 +251,13 @@ static void recompute_pad(void) {
     if (!pad || host_test) {  // (a test's resting stick: through the dead zone as a real one)
         raw_rx = test_rx, raw_ry = test_ry;
         dead_zone(&pad_lx, &pad_ly, test_lx, test_ly, g_settings.deadzone[0]);
+        straight_snap(&pad_lx, &pad_ly);
         dead_zone(&pad_rx, &pad_ry, test_rx, test_ry, g_settings.deadzone[1]);
         return;
     }
     dead_zone(&pad_lx, &pad_ly, SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX), -SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY),
               g_settings.deadzone[0]);
+    straight_snap(&pad_lx, &pad_ly);
     raw_rx = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX), raw_ry = -SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY);
     dead_zone(&pad_rx, &pad_ry, raw_rx, raw_ry, g_settings.deadzone[1]);
 }

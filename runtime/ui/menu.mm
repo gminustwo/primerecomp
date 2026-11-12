@@ -1124,6 +1124,12 @@ static void sticks_section(void) {
         dl->AddCircleFilled(c, r, IM_COL32(8, 12, 20, 255));
         dl->AddCircle(c, r, theme::u32(theme::text_dim), 0, 1.5f * k);
         if (dz > 0) dl->AddCircleFilled(c, fmaxf(r * dz, 2 * k), IM_COL32(70, 84, 108, 255));
+        if (i == 0 && g_settings.straight_deg > 0) {  // (the straight-ahead wedges: up and down)
+            float a = g_settings.straight_deg * 3.14159265f / 180;
+            for (int s = -1; s <= 1; s += 2)
+                dl->AddTriangleFilled(c, ImVec2(c.x - r * sinf(a), c.y + s * r * cosf(a)),
+                                      ImVec2(c.x + r * sinf(a), c.y + s * r * cosf(a)), IM_COL32(50, 62, 84, 255));
+        }
         float m = 0;
         if (have) {
             float x = raw[2 * i], y = raw[2 * i + 1];
@@ -1152,6 +1158,18 @@ static void sticks_section(void) {
          "with; raise it if the dot stays lit with the stick let go, lower it if small moves are lost. To look up "
          "and down the other way with the stick, use the game's own setting: pause, Options -> Controls -> Invert "
          "Y-Axis.");
+    {   // (runtime/hle/input.c straight_snap)
+        ImGui::TextUnformatted("Left stick straight ahead");
+        float deg = (float)g_settings.straight_deg;
+        ImGui::SetNextItemWidth(220 * k);
+        if (ImGui::SliderFloat("##straight", &deg, 0, STRAIGHT_MAX, deg < 0.5f ? "Off" : "%.0f degrees"))
+            g_settings.straight_deg = (int)lroundf(deg);
+        if (ImGui::IsItemDeactivatedAfterEdit()) settings_save();
+        hint("The left stick pushed within this angle of straight forward or back counts as dead straight (the wedges "
+             "in its picture). For the game's Classic controls, where pushing the stick sideways turns Samus: a stick "
+             "in a round gate is rarely pushed exactly straight, so she walks in curves - a GameCube controller's "
+             "stick clicks into place there. 8 to 10 degrees is about a GameCube stick's notch. Off: the stick as it is.");
+    }
 }
 
 static void tab_about(void) {
