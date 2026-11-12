@@ -27,10 +27,12 @@ int main(int argc, char **argv) {
     assert(prime_cli_parse(4, duplicate, &o) == 2);
     char *conflict[] = {"prime", "--prepare", game, "--play"};
     assert(prime_cli_parse(4, conflict, &o) == 2);
-    char *keys_only[] = {"prime", "--keys=missing.keys"};
+    char *keys_only[] = {"prime", "--keys=missing.keys"};  // (no keys options: PrimeRecomp takes no keys)
     assert(prime_cli_parse(2, keys_only, &o) == 2);
     char *folder_keys[] = {"prime", "--prepare", game, "--keys", argv[1]};
     assert(prime_cli_parse(5, folder_keys, &o) == 2);
+    char *title_keys[] = {"prime", "--prepare", game, "--title-keys", argv[1]};
+    assert(prime_cli_parse(5, title_keys, &o) == 2);
     char *unknown[] = {"prime", "--unknown"};
     assert(prime_cli_parse(2, unknown, &o) == 2);
     puts("CLI parser tests passed.");

@@ -152,8 +152,8 @@ bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n) {
 
 // ---- game files
 // What the setup (runtime/ui/launcher.mm) creates in extracted/, plus what older versions' extraction and manual
-// extractions left there (never read at run time). romfs.src: set up from a game package, where its game data is
-// (runtime/nxpkg.c; the package itself, the player's, stays where it is).
+// extractions left there (never read at run time). romfs.src / romfs.src.tmp: left by v0.0.7 - v0.0.10's setup from a
+// game package, which is gone (deleted when found: launcher.mm remove_package_setup).
 static const char *const GAME_FILES[] = {"exefs", "romfs", "romfs.src", "romfs.src.tmp", "romfs.bin", GAMELIB_NAME,
                                          GAMELIB_NAME ".id", ".gamebuild", ".extract", "extract.log", "xci_secure",
                                          "nso_raw", "update_pfs", ".DS_Store"};

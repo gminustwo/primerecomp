@@ -6,9 +6,8 @@ The integration targets these RecompLauncher interfaces:
 
 - [PR #12](https://github.com/elripalda/RecompLauncher/pull/12): discovery of the manifest embedded
   in a standalone AppImage. Full Linux integration needs this feature.
-- [PR #22](https://github.com/elripalda/RecompLauncher/pull/22): named game inputs and conditional,
-  shared keys. The manifest's Easy Setup flow, including launcher-managed key selection, needs
-  this feature on Windows and Linux.
+- [PR #22](https://github.com/elripalda/RecompLauncher/pull/22): named game inputs. The manifest's
+  Easy Setup flow needs this feature on Windows and Linux.
 
 Both PRs were open when this integration was prepared. Older launcher builds do not provide the
 complete flow. They can still launch PrimeRecomp manually after setup in its own start screen.
@@ -17,20 +16,11 @@ number is guessed before those features ship.
 
 ## Setup
 
-Choose your own **Metroid Prime Remastered v1.0.0, without updates**:
+Choose your own **Metroid Prime Remastered v1.0.0, without updates**, extracted: a folder holding
+`exefs` and `romfs`. PrimeRecomp validates the main module's build ID and the required game files
+before building its code. It doesn't read game packages (NSP, XCI) and takes no keys.
 
-- An extracted folder holding `exefs` and `romfs` needs no keys. PrimeRecomp validates the main
-  module's build ID and the required game files before building its code.
-- An **NSP or XCI** activates the manifest's `prod.keys` input. RecompLauncher can reuse a stored
-  keyset; PrimeRecomp validates whether it can actually decrypt the selected game.
-- Rights-managed packages use their embedded ticket, or `title.keys` beside `prod.keys`.
-  A package without usable title rights fails setup with a diagnostic; title keys are not required
-  for every NSP/XCI. The current named-input contract cannot conditionally ask for title keys
-  based on a rights ID discovered during decryption, so the manifest does not demand them
-  universally. Use existing title-key discovery or the explicit CLI option below for that case.
-
-Package setup leaves the NSP/XCI where you selected it and reads it during play. Keep it available.
-Extracted files are copied/linked into PrimeRecomp's data folder. Setups and compilation can take
+The extracted files are copied/linked into PrimeRecomp's data folder. Setups and compilation can take
 several minutes; the manifest allows up to one hour. Cancelling preserves saves, and retrying can
 reuse validated staged files. An interrupted code build restarts compilation from those files.
 
@@ -45,14 +35,13 @@ session default over the user's window preference. F11 or the in-game Fullscreen
 changes and saves an explicitly chosen preference. Controller prompts continue to follow the
 controller through PrimeRecomp's existing Auto setting.
 
-Only the `save` folder is declared for backups/cloud saves. Keys, game files, caches, generated code
-and `extracted/romfs.src` are excluded. The latter contains decryption material; do not share it as a
-save or diagnostic attachment. Setup logs contain messages and paths, never key values.
+Only the `save` folder is declared for backups/cloud saves. Game files, caches and generated code
+are excluded.
 
 ## Command line
 
 ```text
-primerecomp --prepare --game=<folder|NSP|XCI> [--keys=<prod.keys>] [--title-keys=<title.keys>]
+primerecomp --prepare --game=<folder>
 primerecomp --play
 primerecomp --preload-shaders
 ```
@@ -66,12 +55,9 @@ CLI override is provided.
 `--prepare` opens no window and returns 0 only when the prepared game is ready. It prints flushed
 `progress <0..1> <message>` lines on stdout and writes detailed English diagnostics to
 `primerecomp-setup.log` in the data folder. Invalid arguments return 2; setup failures return 1.
-A closed progress pipe cancels the operation and ends compiler subprocesses. No game content,
-keys or compilation output is downloaded by this command beyond the project's existing toolchain.
-An explicit `--keys` path is authoritative; without one, existing package-adjacent/emulator key
-discovery applies. `--title-keys` supplies a separate file without copying it beside the game or
-`prod.keys`; ticket lookup remains first. Selected source/key paths and metadata are recorded
-locally to identify repeat setup, without recording the keys' contents.
+A closed progress pipe cancels the operation and ends compiler subprocesses. No game content or
+compilation output is downloaded by this command beyond the project's existing toolchain. The
+selected folder's path and file metadata are recorded locally to identify repeat setup.
 
 ## Packaging and validation
 
@@ -89,6 +75,6 @@ The RecompLauncher integration workflow builds Windows and Linux in GitHub Actio
 review artifacts. Its Windows artifact is a runtime smoke-test folder, without the setup generator
 or compiler; it is not a replacement for the complete `make dist` release.
 
-Tests without real game content do not prove successful import/decryption, live game launch,
+Tests without real game content do not prove successful import, live game launch,
 controller behavior or save synchronization. Those require a user's own game and supported
 hardware. No verified-dump badge or clean-content claim is supplied.

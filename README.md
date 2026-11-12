@@ -108,9 +108,8 @@ version and installs it in place on Windows and Linux (see [Updating](#updating)
 launcher. Fixed: the title screen's movie flickered and stuttered (frames out of order, and shown 15 times a second),
 and the visor's scan lines on ultrawide screens as Samus leaves the morph ball.
 
-**New in v0.0.7: play from your NSP / XCI, emulator mods and saves, and first visits without shader hitches.** Set up
-from the game's NSP or XCI itself (with your console's keys), no extracting; use mods and Atmosphere cheats made for
-Ryujinx, yuzu or a modded Switch (Mods and Cheats tabs), and bring your saves over from those emulators (Settings ->
+**New in v0.0.7: emulator mods and saves, and first visits without shader hitches.** Use mods and Atmosphere cheats
+made for Ryujinx, yuzu or a modded Switch (Mods and Cheats tabs), and bring your saves over from those emulators (Settings ->
 Prelaunch). Shader pre-load comes with a list of the whole game's shaders, so a first visit draws at once (on by
 default for a new setup; after updating, turn it on in the Video tab). A confirms in menus on every controller; keyboard prompts show the right keys (the visors' Q / E / R /
 T, Q / E for the pause pages); CPUs without AVX2 work. Fixed: the crash with Russian or Traditional Chinese set,
@@ -180,12 +179,10 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
   without it the game code is built for older CPUs) and a GPU with a Vulkan 1.3 driver (any current NVIDIA, AMD or Intel driver; on Linux, Mesa's RADV / ANV or NVIDIA's)
 - **macOS:** a Mac with Apple Silicon (M1 or newer) and macOS 15 or newer (Intel Macs aren't supported)
 - About 8 GB of free disk space (the game files are copied in, about 7 GB, plus the recompiled game; less when your
-  game files are on the same drive: they're linked rather than copied where the file system allows; about 1 GB when
-  set up from a game package, which isn't copied)
-- Your own Metroid Prime Remastered v1.0.0 game files: either **extracted** - a folder holding `exefs` and `romfs`
-  (extract both from your own dump with your usual Switch tools) - or the game's **NSP or XCI** file as dumped,
-  with your console's keys (`prod.keys`: found by themselves next to the package, or where Ryujinx or yuzu keep
-  them)
+  game files are on the same drive: they're linked rather than copied where the file system allows)
+- Your own Metroid Prime Remastered v1.0.0 game files, **extracted**: a folder holding `exefs` and `romfs` (extract
+  both from your own dump with your usual Switch tools). PrimeRecomp doesn't read game packages (NSP, XCI) and
+  never asks for keys
 
 ## Getting started
 
@@ -194,9 +191,8 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 1. Download `PrimeRecomp-v0.0.10-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
    extract it somewhere you can write to (e.g. Documents or a games folder - not Program Files).
 2. Run `primerecomp.exe`. The start screen asks for your game files: choose the folder that holds `exefs` and
-   `romfs` - or, under **Or its game package**, the game's NSP / XCI file - then **Set up**. It copies what it needs
-   and recompiles the game on your PC. This happens once and takes several minutes. A game package isn't copied:
-   the game plays from it, so leave it where it is (moved, PrimeRecomp asks to set it up again).
+   `romfs`, then **Set up**. It copies what it needs and recompiles the game on your PC. This happens once and takes
+   several minutes.
 3. Press **Play**.
 
 Everything PrimeRecomp writes - game files, saves, settings (`primerecomp.ini`), logs - stays in its own folder, apart
@@ -215,8 +211,8 @@ from a short note of where that folder is (`%LOCALAPPDATA%\PrimeRecomp\copies.tx
 
    This clears the "downloaded from the internet" mark from the app and from the tools inside it that recompile
    the game: without this, macOS stops them. Do it again after each update.
-3. Open PrimeRecomp. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs` (or
-   the game's NSP / XCI), **Set up**, then **Play**.
+3. Open PrimeRecomp. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs`,
+   **Set up**, then **Play**.
 
 Everything it writes goes to `~/Library/Application Support/io.github.primerecomp`. The first time each effect
 appears, MoltenVK compiles its shader for Metal, which can show as a brief hitch. More in
@@ -227,8 +223,8 @@ appears, MoltenVK compiles its shader for Metal, which can show as a brief hitch
 1. Download `PrimeRecomp-v0.0.10-linux-x86_64.AppImage` from
    [Releases](https://github.com/gminustwo/primerecomp/releases) and make it executable (`chmod +x`, or in your file
    manager: Properties -> Permissions -> executable).
-2. Run it. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs` (or the game's
-   NSP / XCI), **Set up**, then **Play**.
+2. Run it. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs`, **Set up**,
+   then **Play**.
 
 Everything it writes goes to `~/.local/share/primerecomp`. If the AppImage won't start with a FUSE error, install
 your distribution's `fuse3` package. More in [docs/linux.md](docs/linux.md).
@@ -236,9 +232,9 @@ your distribution's `fuse3` package. More in [docs/linux.md](docs/linux.md).
 ### Steam Deck
 
 1. In Desktop Mode, put the AppImage in your home folder (e.g. `~/Games/PrimeRecomp/`), right-click it ->
-   Properties -> Permissions -> "Is executable", and copy your game files (the folder with `exefs` and `romfs`, or
-   the NSP / XCI with your `prod.keys` next to it) onto the Deck or its SD card.
-2. Run the AppImage, choose the game folder (or the NSP / XCI) and **Set up** (once; it takes a while on the Deck).
+   Properties -> Permissions -> "Is executable", and copy your game files (the folder with `exefs` and `romfs`) onto
+   the Deck or its SD card.
+2. Run the AppImage, choose the game folder and **Set up** (once; it takes a while on the Deck).
    Do this in Desktop Mode: the file picker is a desktop file dialog.
 3. Add it to Steam: Games -> Add a Non-Steam Game to My Library -> Browse (set the file type to "All Files") -> the
    AppImage. It then starts from Game Mode.
@@ -396,8 +392,6 @@ screen.
   ahead of time from a shipped list of hashes and pipeline states, their code found in the player's own game files
 - [TotK Recomp](https://github.com/valentderah/totk-pc-recomp) by Valiantsin Dzerakh (MIT) - the Atmosphere cheat
   files' VM (runtime/hle/atmocheats.c) runs the opcodes as its `runtime/cheats.c` does
-- [EoWRecomp](https://github.com/Nycolazs/EoWRecomp) (MIT) - the NSP / XCI reader (runtime/nxpkg.c) is its
-  `runtime/nxpkg.c`, ported to Windows with AES-NI (suggested in issue #19)
 - [envytools](https://github.com/envytools/envytools) - NVIDIA GPU documentation used for the shader translator
 - [Nintendo_Switch_Reverse_Engineering](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering) by
   dekuNukem - the Switch controllers' HD rumble format;
@@ -442,7 +436,7 @@ not in this repository and not in release builds. You must provide your own lega
 PrimeRecomp's code - LAS Recomp's code and the changes made for Metroid Prime Remastered - is open source under the
 [MIT License](LICENSE) (copyright Peiikai, and the PrimeRecomp contributors for their changes). Third-party
 components keep their own licenses: Dear ImGui (MIT), Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT),
-bcdec (MIT), miniz (MIT), code ported from Ryujinx (MIT), EoWRecomp's game package reader (MIT), the Baloo 2 font (SIL OFL 1.1), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked
+bcdec (MIT), miniz (MIT), code ported from Ryujinx (MIT), the Baloo 2 font (SIL OFL 1.1), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked
 dynamically), shaderc (Apache 2.0), the Zig compiler (MIT; its LLVM / Clang / LLD: Apache 2.0 with LLVM exceptions;
 its C library headers keep their own licenses) and the game code generator helper's bundled libraries listed above
 (Unicorn is under the GPL: the helper is a separate program the setup runs, and its sources are this repository plus

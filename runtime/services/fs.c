@@ -11,7 +11,6 @@
 
 #include "../hle.h"
 #include "../ipc.h"
-#include "../nxpkg.h"
 #include "../romfs_build.h"
 #include "../mods.h"
 
@@ -26,13 +25,11 @@ const char *g_save_dir = "save";
 // The game reads its data as one raw RomFS image. It's served from the player's romfs/ folder: the header and tables
 // laid out in memory (runtime/romfs_build.c), each file's bytes read from its own file, the gaps between files zeros -
 // no image file on disk, so the game data isn't kept twice (issues #11, #15: setup kept romfs/ and the romfs.bin built
-// from it, 6.8 GB each; as LAS Recomp has done since its Beta 5). Set up from a game package (NSP / XCI), there's no
-// folder: the image is read from the package itself, decrypted as it's read (romfs.src, where the folder would be,
-// says where: runtime/nxpkg.c). A romfs.bin from an older version is used only when neither is there.
+// from it, 6.8 GB each; as LAS Recomp has done since its Beta 5). A romfs.bin from an older version is used only when
+// there's no folder.
 static RomfsLayout g_base;
 static bool g_base_open;
-static int g_base_fd = -1;   // (an older version's romfs.bin)
-static NxRomfs *g_base_pkg;  // (the game package)
+static int g_base_fd = -1;  // (an older version's romfs.bin)
 static pthread_mutex_t g_base_lock = PTHREAD_MUTEX_INITIALIZER;
 #define BASE_FDS 32  // files kept open (macOS allows 256 open files by default)
 static struct { int file, fd; uint64_t used; } g_base_fds[BASE_FDS];
@@ -51,7 +48,6 @@ static int base_file_fd(int i) {  // (g_base_lock held)
 }
 
 static uint64_t base_size(void) {
-    if (g_base_pkg) return nx_romfs_size(g_base_pkg);
     if (g_base_fd >= 0) {
         struct stat sb;
         fstat(g_base_fd, &sb);
@@ -62,12 +58,6 @@ static uint64_t base_size(void) {
 
 // n bytes of the base image at off (past its end: zeros)
 static ssize_t base_pread(void *dst_, uint64_t n, uint64_t off) {
-    if (g_base_pkg) {  // (past its end: zeros, as the folder's)
-        ssize_t got = nx_romfs_pread(g_base_pkg, dst_, n, off);
-        if (got < 0) { LOG("[fs] can't read the game package at %llx\n", (unsigned long long)off); return -1; }
-        memset((uint8_t *)dst_ + got, 0, n - (uint64_t)got);
-        return (ssize_t)n;
-    }
     if (g_base_fd >= 0) return pread(g_base_fd, dst_, n, (off_t)off);
     uint8_t *dst = dst_;
     memset(dst, 0, n);
@@ -107,8 +97,6 @@ static void base_close(void) {
     romfs_layout_free(&g_base);
     if (g_base_fd >= 0) close(g_base_fd);
     g_base_fd = -1;
-    nx_romfs_close(g_base_pkg);
-    g_base_pkg = NULL;
     g_base_open = false;
 }
 
@@ -131,7 +119,7 @@ static void base_open(void) {
         int odd = 0, wrong = 0, missing = romfs_check_files(g_romfs_dir, &wrong, log_odd_file, &odd);
         if (missing)
             LOG("[fs] romfs: %d of the game's %d files missing - the game can't start without them: set the game "
-                "files up again on the start screen (from a new extract of the game's romfs, or its NSP / XCI)\n",
+                "files up again on the start screen (from a new extract of the game's romfs)\n",
                 missing, romfs_game_file_count());
         if (wrong) LOG("[fs] romfs: %d of the game's files at another size than v1.0.0's (changed, or cut short)\n", wrong);
         if (getenv("LARECOMP_ROMFS_VERIFY")) {  // (debug) the served image against a romfs.bin built before, byte for byte
@@ -154,10 +142,6 @@ static void base_open(void) {
                 close(fd);
             }
         }
-    } else if (snprintf(path, sizeof path, "%s.src", g_romfs_dir), stat(path, &sb) == 0) {  // set up from a package
-        g_base_pkg = nx_romfs_open(path, why, sizeof why);
-        if (!g_base_pkg) FATAL("cannot read the game data: %s (set up the game files on the start screen)\n", why);
-        LOG("[fs] romfs: read from the game package (%s, %.1f GB)\n", path, nx_romfs_size(g_base_pkg) / 1e9);
     } else {
         snprintf(path, sizeof path, "%s.bin", g_romfs_dir);  // (an older version's image)
         g_base_fd = open(path, O_RDONLY);
@@ -949,33 +933,25 @@ static Service *open_host_fs(const char *sub) {
 }
 
 // ------------------------------------------------------------------ the game's files, apart from the game's reads
-// A game file's bytes by its romfs path ("Worlds/..."), from wherever the game's data is set up - the romfs folder, or
-// the game package itself (romfs.src) - through handles of their own: the game may be reading at the same time, and
-// its base image is opened only when it starts (runtime/nvn/vulkan/exec.c: the shipped shader list, on the start
-// screen). An older version's romfs.bin isn't read here.
-typedef struct GameFiles { NxRomfs *pkg; } GameFiles;
+// A game file's bytes by its romfs path ("Worlds/..."), from the romfs folder - through handles of their own: the game
+// may be reading at the same time, and its base image is opened only when it starts (runtime/nvn/vulkan/exec.c: the
+// shipped shader list, on the start screen). An older version's romfs.bin isn't read here.
+typedef struct GameFiles { char dir[1100]; } GameFiles;
 
 GameFiles *game_files_open(void) {
     if (!g_romfs_dir) return NULL;
-    char p[1100], why[256];
+    char p[1100];
     struct stat sb;
-    GameFiles *g = calloc(1, sizeof *g);
     snprintf(p, sizeof p, "%s/Worlds", g_romfs_dir);
-    if (stat(p, &sb) == 0) return g;  // (the folder: each file opened as it's read)
-    snprintf(p, sizeof p, "%s.src", g_romfs_dir);
-    if (stat(p, &sb) == 0 && (g->pkg = nx_romfs_open(p, why, sizeof why))) return g;
-    free(g);
-    return NULL;
+    if (stat(p, &sb) != 0) return NULL;
+    GameFiles *g = calloc(1, sizeof *g);
+    if (g) snprintf(g->dir, sizeof g->dir, "%s", g_romfs_dir);  // (each file opened as it's read)
+    return g;
 }
 
 bool game_files_read(GameFiles *g, const char *path, uint64_t off, void *dst, uint64_t n) {
-    if (g->pkg) {
-        uint64_t at, size;
-        if (!nx_romfs_find(g->pkg, path, &at, &size) || off > size || n > size - off) return false;
-        return nx_romfs_pread(g->pkg, dst, n, at + off) == (ssize_t)n;
-    }
     char p[1300];
-    snprintf(p, sizeof p, "%s/%s", g_romfs_dir, path);
+    snprintf(p, sizeof p, "%s/%s", g->dir, path);
     int fd = open(p, O_RDONLY);
     if (fd < 0) return false;
     uint64_t done = 0;
@@ -989,19 +965,13 @@ bool game_files_read(GameFiles *g, const char *path, uint64_t off, void *dst, ui
 }
 
 int64_t game_files_size(GameFiles *g, const char *path) {  // -1: no such file
-    if (g->pkg) {
-        uint64_t at, size;
-        return nx_romfs_find(g->pkg, path, &at, &size) ? (int64_t)size : -1;
-    }
     char p[1300];
     struct stat sb;
-    snprintf(p, sizeof p, "%s/%s", g_romfs_dir, path);
+    snprintf(p, sizeof p, "%s/%s", g->dir, path);
     return stat(p, &sb) ? -1 : (int64_t)sb.st_size;
 }
 
 void game_files_close(GameFiles *g) {
-    if (!g) return;
-    nx_romfs_close(g->pkg);
     free(g);
 }
 

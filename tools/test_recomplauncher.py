@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manifest contracts and optional runtime smoke tests; never require game content or real keys."""
+"""Manifest contracts and optional runtime smoke tests; never require game content."""
 import argparse
 import importlib.util
 import json
@@ -25,23 +25,22 @@ class ManifestTests(unittest.TestCase):
                 self.assertEqual(m["repo"], "gminustwo/primerecomp")
                 self.assertEqual(m["start"]["program"], [program])
                 self.assertEqual(m["prepare"]["program"], [program])
-                self.assertIn("--keys={input:keys}", m["prepare"]["args"])
+                self.assertFalse(any("keys" in a for a in m["prepare"]["args"]))
                 self.assertGreaterEqual(m["prepare"]["timeout"], 1800)
                 if SCHEMA:
                     import jsonschema
                     jsonschema.Draft7Validator(json.loads(SCHEMA.read_text())).validate(m)
 
-    def test_keys_are_only_required_for_packages(self):
+    def test_only_an_extracted_folder_no_keys(self):
         m = generator.manifest("windows", "primerecomp.exe")
-        base, keys = m["inputs"]
-        self.assertNotIn("requires", base["formats"][0])
-        self.assertEqual(base["formats"][1]["requires"], [keys["id"]])
-        self.assertEqual(base["formats"][1]["extensions"], ["nsp", "xci"])
-        self.assertEqual(keys["shared"], "switch.prod-keys")
-        self.assertNotIn("destination", keys)
-        self.assertFalse(any(i.get("shared") == "switch.title-keys" for i in m["inputs"]))
+        self.assertEqual(len(m["inputs"]), 1)
+        self.assertEqual(m["inputs"][0]["formats"], [{"type": "folder"}])
+        self.assertFalse(any(i.get("role") == "key" for i in m["inputs"]))
+        text = json.dumps(m).lower()
+        for word in ("prod.keys", "title.keys", "prod-keys", "nsp", "xci"):
+            self.assertNotIn(word, text)
 
-    def test_saves_never_cover_keys_or_decryption_metadata(self):
+    def test_saves_and_data_root(self):
         for platform in ("windows", "linux"):
             m = generator.manifest(platform, "game.AppImage")
             root = "{install}" if platform == "windows" else "{local}/primerecomp"
@@ -64,7 +63,6 @@ class ManifestTests(unittest.TestCase):
             if "slider" in s:
                 self.assertLess(s["slider"]["min"], s["slider"]["max"])
                 self.assertGreater(s["slider"]["step"], 0)
-        self.assertNotIn("romfs.src", json.dumps(m))
 
     def test_generator_writes_utf8_json(self):
         with tempfile.TemporaryDirectory(prefix="prime manifest ") as d:
@@ -92,13 +90,9 @@ class RuntimeTests(unittest.TestCase):
                 env.pop(key, None)
             source = root / "game files β"
             source.mkdir()
-            synthetic_keys = None
-            if "bad-package" in args:
-                source = root / "synthetic.nsp"
-                source.write_bytes(bytes(512))
-                synthetic_keys = root / "synthetic.keys"
-                synthetic_keys.write_text("not-a-key-value\n")
-                args = ("--keys=" + str(synthetic_keys),)
+            if "package-only" in args:  # a game package, which isn't read: refused as unusable
+                (source / "synthetic.nsp").write_bytes(bytes(512))
+                args = ()
             if "wrong-version" in args:
                 (source / "exefs").mkdir()
                 (source / "romfs/Worlds").mkdir(parents=True)
@@ -118,10 +112,6 @@ class RuntimeTests(unittest.TestCase):
             log = data / "primerecomp-setup.log"
             self.assertTrue(log.is_file())
             self.assertFalse((data / ".primerecomp-setup-source").exists())
-            if synthetic_keys:
-                self.assertEqual(synthetic_keys.read_text(), "not-a-key-value\n")
-                self.assertEqual(source.read_bytes(), bytes(512))
-                self.assertNotIn("not-a-key-value", log.read_text() + r.stdout)
             return log.read_text()
 
     def test_empty_folder_fails_without_window_or_save_changes(self):
@@ -130,13 +120,21 @@ class RuntimeTests(unittest.TestCase):
     def test_wrong_game_version_fails_without_window(self):
         self.assertIn("Wrong version", self.run_cli("wrong-version"))
 
-    def test_bad_package_and_explicit_keys_preserve_originals(self):
-        self.assertIn("keys", self.run_cli("bad-package").lower())
+    def test_folder_of_packages_is_refused(self):
+        self.assertIn("can't be used", self.run_cli("package-only"))
+
+    def test_package_file_and_key_options_are_refused(self):
+        with tempfile.TemporaryDirectory(prefix="prime package ") as d:
+            package = Path(d) / "synthetic.nsp"
+            package.write_bytes(bytes(512))
+            for args in (["--prepare", "--game=" + str(package)], ["--prepare", "--game=" + d, "--keys=" + str(package)]):
+                r = subprocess.run([str(EXE), *args], capture_output=True, text=True, timeout=15)
+                self.assertEqual(r.returncode, 2, args)
 
     def test_help_without_display(self):
         r = subprocess.run([str(EXE), "--help"], capture_output=True, text=True, timeout=15)
         self.assertEqual(r.returncode, 0)
-        self.assertIn("--title-keys", r.stdout)
+        self.assertNotIn("keys", r.stdout.lower())
 
 
 class ParserTests(unittest.TestCase):
