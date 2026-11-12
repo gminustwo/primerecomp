@@ -55,6 +55,7 @@ typedef struct {
     int aspect;          // ASPECT_*: unlocked = fill the window (wider/taller views), original = 16:9 with bars
     int hud;             // HUD_*: unlocked aspect, wider than 16:9: where the HUD's side pieces go
     int pause;           // PAUSE_*: unlocked aspect, wider than 16:9: the pause screens stretched or in the middle
+    bool crosshair;      // the visor's aiming crosshair is drawn (off: lock-on and scan markers only; runtime/hle/game.c)
     bool fullscreen;
     int res_mode;        // RES_MATCH, RES_FIXED (res_lines), RES_DYNAMIC, RES_Q75/50/25 (share of the display)
     int res_lines;       // RES_FIXED: render height in lines, one of g_res_lines (2160 = 4K)

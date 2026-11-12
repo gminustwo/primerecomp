@@ -349,7 +349,31 @@ static void rt_weapon_update(Cpu *c) {
     }
 }
 
+// ---- The crosshair (Display tab: Crosshair; issue #63)
+// The targeting manager (CTargetingManagerMP1::Draw) draws each of the visor's reticles through its virtual Draw, so
+// the runtime steps in there (hle_override): with the crosshair off, the aiming ones aren't drawn - the Combat Visor's
+// (CReticleCombatAiming: the three dashes and the dot in the middle), the crosshair (CReticleCrosshair) and the Pointer
+// scheme's (CReticlePointerCenter). Lock-on, scan, grapple and off-screen markers stay: they show what can be targeted.
+#define CROSSHAIRS(X) \
+    X(0, "_ZNK20CReticleCombatAiming4DrawERK9CMatrix3fRK13CStateManagerRKN15NGuiReticlesMP111SUpdateDataE") \
+    X(1, "_ZNK17CReticleCrosshair4DrawERK9CMatrix3fRK13CStateManagerRKN15NGuiReticlesMP111SUpdateDataE") \
+    X(2, "_ZNK21CReticlePointerCenter4DrawERK9CMatrix3fRK13CStateManagerRKN15NGuiReticlesMP111SUpdateDataE")
+static GuestFn g_crosshair_draw[3];
+#define CROSSHAIR_FN(i, s) \
+    static void rt_crosshair_draw##i(Cpu *c) { if (g_settings.crosshair) g_crosshair_draw[i](c); }
+CROSSHAIRS(CROSSHAIR_FN)
+
 void game_hooks_init(void) {  // (each boot, after dispatch_init)
+    {
+        static bool chooked;
+#define CROSSHAIR_HOOK(i, s) { \
+            uint64_t a = guest_sym(s); \
+            g_crosshair_draw[i] = dispatch_lookup(a); \
+            if (g_crosshair_draw[i] && !chooked) hle_override(a, rt_crosshair_draw##i, s); \
+        }
+        CROSSHAIRS(CROSSHAIR_HOOK)
+        chooked = true;
+    }
     {
         uint64_t w = guest_sym("_ZN17CProjectileWeapon6UpdateEd");
         static bool whooked;
