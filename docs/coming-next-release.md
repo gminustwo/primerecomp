@@ -31,8 +31,7 @@ ratio and Pause screen settings, would help.
 ### Rising lava in Magmoor Caverns doesn't stop or burn ([#54](https://github.com/gminustwo/primerecomp/issues/54))
 
 In the narrow section on the way to the Phendrana Drifts elevator, the lava keeps rising out of bounds and touching it
-does nothing. Likely the lava's damage volume isn't following its surface, or a script message is lost. A save near
-that room would let us test it.
+does nothing. We're aware of it and know where it happens, so there's no need to send anything for this one.
 
 ### Audio pop going in and out of water ([#55](https://github.com/gminustwo/primerecomp/issues/55))
 
