@@ -70,12 +70,15 @@ if [ ! -f "$P/include/vma/vk_mem_alloc.h" ]; then
     mkdir -p "$P/include/vma" && cp "$W/vma/include/vk_mem_alloc.h" "$P/include/vma/"
 fi
 
-if [ ! -f "$P/lib/libSDL3.so" ]; then
+# SDL reaches the Wii U GameCube adapter only through libusb (loaded at run time, so it stays optional for players);
+# an SDL built before the container had libusb-1.0-0-dev is built again
+if [ ! -f "$P/lib/libSDL3.so" ] || ! grep -q libusb-1.0.so "$P/lib/libSDL3.so"; then
     unpack SDL3-3.4.16.tar.gz sdl
     cmake -S "$W/sdl" -B "$W/sdl/build" -G Ninja "${CMAKE_CROSS[@]}" -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="$P" -DCMAKE_INSTALL_LIBDIR=lib -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF \
-        -DSDL_EXAMPLES=OFF -DSDL_RPATH=OFF
+        -DSDL_EXAMPLES=OFF -DSDL_RPATH=OFF -DSDL_HIDAPI_LIBUSB=ON -DSDL_HIDAPI_LIBUSB_SHARED=ON
     cmake --build "$W/sdl/build" -j"$JOBS" && cmake --install "$W/sdl/build"
+    grep -q libusb-1.0.so "$P/lib/libSDL3.so" || { echo "SDL3 was built without libusb (libusb-1.0-0-dev?)"; exit 1; }
 fi
 
 if [ ! -f "$P/lib/libavcodec.so" ]; then
