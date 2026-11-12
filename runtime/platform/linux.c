@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 #include "../platform.h"
+#include "../launcher_cli.h"
 #include "posix.h"
 
 #ifndef MAP_FIXED_NOREPLACE
@@ -211,6 +212,7 @@ static void require_cpu(void) {}
 #endif
 
 void plat_init(void) {
+    if (prime_headless) return;  // stdout must remain the launcher's progress pipe; no dialogs
 #ifdef __ANDROID__
     // The data root: the app's folder on the shared storage (Android/data/<package>/files) - game files, saves,
     // settings, the log - which adb and file managers reach over USB, where the app's private folder isn't. (runtime/

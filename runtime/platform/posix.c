@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "../platform.h"
+#include "../launcher_cli.h"
 #include "posix.h"
 
 // ---- log
@@ -27,6 +28,7 @@
 static char g_log_path[1024];
 
 void posix_log_to_file(const char *data_dir) {
+    if (prime_headless) return;  // keep the setup progress pipe on every POSIX host
     if (isatty(STDERR_FILENO)) return;
     char dir[900];
     const char *env = getenv("LARECOMP_DATA_ROOT");

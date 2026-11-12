@@ -10,6 +10,7 @@
 #include <io.h>
 
 #include "../platform.h"
+#include "../launcher_cli.h"
 
 // ---- guest address space
 // The window is reserved up front and committed per region (plat_commit from the loader / kernel). Anything
@@ -298,6 +299,7 @@ void plat_fatal_notice(void) {
 }
 
 void plat_init(void) {
+    if (prime_headless) return;  // stdout must remain the launcher's progress pipe; no dialogs
     log_to_file_without_console();
     require_cpu();
     _fmode = _O_BINARY;  // fopen/open default to binary (the runtime's "r"/"w" files are binary or LF text)
