@@ -161,7 +161,7 @@ VkShaderModule vk_compile_glsl(const char *src, int stage, const char *name) {
 // ================================================================== reflection
 // Just enough SPIR-V parsing to list the descriptor bindings a module declares (set, binding, type).
 enum { OP_TYPE_IMAGE = 25, OP_TYPE_SAMPLER = 26, OP_TYPE_SAMPLED_IMAGE = 27, OP_TYPE_ARRAY = 28, OP_TYPE_RUNTIME_ARRAY = 29,
-       OP_TYPE_STRUCT = 30, OP_TYPE_POINTER = 32, OP_VARIABLE = 59, OP_DECORATE = 71 };
+       OP_TYPE_STRUCT = 30, OP_TYPE_POINTER = 32, OP_CONSTANT = 43, OP_VARIABLE = 59, OP_DECORATE = 71 };
 enum { DEC_BLOCK = 2, DEC_BUFFER_BLOCK = 3, DEC_BINDING = 33, DEC_SET = 34 };
 enum { SC_UNIFORM_CONSTANT = 0, SC_UNIFORM = 2, SC_STORAGE_BUFFER = 12 };
 
@@ -171,6 +171,7 @@ int vk_reflect(const uint32_t *spv, size_t n, VkBindingInfo *out, int max) {
     int32_t *binding = malloc(bound * sizeof *binding), *set = malloc(bound * sizeof *set);
     uint8_t *flags = calloc(bound, 1);    // 1 Block, 2 BufferBlock
     uint32_t *op = calloc(bound, sizeof *op), *ref = calloc(bound, sizeof *ref), *sc = calloc(bound, sizeof *sc);
+    uint32_t *val = calloc(bound, sizeof *val), *len = calloc(bound, sizeof *len);  // (constants; arrays' length ids)
     for (uint32_t i = 0; i < bound; i++) binding[i] = set[i] = -1;
     for (size_t i = 5; i < n;) {
         uint32_t wc = spv[i] >> 16, o = spv[i] & 0xFFFF;
@@ -187,6 +188,9 @@ int vk_reflect(const uint32_t *spv, size_t n, VkBindingInfo *out, int max) {
         } else if ((o == OP_TYPE_ARRAY || o == OP_TYPE_RUNTIME_ARRAY) && wc >= 3 && w[1] < bound) {
             op[w[1]] = o;
             ref[w[1]] = w[2];
+            if (o == OP_TYPE_ARRAY && wc >= 4) len[w[1]] = w[3];
+        } else if (o == OP_CONSTANT && wc >= 4 && w[2] < bound) {
+            val[w[2]] = w[3];
         } else if (o == OP_TYPE_POINTER && wc >= 4 && w[1] < bound) {
             op[w[1]] = o;
             sc[w[1]] = w[2];
@@ -202,6 +206,8 @@ int vk_reflect(const uint32_t *spv, size_t n, VkBindingInfo *out, int max) {
     for (uint32_t id = 0; id < bound && cnt < max; id++) {
         if (op[id] != OP_VARIABLE || binding[id] < 0) continue;
         uint32_t t = ref[ref[id]];  // pointee
+        uint32_t count = 1;  // (an array of descriptors: the translator's bindless texture arrays)
+        if (t < bound && op[t] == OP_TYPE_ARRAY && len[t] < bound && val[len[t]] > 1) count = val[len[t]];
         while (t < bound && (op[t] == OP_TYPE_ARRAY || op[t] == OP_TYPE_RUNTIME_ARRAY)) t = ref[t];
         VkDescriptorType dt;
         if (t >= bound) continue;
@@ -211,9 +217,9 @@ int vk_reflect(const uint32_t *spv, size_t n, VkBindingInfo *out, int max) {
         else if (op[t] == OP_TYPE_STRUCT && (sc[id] == SC_STORAGE_BUFFER || (flags[t] & 2))) dt = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         else if (op[t] == OP_TYPE_STRUCT && sc[id] == SC_UNIFORM) dt = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         else continue;
-        out[cnt++] = (VkBindingInfo){(uint32_t)(set[id] < 0 ? 0 : set[id]), (uint32_t)binding[id], dt};
+        out[cnt++] = (VkBindingInfo){(uint32_t)(set[id] < 0 ? 0 : set[id]), (uint32_t)binding[id], dt, count};
     }
-    free(binding); free(set); free(flags); free(op); free(ref); free(sc);
+    free(binding); free(set); free(flags); free(op); free(ref); free(sc); free(val); free(len);
     return cnt;
 }
 
@@ -221,7 +227,8 @@ VkDescriptorSetLayout vk_set_layout(const VkBindingInfo *b, int n, uint32_t set,
     VkDescriptorSetLayoutBinding lb[96];
     uint32_t k = 0;
     for (int i = 0; i < n && k < 96; i++)
-        if (b[i].set == set) lb[k++] = (VkDescriptorSetLayoutBinding){b[i].binding, b[i].type, 1, stages, NULL};
+        if (b[i].set == set)
+            lb[k++] = (VkDescriptorSetLayoutBinding){b[i].binding, b[i].type, b[i].count > 1 ? b[i].count : 1, stages, NULL};
     VkDescriptorSetLayoutCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = k, .pBindings = lb};
     VkDescriptorSetLayout l;
     VK_CHECK(vkCreateDescriptorSetLayout(g_vk.dev, &ci, NULL, &l));

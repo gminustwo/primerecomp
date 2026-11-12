@@ -4,7 +4,7 @@
 
 #include "vk.h"
 
-typedef struct { uint32_t set, binding; VkDescriptorType type; } VkBindingInfo;
+typedef struct { uint32_t set, binding; VkDescriptorType type; uint32_t count; } VkBindingInfo;  // (count: an array's)
 
 void vk_shaders_init(void);
 uint32_t *vk_glsl_to_spirv(const char *src, int stage, const char *name, size_t *nwords);  // malloc'd, NULL on error

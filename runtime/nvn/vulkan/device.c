@@ -230,6 +230,7 @@ static void create_device(void) {
     free(ep);
     // gl_Layer from vertex shaders (exec.c: passthrough geometry shaders that only pick the layer)
     g_vk.output_layer = have12.shaderOutputLayer && have12.shaderOutputViewportIndex;
+    g_vk.tex_nonuniform = have12.shaderSampledImageArrayNonUniformIndexing;
     VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT div = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT,
         .vertexAttributeInstanceRateDivisor = VK_TRUE, .vertexAttributeInstanceRateZeroDivisor = VK_FALSE};
@@ -245,7 +246,8 @@ static void create_device(void) {
                                             .timelineSemaphore = VK_TRUE, .shaderInt8 = VK_TRUE, .samplerMirrorClampToEdge = VK_TRUE,
                                             .uniformAndStorageBuffer8BitAccess = VK_TRUE, .storageBuffer8BitAccess = VK_TRUE,
                                             .scalarBlockLayout = VK_TRUE, .shaderOutputLayer = g_vk.output_layer,
-                                            .shaderOutputViewportIndex = g_vk.output_layer, .pNext = &f13};
+                                            .shaderOutputViewportIndex = g_vk.output_layer,
+                                            .shaderSampledImageArrayNonUniformIndexing = g_vk.tex_nonuniform, .pNext = &f13};
     VkPhysicalDeviceVulkan11Features f11 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
                                             .storageBuffer16BitAccess = VK_TRUE, .pNext = &f12};
     VkPhysicalDeviceFaultFeaturesEXT ff = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT, .deviceFault = VK_TRUE,

@@ -427,9 +427,25 @@ NVN(nvnTextureInitialize) {
     SET_HOST(A(0), t);
     RET(1);
 }
+extern NvnDescPool *g_texture_pools[64];
+// The texture pool entries that still name t: emptied (a draw finding the slot sees no texture, not freed memory)
+static void texture_unregister(NvnTexture *t) {
+    if (t->nreg <= 4) {
+        for (int i = 0; i < t->nreg; i++) {
+            NvnTexEntry *e = &((NvnTexEntry *)t->reg_pool[i]->entries)[t->reg_id[i]];
+            if (e->tex == t) e->tex = NULL;
+        }
+        return;
+    }
+    for (int p = 0; p < 64; p++) {
+        NvnDescPool *d = g_texture_pools[p];
+        for (int i = 0; d && i < d->count; i++)
+            if (((NvnTexEntry *)d->entries)[i].tex == t) ((NvnTexEntry *)d->entries)[i].tex = NULL;
+    }
+}
 NVN(nvnTextureFinalize) {
     NvnTexture *t = HOST(NvnTexture, A(0));
-    if (t) { backend_texture_destroyed(t); free(t); }
+    if (t) { texture_unregister(t); backend_texture_destroyed(t); free(t); }
     SET_HOST(A(0), 0);
 }
 NVN(nvnTextureSetDebugLabel) {
@@ -609,6 +625,15 @@ static void register_texture(Cpu *c) {
     if (id < 0 || id >= d->count) return;
     NvnTexEntry *e = &((NvnTexEntry *)d->entries)[id];
     e->tex = HOST(NvnTexture, A(2));
+    if (e->tex) {  // (nvnTextureFinalize clears the entry)
+        NvnTexture *t = e->tex;
+        bool known = false;
+        for (int i = 0; i < t->nreg && i < 4; i++) known |= t->reg_pool[i] == d && t->reg_id[i] == id;
+        if (!known) {
+            if (t->nreg < 4) t->reg_pool[t->nreg] = d, t->reg_id[t->nreg] = id;
+            t->nreg++;
+        }
+    }
     e->has_view = A(3) != 0;
     if (e->has_view) memcpy(&e->view, AP(3), sizeof e->view);
 }
