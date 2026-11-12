@@ -41,6 +41,7 @@ extern const char *const g_suit_color_names[N_SUIT_COLORS];  // "Red", "Crimson"
 extern const float g_suit_colors[N_SUIT_COLORS][3];       // sRGB, 0..1
 enum { SUIT_COLOR_RED = 0, SUIT_COLOR_BLUE = 10, SUIT_COLOR_WHITE = 15 };
 #define DEADZONE_MAX 0.30f  // (a stick's dead zone, 0..this: Controls tab)
+#define STRAIGHT_MAX 20     // (the left stick's straight-ahead snap, degrees: Controls tab)
 #define RUMBLE_STRENGTH_MAX 2.0f  // (rumble strength, 0..this = 200%: Audio tab)
 #define MOUSE_SENS_MIN 0.1f  // (mouse aim sensitivity range: Controls tab)
 #define MOUSE_SENS_MAX 10.0f
@@ -71,6 +72,8 @@ typedef struct {
     bool hd_rumble;      // HD rumble: the game's own vibration on a Switch Pro Controller / Joy-Con, a wired DualSense's
                          // haptics (rumble.c); off: the plain two motors on every controller
     float deadzone[2];   // the left / right stick's dead zone, a share of full tilt (0..DEADZONE_MAX): runtime/hle/input.c
+    int straight_deg;    // the left stick within this many degrees of straight up or down reads straight (0..STRAIGHT_MAX;
+                         // 0 off): walking straight in the Classic scheme, where sideways turns (issue #59)
     bool movie_audio;
     bool show_fps;
     int frame_rate;      // frames per second: 60 (the Switch's), 90 or 120 (the simulation too) or 30 (two 60 Hz steps a

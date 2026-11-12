@@ -214,6 +214,8 @@ void settings_load(void) {
         else if (!strcmp(key, "hd_rumble")) g_settings.hd_rumble = atoi(val) != 0;
         else if (!strcmp(key, "deadzone_left")) g_settings.deadzone[0] = (float)atof(val);
         else if (!strcmp(key, "deadzone_right")) g_settings.deadzone[1] = (float)atof(val);
+        else if (!strcmp(key, "left_stick_straight"))
+            g_settings.straight_deg = atoi(val) < 0 ? 0 : atoi(val) > STRAIGHT_MAX ? STRAIGHT_MAX : atoi(val);
         else if (!strcmp(key, "movie_audio")) g_settings.movie_audio = atoi(val) != 0;
         else if (!strcmp(key, "show_fps")) g_settings.show_fps = atoi(val) != 0;
         else if (!strcmp(key, "frame_rate")) {
@@ -352,6 +354,7 @@ static void write_settings(void *o) {
     put(o, "rumble = %d\nrumble_strength = %.2f\nhd_rumble = %d\n", g_settings.rumble, g_settings.rumble_strength,
             g_settings.hd_rumble);
     put(o, "deadzone_left = %.2f\ndeadzone_right = %.2f\n", g_settings.deadzone[0], g_settings.deadzone[1]);
+    put(o, "left_stick_straight = %d\n", g_settings.straight_deg);
     put(o, "movie_audio = %d\n", g_settings.movie_audio);
     put(o, "show_fps = %d\n", g_settings.show_fps);
     put(o, "frame_rate = %d\n", g_settings.frame_rate);
