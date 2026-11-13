@@ -286,11 +286,17 @@ void plat_fatal_notice(void) {
             char *end = strchr(line, '\n');
             if (end) *end = 0;
             snprintf(text, sizeof text, "PrimeRecomp stopped because of an error:\n\n%.600s", line);
-            if (strstr(line, "Vulkan") || strstr(line, "VK_") || strstr(line, "vk")) {
-                size_t l = strlen(text);
+            // (issue #50: a GPU reset mid-game said "needs Vulkan 1.3" to a player with a Vulkan 1.4 driver - the
+            // driver advice is for the start, when no Vulkan 1.3 device or instance could be made)
+            size_t l = strlen(text);
+            if (strstr(line, "device lost") || strstr(line, "DEVICE_LOST"))
+                snprintf(text + l, sizeof text - l, "\n\nThe graphics driver stopped the game's GPU work and reset the "
+                         "GPU (\"device lost\"). It isn't a missing feature: please report it with the log below. A newer "
+                         "GPU driver can help.");
+            else if (strstr(line, "vkCreateInstance") || strstr(line, "Vulkan 1.3") || strstr(line, "vkCreateDevice") ||
+                     strstr(line, "no Vulkan device"))
                 snprintf(text + l, sizeof text - l, "\n\nPrimeRecomp needs a graphics driver with Vulkan 1.3: install the "
                          "latest driver for your GPU (NVIDIA, AMD or Intel).");
-            }
         }
     }
     size_t l = strlen(text);
