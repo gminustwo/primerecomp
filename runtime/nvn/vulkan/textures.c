@@ -982,6 +982,9 @@ void vk_tex_fills_wait(void) {
 // ASTC where the GPU has none (desktop, Steam Deck): the blocks go into one transient span, every level and layer, and
 // the compute decoder (astc_gpu.c) turns them into RGBA8 texels behind them in the span, copied into the image. The CPU
 // decoder took ~10 ms per 1024x1024 texture on the render thread: half a second at a door. False: decode on the CPU.
+// With the ring in system memory (no resizable BAR) the span the decoder works in is GPU scratch in video memory
+// instead (exec.c vk_gpu_scratch: the decoder's reads and writes across PCIe took seconds), the blocks copied there
+// from the ring in one go. LARECOMP_ASTC_SCRATCH=0: never, =1: always (test).
 static bool upload_astc_gpu(NvnTexture *t, TexBackend *b, const uint8_t *base, uint32_t layers, uint32_t levels,
                             uint64_t layer_size, bool linear) {
     if (!vk_astc_gpu_ready()) return false;
@@ -994,9 +997,19 @@ static bool upload_astc_gpu(NvnTexture *t, TexBackend *b, const uint8_t *base, u
         out_sz += ((uint64_t)l.w * l.h * 4 + 15) & ~15ull;
     }
     in_sz *= layers, out_sz *= layers;
-    VkSpan s = vk_transient(in_sz + out_sz, vk_astc_gpu_align());
+    static int scratch = -2;
+    if (scratch == -2) scratch = getenv("LARECOMP_ASTC_SCRATCH") ? atoi(getenv("LARECOMP_ASTC_SCRATCH")) : -1;
     VkCommandBuffer cb = vk_upload_cmd();
-    vk_astc_gpu_bind(cb, s.buf, s.off, in_sz + out_sz);
+    VkSpan s = {0}, w = {0};  // s: the blocks as the CPU writes them, w: where the decoder works (blocks, then texels)
+    if (scratch > 0 || (scratch < 0 && vk_transient_sysmem())) {
+        w = vk_gpu_scratch(in_sz + out_sz, vk_astc_gpu_align());
+        if (w.buf) {
+            s = vk_transient(in_sz, 16);
+            vk_astc_gpu_stage(cb, s, w, in_sz);
+        }
+    }
+    if (!w.buf) s = w = vk_transient(in_sz + out_sz, vk_astc_gpu_align());
+    vk_astc_gpu_bind(cb, w.buf, w.off, in_sz + out_sz);
     uint64_t in = 0, out = in_sz;
     for (uint32_t layer = 0; layer < layers; layer++) {
         for (uint32_t lv = 0; lv < levels; lv++) {
@@ -1022,11 +1035,11 @@ static bool upload_astc_gpu(NvnTexture *t, TexBackend *b, const uint8_t *base, u
     for (uint32_t layer = 0; layer < layers; layer++) {
         for (uint32_t lv = 0; lv < levels; lv++) {
             LevelLayout l = tegra_level(&t->layout, lv);
-            VkBufferImageCopy rg = {.bufferOffset = s.off + out, .bufferRowLength = l.w, .bufferImageHeight = l.h,
+            VkBufferImageCopy rg = {.bufferOffset = w.off + out, .bufferRowLength = l.w, .bufferImageHeight = l.h,
                                     .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, lv, layer, 1},
                                     .imageExtent = {l.w < level_w(b, lv) ? l.w : level_w(b, lv), l.h < level_h(b, lv) ? l.h : level_h(b, lv), 1}};
             vk_dl_note_upload((void *)b->image, rg.imageExtent.width, rg.imageExtent.height, rg.imageSubresource.mipLevel);
-            vkCmdCopyBufferToImage(cb, s.buf, b->image, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
+            vkCmdCopyBufferToImage(cb, w.buf, b->image, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
             out += ((uint64_t)l.w * l.h * 4 + 15) & ~15ull;
         }
     }

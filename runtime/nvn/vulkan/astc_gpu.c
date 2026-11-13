@@ -429,6 +429,18 @@ void vk_astc_gpu_dispatch(VkCommandBuffer cb, uint64_t in_off, uint64_t out_off,
     vkCmdDispatch(cb, gx, (groups + gx - 1) / gx, 1);
 }
 
+// The blocks copied from the span the CPU wrote (the ring in system memory) to the one the decoder works in (GPU
+// scratch), before the dispatches read them
+void vk_astc_gpu_stage(VkCommandBuffer cb, VkSpan from, VkSpan to, uint64_t size) {
+    VkBufferCopy cp = {from.off, to.off, size};
+    vkCmdCopyBuffer(cb, from.buf, to.buf, 1, &cp);
+    VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                           .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                           .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT};
+    VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+    vkCmdPipelineBarrier2(cb, &di);
+}
+
 // After the dispatches: their texels are what the copies into the image read
 void vk_astc_gpu_barrier(VkCommandBuffer cb) {
     VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
