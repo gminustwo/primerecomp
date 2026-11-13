@@ -1763,7 +1763,7 @@ static void prog_inputs(ProgIn *in, const uint64_t code[3], const uint64_t cmax[
     static const int stage[3] = {STAGE_VERTEX, STAGE_FRAGMENT, STAGE_GEOMETRY};
     for (int i = 0; i < in->r.nstages; i++) {
         in->code[i] = (const uint8_t *)(uintptr_t)code[i];
-        size_t n = in->code[i] ? maxwell_code_size(in->code[i], cmax[i], stage[i]) : 0;
+        size_t n = in->code[i] ? maxwell_code_size(in->code[i], cmax[i], stage[i], i == 0 ? vkey : i == 1 ? fkey : NULL) : 0;
         if (n <= 0x80) return;
         in->r.len[i] = (uint32_t)n;
     }
@@ -1951,6 +1951,29 @@ static uint32_t gs_layer_attr(uint64_t code) {
 }
 
 // gs_in: the draw's primitive class (0 points, 1 lines, 2 triangles) - a geometry shader's input
+// A stage whose BRX are jump tables in its constants (c1, in the code blob at const_offset): its key with cb1_at, so the
+// translation labels just their cases (translate.c brx_label; issue #61: the gallery's pipelines took 15-35 s to build
+// with every instruction a case). The tables are in the shader record too (maxwell_code_size takes them in).
+// (test) LARECOMP_NO_JUMP_TABLES=1: not read - every instruction a case, as before.
+static ShaderKey *with_jump_tables(ShaderKey *copy, ShaderKey *key, const NvnProgram *np, int i, int stage) {
+    static int off_ = -1;
+    if (off_ < 0) off_ = getenv("LARECOMP_NO_JUMP_TABLES") != NULL;
+    if (off_) return key;
+    uint32_t off = np->stages[i].const_offset;
+    uint32_t ext = off ? maxwell_jump_tables((const uint8_t *)(uintptr_t)np->stages[i].code_addr, off, stage) : 0;
+    if (!ext) return key;
+    if (off % 256 || off / 256 > 0xFFFF || ext > np->stages[i].const_size) {  // (cb1_at can't say where, or past them)
+        static int nlog;
+        if (nlog++ < 3)
+            LOG("[shader] code %llx: jump tables not read (constants at +0x%x, %u bytes; the tables need %u): every "
+                "instruction a case\n", (unsigned long long)np->stages[i].code_addr, off, np->stages[i].const_size, ext);
+        return key;
+    }
+    *copy = *key;
+    copy->cb1_at = (uint16_t)(off / 256);
+    return copy;
+}
+
 static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey, int gs_in) {
     if (!(np->stage_mask & 1) || !(np->stage_mask & 2)) return NULL;
     ShaderKey vk_layer;
@@ -1981,6 +2004,9 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey, int g
         code[i] = i < 2 || gs || emul ? np->stages[i].code_addr : 0;
         cmax[i] = np->stages[i].const_offset ? np->stages[i].const_offset : 0x10000;
     }
+    ShaderKey vk_tab, fk_tab;  // (the vertex / fragment stage's BRX jump tables, from their constants)
+    vkey = with_jump_tables(&vk_tab, vkey, np, 0, STAGE_VERTEX);
+    fkey = with_jump_tables(&fk_tab, fkey, np, 1, STAGE_FRAGMENT);
     ProgIn in;
     prog_inputs(&in, code, cmax, vkey, fkey, gs, emul, gs_in);
     Prog *pre = preload_find(&in);
@@ -2308,11 +2334,19 @@ static void build_pipeline(void *arg) {
                                        .pStages = stages, .pVertexInputState = &vi, .pInputAssemblyState = &ia, .pViewportState = &vs,
                                        .pRasterizationState = &rs, .pMultisampleState = &ms, .pDepthStencilState = &ds,
                                        .pColorBlendState = &cb, .pDynamicState = &dy, .layout = k->prog->layout};
+    uint64_t t0 = plat_now_ns();
     VkResult r = vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, &pi, NULL, &pp->pipe);
+    uint64_t took = plat_now_ns() - t0;
     if (r != VK_SUCCESS) {
         static int n;
         if (n++ < 10) LOG("[vk] pipeline creation failed: %d (vs %llx fs %llx)\n", r, (unsigned long long)k->prog->code[0],
                           (unsigned long long)k->prog->code[1]);
+    }
+    {   // the slow builds in play (a first visit's waits: issue #61's gallery models sat dark 15-35 s while theirs built)
+        static _Atomic int nslow;
+        if (took > 250000000ull && !pp->pre && atomic_fetch_add(&nslow, 1) < 40)
+            LOG("[vk] slow pipeline build: %.2f s (vs %llx fs %llx)\n", took / 1e9, (unsigned long long)k->prog->code[0],
+                (unsigned long long)k->prog->code[1]);
     }
     atomic_fetch_add(&stat_compiles, 1);
     atomic_store(&vk_last_build_ns, plat_now_ns());
@@ -2517,6 +2551,16 @@ static void pre_note(void *ctx, uint32_t type, const uint8_t *p, uint32_t size) 
     }
     if (pp->np == pp->capp) pp->progs = realloc(pp->progs, (pp->capp = pp->capp ? pp->capp * 2 : 256) * sizeof *pp->progs);
     pp->progs[pp->np++] = o;
+}
+
+// A program recorded before its jump tables were read (issue #61; with_jump_tables): its key has no cb1_at, so the
+// program get_program makes now isn't this one - translated, it would only build the slow way (15-35 s) for nothing.
+static bool pre_old_tables(const ProgIn *in) {
+    static const int stage[2] = {STAGE_VERTEX, STAGE_FRAGMENT};
+    const ShaderKey *k[2] = {&in->r.vkey, &in->r.fkey};
+    for (int i = 0; i < 2; i++)
+        if (!k[i]->cb1_at && maxwell_jump_tables(in->code[i], in->r.len[i], stage[i])) return true;
+    return false;
 }
 
 static atomic_bool pre_running;
@@ -2787,9 +2831,12 @@ static void *preload_thread(void *arg) {
     for (pre_cap = 16; pre_cap < (size_t)pp.np * 2; pre_cap *= 2) {}
     pre_tab = calloc(pre_cap, sizeof *pre_tab);
     pre_all = malloc((pp.np ? pp.np : 1) * sizeof *pre_all);
+    int nold = 0;
     for (int i = 0; i < pp.np; i++) {
         PreProg *o = pp.progs[i];
-        if (pre_lookup(o->in.r.ckey)) {  // (recorded twice: two processes at once)
+        bool old = pre_old_tables(&o->in);
+        nold += old;
+        if (old || pre_lookup(o->in.r.ckey)) {  // (or recorded twice: two processes at once)
             for (int k = 0; k < 3; k++) free((void *)o->in.code[k]);
             free(o);
             continue;
@@ -2807,6 +2854,7 @@ static void *preload_thread(void *arg) {
         o->prog = t;
     }
     free(pp.progs);
+    if (nold) LOG("[shader] pre-load: %d recorded programs from before jump tables were read left out\n", nold);
     int npipes = 0;
     U64Set seen = {0};
     for (int i = 0; i < pp.nl; i++) {

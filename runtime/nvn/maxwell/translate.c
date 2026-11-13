@@ -2506,11 +2506,140 @@ static size_t code_end(const uint8_t *blob, size_t max_size, int stage, size_t *
     return end;
 }
 
-size_t maxwell_code_size(const uint8_t *blob, size_t max_size, int stage) {
+// BRX jump tables (issue #61). A BRX jumps to a register, so any instruction might be its target: the translation labels
+// every one a case of the switch (pc) then - correct, but the Character Gallery's lighting shaders (~1700 instructions)
+// became 1700-way switches in a loop, and drivers took 15-35 s to build each pipeline with one (a first visit sat dark;
+// labels at the real targets only: 0.4 s). Those BRX are a GLSL switch as NVIDIA's compiler makes it, a table of the
+// cases' addresses in the compiler's constants (c1, which NVN keeps after the code: ShaderKey.cb1_at):
+//     IMNMX.U32 Rx, Ra, K          the case clamped to 0..K
+//     SHL       Ry, Rx, 0x2
+//     LDC       Ry, c[0x1][Ry+off]
+//     BRX       Ry - imm
+// With exactly that chain - none of it predicated, nothing in between that may write the registers it hands on, no
+// branch or branch target inside it - the cases are the table's K + 1 entries, and only they are labeled.
+typedef struct { size_t at, from; uint32_t off, count; } BrxSite;  // the BRX, its IMNMX; the table: c1 + off, count words
+
+// whether an instruction might write register r: its destination field (bits 0-7) - with the three after it for the
+// memory, texture and other 0x8...-0xf... ops (vector results: TEX, LD.128, ALD), as many as an LDC loads, two for the
+// doubles and conversions (64-bit results) - and the second destination of TEXS / TLDS / TLD4S (bits 28-35) and the one
+// after. Stores and predicate sets read as writes too: only ever too cautious.
+static bool may_write(uint64_t w, int r) {
+    int d = (int)bits(w, 0, 8), n = 1, top = (int)(w >> 48);
+    if ((top & 0xfff8) == 0xef90) n = bits(w, 48, 3) == 5 ? 2 : bits(w, 48, 3) == 6 ? 4 : 1;  // LDC
+    else if (top >= 0x8000) n = 4;
+    else {
+        static const uint16_t wide[] = {0x5c70, 0x4c70, 0x3870, 0x5c80, 0x4c80, 0x3880, 0x5c50, 0x4c50, 0x3850, 0x5ca8, 0x4ca8,
+                                        0x38a8, 0x5cb0, 0x4cb0, 0x38b0, 0x5cb8, 0x4cb8, 0x38b8, 0x5ce0, 0x4ce0, 0x38e0};
+        for (size_t i = 0; i < sizeof wide / sizeof wide[0]; i++)  // DADD DMUL DMNMX F2F F2I I2F I2I (DFMA: below)
+            if ((top & (wide[i] >> 8 == 0x38 ? 0xfef8 : 0xfff8)) == wide[i]) n = 2;
+        if ((top & 0xfff0) == 0x5b70 || (top & 0xfff0) == 0x4b70 || (top & 0xfef0) == 0x3670 || (top & 0xfff0) == 0x5370) n = 2;
+    }
+    if (d != RZ && r >= d && r < d + n) return true;
+    int d2 = (int)bits(w, 28, 8);
+    return (top >> 12) == 0xd && d2 != RZ && r >= d2 && r < d2 + 2;
+}
+
+static bool unpredicated(uint64_t w) { return bits(w, 16, 3) == 7 && !bits(w, 19, 1); }
+
+// the instruction before `at` that last might write r - 0 when a branch (or any flow instruction), a branch target
+// (label, when given) or 64 instructions come first
+static size_t last_writer(const uint64_t *code, const uint8_t *label, size_t at, int r) {
+    if (label && label[at]) return 0;
+    for (size_t j = at - 1, n = 0; j >= 1 && n < 64; j--) {
+        if (j % 4 == 0) continue;
+        n++;
+        uint64_t w = code[j];
+        if ((w >> 56) == 0xe2 || (w >> 56) == 0xe3) return 0;  // (BRA, BRX, CAL, RET, SYNC, BRK, EXIT, KIL, ...)
+        if (may_write(w, r)) return j;
+        if (label && label[j]) return 0;
+    }
+    return 0;
+}
+
+// the code's BRX, each with its table: their number, or -1 if one isn't the chain above (or more than max)
+static int brx_sites(const uint64_t *code, size_t end, const uint8_t *label, BrxSite *s, int max) {
+    int n = 0;
+    for (size_t i = 1; i < end; i++) {
+        if (i % 4 == 0) continue;
+        uint64_t w = code[i];
+        if ((w & 0xfff0000000000000ull) != 0xe250000000000000ull) continue;
+        if (n == max || bits(w, 5, 1)) return -1;
+        size_t ld = last_writer(code, label, i, (int)bits(w, 8, 8)), sh = 0, mn = 0;
+        uint64_t l = ld ? code[ld] : 0, h = 0, m = 0;
+        if (!ld || (l & 0xfff8000000000000ull) != 0xef90000000000000ull || !unpredicated(l) || bits(l, 36, 5) != 1 ||
+            bits(l, 48, 3) != 4 || bits(l, 44, 2) || bits(l, 0, 8) != bits(w, 8, 8) || bits(l, 8, 8) == RZ ||
+            bits(l, 20, 16) >= 0x8000)
+            return -1;
+        sh = last_writer(code, label, ld, (int)bits(l, 8, 8));
+        h = sh ? code[sh] : 0;
+        if (!sh || (h & 0xfef8000000000000ull) != 0x3848000000000000ull || !unpredicated(h) || bits(h, 56, 1) ||
+            bits(h, 20, 19) != 2 || bits(h, 43, 1) || bits(h, 0, 8) != bits(l, 8, 8) || bits(h, 8, 8) == RZ)
+            return -1;
+        mn = last_writer(code, label, sh, (int)bits(h, 8, 8));
+        m = mn ? code[mn] : 0;
+        if (!mn || (m & 0xfef8000000000000ull) != 0x3820000000000000ull || !unpredicated(m) || bits(m, 56, 1) ||
+            bits(m, 48, 1) || bits(m, 39, 3) != 7 || bits(m, 42, 1) || bits(m, 43, 2) || bits(m, 0, 8) != bits(h, 8, 8) ||
+            bits(m, 20, 19) > 255)
+            return -1;
+        s[n++] = (BrxSite){i, mn, (uint32_t)bits(l, 20, 16), (uint32_t)bits(m, 20, 19) + 1};
+    }
+    return n;
+}
+
+uint32_t maxwell_jump_tables(const uint8_t *blob, size_t max_size, int stage) {
     size_t at = stage == STAGE_COMPUTE ? 0 : 0x80, read;
     if (max_size <= at) return 0;
+    size_t end = code_end(blob, max_size, stage, &read);
+    BrxSite s[64];
+    int n = brx_sites((const uint64_t *)(blob + at), end, NULL, s, 64);
+    uint32_t ext = 0;
+    for (int i = 0; i < n; i++)
+        if (s[i].off + 4 * s[i].count > ext) ext = s[i].off + 4 * s[i].count;
+    return ext;
+}
+
+// the BRX's targets from their tables in c1, labeled: false (nothing labeled) when a BRX isn't the chain, an entry is no
+// instruction of the code, or a target lands inside a chain
+static bool brx_label(const uint64_t *code, size_t end, uint8_t *label, const uint8_t *c1) {
+    BrxSite s[64];
+    int n = brx_sites(code, end, label, s, 64);
+    if (n <= 0) return false;
+    uint8_t *t = calloc(end, 1);
+    bool ok = true;
+    for (int i = 0; i < n && ok; i++) {
+        for (uint32_t k = 0; k < s[i].count && ok; k++) {
+            uint32_t e;
+            memcpy(&e, c1 + s[i].off + 4 * k, 4);
+            uint32_t to = (uint32_t)(s[i].at * 8 + 8) + e + (uint32_t)sbits(code[s[i].at], 20, 24);  // (as the BRX does it)
+            if (((to >> 3) & 3u) == 0u) to += 8u;
+            ok = to % 8 == 0 && to / 8 >= 1 && to / 8 < end;
+            if (ok) t[to / 8] = 1;
+        }
+    }
+    for (int i = 0; i < n && ok; i++)
+        for (size_t j = s[i].from + 1; j <= s[i].at && ok; j++) ok = !t[j];
+    if (ok)
+        for (size_t j = 0; j < end; j++) label[j] |= t[j];
+    free(t);
+    return ok;
+}
+
+// where the instructions end: the constants (c1) when the key says where they are, else max_size - the same either
+// way (exec.c translates with the constants' offset as max_size, a recorded program with its recorded size)
+static size_t code_limit(size_t max_size, const ShaderKey *key) {
+    size_t c1 = key && key->cb1_at ? (size_t)key->cb1_at * 256 : 0;
+    return c1 && c1 < max_size ? c1 : max_size;
+}
+
+size_t maxwell_code_size(const uint8_t *blob, size_t max_size, int stage, const ShaderKey *key) {
+    size_t at = stage == STAGE_COMPUTE ? 0 : 0x80, read;
+    max_size = code_limit(max_size, key);
+    if (max_size <= at) return 0;
     code_end(blob, max_size, stage, &read);
-    return at + read * 8;
+    size_t n = at + read * 8;
+    uint32_t ext = key && key->cb1_at ? maxwell_jump_tables(blob, max_size, stage) : 0;
+    if (ext && (size_t)key->cb1_at * 256 + ext > n) n = (size_t)key->cb1_at * 256 + ext;  // (the tables, after the code)
+    return n;
 }
 
 ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, const ShaderKey *key) {
@@ -2539,12 +2668,13 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         if (!c->glsl) fail(c, "geometry shader: GLSL only");
     }
     size_t read;
-    size_t end = code_end(blob, max_size, stage, &read);
+    size_t end = code_end(blob, code_limit(max_size, key), stage, &read);
     (void)read;
     // collect branch targets (labels)
     uint8_t *label = calloc(end + 4, 1);
     label[1] = 1;
     bool any_branch = false, flow_seen = false;  // (and the geometry shader's emits: all unconditional, before any flow?)
+    bool brx = false;
     for (size_t i = 0; i < end; i++) {
         if (i % 4 == 0) continue;
         uint64_t w = ((const uint64_t *)code)[i];
@@ -2558,10 +2688,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
             if (t >= 0 && (size_t)(t / 8) < end) label[t / 8] = 1;
             any_branch = true;
         }
-        if ((w & 0xfff0000000000000ull) == 0xe250000000000000ull) {  // BRX: any instruction may be a target
-            any_branch = true;
-            memset(label, 1, end);
-        }
+        if ((w & 0xfff0000000000000ull) == 0xe250000000000000ull) any_branch = brx = true;  // (its targets: below)
         if ((w & 0xfff8000000000000ull) == 0xf0f8000000000000ull || (w & 0xfff0000000000000ull) == 0xe340000000000000ull ||
             (w & 0xfff0000000000000ull) == 0xe350000000000000ull)
             any_branch = true;
@@ -2572,6 +2699,9 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         if (any_branch || (w & 0xfff0000000000000ull) == 0xe300000000000000ull) flow_seen = true;  // (EXIT)
         (void)is_branch_target_op;
     }
+    // BRX: the cases of its jump table (with the constants: key->cb1_at), or any instruction
+    if (brx && !(key && key->cb1_at && brx_label((const uint64_t *)code, end, label, blob + (size_t)key->cb1_at * 256)))
+        memset(label, 1, end);
     // translate
     bool dbg = maxwell_dbg_code && blob == maxwell_dbg_code && stage == STAGE_FRAGMENT;
     static int annotate = -1;
