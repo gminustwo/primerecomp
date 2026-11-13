@@ -64,7 +64,10 @@ typedef struct {
                             // (gcb<i>, set 2) and outputs (gs_pos, gs_v<i>), no prelude; the caller defines gs_in_pos(i)
                             // / gs_in_v<i>(i) (an input vertex's) and gs_emit() / gs_end(). Vertex (with gs_follows): the
                             // entry point is vs_main(), the outputs are plain globals the geometry shader reads.
-    uint8_t pad_;           // (zero)
+    uint8_t xfb;            // geometry, GLSL: transform feedback - each triangle its strips make is written to the
+                            // bound buffer in the guest heap (gmem_), the words XfbMap lists per vertex, its slot taken
+                            // from XfbCount (exec.c xfb_*); vertex: the program's (the geometry shader's key copies it).
+                            // (Was the padding: keys without it hash as before.)
     uint16_t cb1_at;        // the stage's compiler constants (c1) are at the blob + cb1_at * 256, where the translation
                             // reads its BRX jump tables (maxwell_jump_tables); 0: not read. (In the padding after gs_lib:
                             // keys without it hash as before - shader records and caches stay valid.)
@@ -119,6 +122,13 @@ typedef struct {
 // (GLSL, maxwell_gmem_window) where the global memory buffer sits in the heap: gbase.x = its offset from
 // maxwell_gmem_base, .y = its size (exec.c gmem_info: on macOS only the part holding the game's memory pools)
 #define GBASE_BUFFER_INDEX 22
+// (GLSL geometry, ShaderKey.xfb) transform feedback: XfbCount { uint prims, written, bytes; } (storage: primitives
+// made, written, bytes written) and XfbMap { uvec4 xfb_hdr; uvec4 xfb_map[XFB_WORDS / 4]; } (uniform: hdr.x = the
+// buffer's start as a word of gmem_, .y = words per vertex, .z = primitives that fit; map[k] = output attribute (0x1c
+// position, 0x20 + i generic i) << 2 | component of word k, 0xFFFFFFFF: zero)
+#define XFB_BUFFER_INDEX 23
+#define XFB_MAP_INDEX 24
+#define XFB_WORDS 32
 #define GMAP_MAX 16  // ranges in the table (GMap { uvec4 gmap[GMAP_MAX + 1]; }: [i] = addr lo, addr hi, size, word offset;
                      // [GMAP_MAX].x = count)
 extern uint64_t maxwell_gmem_base, maxwell_gmem_size;

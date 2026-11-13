@@ -174,8 +174,41 @@ NVN(nvnCommandBufferBindSeparateTexture) {
 }
 NVN(nvnCommandBufferBindSeparateSamplers) { (void)c; }
 NVN(nvnCommandBufferBindSeparateSampler) { (void)c; }
-NVN(nvnCommandBufferBindTransformFeedbackBuffers) { (void)c; }
-NVN(nvnCommandBufferBindTransformFeedbackBuffer) { (void)c; }
+// ---- transform feedback (the shadow decals' receivers: runtime/nvn/vulkan/exec.c xfb_*). One buffer binding per record;
+// begin / resume start capturing (resume: where the last pause left off), end / pause stop it.
+// (debug) LARECOMP_LOG_XFB=<lines>: the calls, their arguments and caller
+static void xfb_log(Cpu *c, const char *what) {
+    static long left = -2;
+    if (left == -2) left = getenv("LARECOMP_LOG_XFB") ? atol(getenv("LARECOMP_LOG_XFB")) : 0;
+    if (left <= 0) return;
+    left--;
+    extern uint64_t vk_frame_counter(void);
+    uint64_t off = 0;
+    const char *fn = loader_symbol_at(c->x[30], &off);
+    LOG("[xfb] frame %llu %s x1 %llx x2 %llx x3 %llx from %s+%llx\n", (unsigned long long)vk_frame_counter(), what,
+        (unsigned long long)c->x[1], (unsigned long long)c->x[2], (unsigned long long)c->x[3], fn ? fn : "?",
+        (unsigned long long)off);
+}
+static void xfb_bind(Cpu *c, uint64_t index, uint64_t addr, uint64_t size) {
+    Snap s = snap(c);
+    CmdRec *r = record(c, CMD_XFB_BIND, 0, &s);
+    r->x[0] = index, r->x[1] = addr, r->x[2] = size;
+}
+NVN(nvnCommandBufferBindTransformFeedbackBuffers) {  // (first, count, NVNbufferRange {address, size}[count])
+    xfb_log(c, "bind buffers");
+    uint64_t first = c->x[1], n = c->x[2], ranges = c->x[3];
+    for (uint64_t i = 0; i < n && i < 4; i++) {
+        const uint64_t *br = ranges ? (const uint64_t *)(uintptr_t)(ranges + 16 * i) : NULL;
+        xfb_bind(c, first + i, br ? br[0] : 0, br ? br[1] : 0);
+    }
+}
+NVN(nvnCommandBufferBindTransformFeedbackBuffer) { xfb_log(c, "bind buffer"); xfb_bind(c, c->x[1], c->x[2], c->x[3]); }
+static void xfb_mark(Cpu *c, uint32_t op, bool resume, const char *what) {  // (control buffer address)
+    xfb_log(c, what);
+    Snap s = snap(c);
+    CmdRec *r = record(c, op, 0, &s);
+    r->x[1] = resume;
+}
 NVN(nvnCommandBufferBindCoverageModulationTable) { (void)c; }
 
 NVN(nvnCommandBufferSetTexturePool) {
@@ -367,14 +400,14 @@ PLAIN(nvnCommandBufferDrawArraysIndirect, CMD_DRAW_ARRAYS_INDIRECT)
 PLAIN(nvnCommandBufferDrawElementsIndirect, CMD_DRAW_ELEMENTS_INDIRECT)
 NVN(nvnCommandBufferMultiDrawArraysIndirectCount) { (void)c; }
 NVN(nvnCommandBufferMultiDrawElementsIndirectCount) { (void)c; }
-NVN(nvnCommandBufferDrawTransformFeedback) { (void)c; }
+NVN(nvnCommandBufferDrawTransformFeedback) { xfb_log(c, "draw (not done)"); }
 NVN(nvnCommandBufferDrawTexture) { (void)c; }
 PLAIN(nvnCommandBufferDispatchCompute, CMD_DISPATCH)
 PLAIN(nvnCommandBufferDispatchComputeIndirect, CMD_DISPATCH_INDIRECT)
-NVN(nvnCommandBufferBeginTransformFeedback) { (void)c; }
-NVN(nvnCommandBufferEndTransformFeedback) { (void)c; }
-NVN(nvnCommandBufferPauseTransformFeedback) { (void)c; }
-NVN(nvnCommandBufferResumeTransformFeedback) { (void)c; }
+NVN(nvnCommandBufferBeginTransformFeedback) { xfb_mark(c, CMD_XFB_BEGIN, false, "begin"); }
+NVN(nvnCommandBufferEndTransformFeedback) { xfb_mark(c, CMD_XFB_END, false, "end"); }
+NVN(nvnCommandBufferPauseTransformFeedback) { xfb_mark(c, CMD_XFB_END, false, "pause"); }
+NVN(nvnCommandBufferResumeTransformFeedback) { xfb_mark(c, CMD_XFB_BEGIN, true, "resume"); }
 
 // ---- copies
 typedef struct { uint64_t tex; NvnTextureView view; uint8_t has_view; int32_t region[6]; } TexRef;

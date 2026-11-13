@@ -1968,6 +1968,7 @@ static void prog_init(Prog *p, const uint64_t code[3], const uint64_t cmax[3], c
         p->gkey.depth_minus_one = vkey->depth_minus_one;
         p->gkey.gs_in = (uint8_t)gs_in;
         p->gkey.gs_lib = emul;
+        p->gkey.xfb = vkey->xfb;  // (transform feedback: the geometry shader captures)
     }
 }
 
@@ -3822,6 +3823,108 @@ static void vc_mark_sbufs(int stage) {
     }
 }
 
+// ---- transform feedback (nvnCommandBufferBegin / EndTransformFeedback): Samus' shadow and the others drawn as decals
+// (NRenderDecal::CShadowDecalManager, EShadowDecalMode 0 / 1) take the triangles they fall on from the world's meshes
+// streamed out through a geometry shader that keeps those facing the light (v0..v3, 44 bytes a vertex), count them
+// (counters 13 / 14: primitives made / written) and build the decal from them. Not done, the counts read 0 and every
+// such shadow was missing (a player's report, 2026-11-13: none under Samus as she lands on the frigate). Here the geometry
+// shader's variant with ShaderKey.xfb writes each triangle into the bound buffer through the heap (gmem_), a slot at a
+// time from XfbCount (xfb_cnt: made, written, bytes), the words XfbMap gives - the layout from the geometry shader's
+// control section: its outputs (generic 0x20 + i) at +0xdc, their component counts at +0x4dc, how many at +0x6e8, the
+// stride at +0x6dc. A counter report copies the count into the game's report on the GPU. Buffer 0 only; no
+// DrawTransformFeedback; nothing captured without geometry shaders (gs_emul: the vertex shader runs them).
+// (test) LARECOMP_NO_XFB=1: off.
+static struct { uint64_t addr, size; } xfb_buf[4];
+static bool xfb_active, xfb_counted;  // (counted: a capture began - counter reports 13 / 14 take its counts)
+static uint32_t xfb_cur[4 + XFB_WORDS];  // (the draw's layout, xfb_layout: XfbMap when its set is written)
+static VkBuffer xfb_cnt;
+static VmaAllocation xfb_cnt_mem;
+
+// The draw's capture layout: hdr (base word in gmem_, words a vertex, primitives that fit) and the word map. False: no
+// capture (no geometry shader, a layout not understood, the buffer outside the heap window).
+static bool xfb_layout(const NvnProgram *np, uint32_t out[4 + XFB_WORDS]) {
+    static int off = -1;
+    if (off < 0) {  // (the geometry shader stores: vertexPipelineStoresAndAtomics, enabled where the device has it)
+        VkPhysicalDeviceFeatures f;
+        vkGetPhysicalDeviceFeatures(g_vk.phys, &f);
+        off = getenv("LARECOMP_NO_XFB") != NULL || !f.vertexPipelineStoresAndAtomics;
+        if (!f.vertexPipelineStoresAndAtomics) LOG("[xfb] no stores from geometry shaders on this device: not captured\n");
+    }
+    if (off || !g_vk.geometry || !(np->stage_mask & 4) || !np->stages[2].control || !gmem_buf) return false;
+    const uint8_t *ctl = np->stages[2].control;
+    uint32_t n = *(const uint32_t *)(ctl + 0x6e8), stride = *(const uint32_t *)(ctl + 0x6dc);
+    uint64_t a = xfb_buf[0].addr, sz = xfb_buf[0].size;
+    static int nlog;
+    if (!n || n > 32 || !stride || stride % 4 || stride / 4 > XFB_WORDS) {
+        if (nlog++ < 3) LOG("[xfb] geometry shader %llx: layout not understood (%u outputs, stride %u): not captured\n",
+                            (unsigned long long)np->stages[2].code_addr, n, stride);
+        return false;
+    }
+    if (a < HEAP_BASE + gmem_base || a + sz > HEAP_BASE + gmem_base + gmem_size || (a & 3)) {
+        if (nlog++ < 3) LOG("[xfb] buffer %llx+%llx outside the heap window: not captured\n", (unsigned long long)a,
+                            (unsigned long long)sz);
+        return false;
+    }
+    uint32_t k = 0, words = stride / 4;
+    for (uint32_t j = 0; j < n; j++) {
+        uint32_t attr = ctl[0xdc + j], comps = ctl[0x4dc + j];
+        if (comps < 1 || comps > 4 || k + comps > words) {
+            if (nlog++ < 3) LOG("[xfb] geometry shader %llx: output %u (attribute %#x, %u components) past the stride %u\n",
+                                (unsigned long long)np->stages[2].code_addr, j, attr, comps, stride);
+            return false;
+        }
+        for (uint32_t cc = 0; cc < comps; cc++) out[4 + k++] = attr << 2 | cc;
+    }
+    while (k < XFB_WORDS) out[4 + k++] = 0xFFFFFFFFu;
+    out[0] = (uint32_t)((a - HEAP_BASE - gmem_base) / 4);
+    out[1] = words;
+    out[2] = (uint32_t)(sz / (3ull * stride));
+    out[3] = 0;
+    return true;
+}
+
+static VkDescriptorBufferInfo xfb_cnt_info(void) {
+    if (!xfb_cnt) {
+        VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = 256,
+                                 .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                          VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        VK_CHECK(vmaCreateBuffer(g_vk.vma, &bi, &ai, &xfb_cnt, &xfb_cnt_mem, NULL));
+    }
+    return (VkDescriptorBufferInfo){xfb_cnt, 0, 16};
+}
+
+// CMD_XFB_BEGIN (not a resume): the counts from zero; the buffer's pages GPU-written from now on (the vertex cache)
+static void xfb_begin(bool resume) {
+    xfb_active = true;
+    if (resume) return;
+    xfb_cnt_info();
+    vk_end_pass();
+    VkCommandBuffer cb = vk_cmd();
+    vk_full_barrier(cb);
+    vkCmdFillBuffer(cb, xfb_cnt, 0, 16, 0);
+    vk_full_barrier(cb);
+    xfb_counted = true;
+    uint64_t a = xfb_buf[0].addr;
+    if (a >= HEAP_BASE && a - HEAP_BASE < HEAP_MAX && xfb_buf[0].size)
+        vc_mark_gpu(a - HEAP_BASE, a - HEAP_BASE + xfb_buf[0].size);
+}
+
+// A counter report of type 13 (primitives made) or 14 (written): the capture's count into the report's low word (the
+// caller wrote it 0), on the GPU after the draws. False: no capture to count.
+static bool xfb_report(uint32_t type, uint64_t *out) {
+    uint64_t a = (uint64_t)(uintptr_t)out;
+    if (!xfb_counted || !xfb_cnt || !gmem_buf || a < HEAP_BASE + gmem_base || a + 8 > HEAP_BASE + gmem_base + gmem_size)
+        return false;
+    vk_end_pass();
+    VkCommandBuffer cb = vk_cmd();
+    vk_full_barrier(cb);
+    VkBufferCopy cp = {type == 13 ? 0 : 4, a - HEAP_BASE - gmem_base, 4};
+    vkCmdCopyBuffer(cb, xfb_cnt, gmem_buf, 1, &cp);
+    vk_full_barrier(cb);
+    return true;
+}
+
 static bool vcache_lookup(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceSize *off) {
     if (vc_on < 0) {
         const char *e = getenv("LARECOMP_VK_VCACHE");
@@ -4118,7 +4221,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
             bi[n] = cbuf_info(stage, si, (int)b->binding, gx, gy, gz);
             w[n].pBufferInfo = &bi[n];
         } else if (b->type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
-            bi[n] = b->binding == GFAST_BUFFER_INDEX ? gfast_info() : gmem_info();
+            bi[n] = b->binding == GFAST_BUFFER_INDEX ? gfast_info() : b->binding == XFB_BUFFER_INDEX ? xfb_cnt_info() : gmem_info();
             w[n].pBufferInfo = &bi[n];
         } else {
             continue;  // rscale: written below, once the textures (and their scales) are known
@@ -4128,7 +4231,8 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
     for (int i = 0; i < p->nbinds; i++) {
         VkBindingInfo *b = &p->binds[i];
         if (b->set != set || b->type != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
-            (b->binding != 18 && b->binding != GMAP_BUFFER_INDEX && b->binding != GBASE_BUFFER_INDEX)) continue;
+            (b->binding != 18 && b->binding != GMAP_BUFFER_INDEX && b->binding != GBASE_BUFFER_INDEX &&
+             b->binding != XFB_MAP_INDEX)) continue;
         w[n] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = b->binding,
                                       .descriptorCount = 1, .descriptorType = b->type};
         if (b->binding == GMAP_BUFFER_INDEX) {  // (compute) this dispatch's fast-copy table: gfast_prepare
@@ -4136,6 +4240,8 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
         } else if (b->binding == GBASE_BUFFER_INDEX) {  // the heap window binding 17 holds (gmem_info, above): where, how big
             uint32_t gb[4] = {(uint32_t)gmem_base, gmem_buf ? (uint32_t)gmem_size : 0, 0, 0};
             bi[n] = ubo_span(vk_transient_copy(gb, sizeof gb, 256), sizeof gb);
+        } else if (b->binding == XFB_MAP_INDEX) {  // (transform feedback) the capture's layout: xfb_layout
+            bi[n] = ubo_span(vk_transient_copy(xfb_cur, sizeof xfb_cur, 256), sizeof xfb_cur);
         } else {
             for (int t = 0; t < si->ntex && t < 64; t++) { rs[1 + t][0] = tex_sc[sg][t][0]; rs[1 + t][1] = tex_sc[sg][t][1]; }
             bi[n] = ubo_span(copy_dedupe(sg ? DEDUPE_RSCALE_F : DEDUPE_RSCALE_V, rs, sizeof rs, 256), sizeof rs);
@@ -4886,6 +4992,7 @@ static void draw_(CmdRec *r, bool indexed) {
     VkPrimitiveTopology topo0;
     uint8_t cls0;
     topology((uint32_t)r->x[0], &topo0, &cls0);
+    if (xfb_active && xfb_layout(st.program, xfb_cur)) vkey.xfb = 1;  // (transform feedback: the capturing variant)
     Prog *pr = get_program(st.program, &vkey, &fkey, cls0);
     if (pr && atomic_load(&pr->state) == 0 && small_targets()) wait_built(&pr->state, pr);
     if (!pr || atomic_load(&pr->state) != 1) {
@@ -5442,6 +5549,9 @@ static void debug_draw(Prog *pr, CmdRec *r, bool indexed) {
             uint32_t a = i < st.nattrib ? st.attrib[i] : 0;
             LOG(" %d=f%#x/s%u+%u", i, a & 0xFF, (a >> 8) & 0x1F, a >> 13);
         }
+        for (int s = 0; s < st.nstream && s < 16; s++)  // (the streams: stride, buffer)
+            if (st.stream[s][0]) LOG(" | stream %d stride %u at %llx+%llx", s, st.stream[s][0],
+                                     (unsigned long long)st.vbuf[s].addr, (unsigned long long)st.vbuf[s].size);
         LOG("\n");
     }
     for (int i = 0; i < 16; i++)  // storage buffers (LDG / STG through the driver table): where, and the heap window
@@ -6365,6 +6475,11 @@ static void exec_list(uint64_t handle, int depth) {
         case CMD_DISPATCH: dispatch_compute((uint32_t)r->x[0], (uint32_t)r->x[1], (uint32_t)r->x[2]); break;
         case CMD_DRAW_ARRAYS: draw(r, false); break;
         case CMD_DRAW_ELEMENTS: draw(r, true); break;
+        case CMD_XFB_BIND:
+            if (r->x[0] < 4) xfb_buf[r->x[0]].addr = r->x[1], xfb_buf[r->x[0]].size = r->x[2];
+            break;
+        case CMD_XFB_BEGIN: xfb_begin(r->x[1] != 0); break;
+        case CMD_XFB_END: xfb_active = false; break;
         case CMD_UPDATE_UNIFORM_BUFFER:
             memcpy((void *)(uintptr_t)(r->x[0] + r->x[2]), x, r->x[3]);
             guest_copy_flush();  // (cbuf copies shared within the submission are stale now)
@@ -6400,6 +6515,14 @@ static void exec_list(uint64_t handle, int depth) {
                     pthread_mutex_unlock(&cq_lock);
                 }
                 oq_counting = false;
+                break;
+            }
+            if (type == 13 || type == 14) {  // transform feedback's primitives made / written (xfb_report), not a timing
+                if (out) {
+                    out[0] = 0;
+                    out[1] = ns_to_gpu_ticks(plat_now_ns());
+                    xfb_report(type, out);
+                }
                 break;
             }
             int mode = vk_counter_mode();
@@ -6448,6 +6571,13 @@ static void exec_list(uint64_t handle, int depth) {
         case CMD_COPY_BUFFER_TO_BUFFER:
             wait_why = "buffer -> buffer copy";
             renderer_flush();
+            {
+                static long nlog = -2;  // (debug) LARECOMP_LOG_XFB also logs these copies (decal geometry)
+                if (nlog == -2) nlog = getenv("LARECOMP_LOG_XFB") ? atol(getenv("LARECOMP_LOG_XFB")) : 0;
+                if (nlog > 0 && nlog--)
+                    LOG("[xfb] frame %llu copy %llx -> %llx, %llu bytes\n", (unsigned long long)renderer_present_count(),
+                        (unsigned long long)r->x[0], (unsigned long long)r->x[1], (unsigned long long)r->x[2]);
+            }
             memmove((void *)(uintptr_t)r->x[1], (void *)(uintptr_t)r->x[0], r->x[2]);
             break;
         default: break;
