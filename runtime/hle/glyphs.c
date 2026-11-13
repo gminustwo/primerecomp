@@ -24,9 +24,10 @@
 // The game's prompt icons: FNV-1a (64-bit) of level 0 as linear BC7 blocks (1296 bytes), the icon's shape, the
 // Switch input it shows (BIND_*: a stick's own entry for its stick), and for the four dots - the d-pad, drawn as a
 // Joy-Con's four buttons (the visors: "Use [up] or ZR / A to return to the Combat Visor"; issue #32, they were taken
-// for the face buttons, so keys showed X for d-pad up and Enter for right) - the one lit, for a stick whether it's
-// the press (1). From the game's paks (GuiSysMP1, PreloadFrontEndMPT, UI_FrontEnd,
-// DuplicateData). Its other 36 x 36 images (the map's legend, arrows, the stick-rotate icon) aren't buttons.
+// for the face buttons, so keys showed X for d-pad up and Enter for right) - the one lit (-1: none, the d-pad as a
+// whole), for a stick whether it's the press (1). From the game's paks (GuiSysMP1, PreloadFrontEndMPT, UI_FrontEnd,
+// DuplicateData). Its other 36 x 36 images (the map's legend, arrows, the stick-rotate icon, a Joy-Con's motion)
+// aren't buttons: every 36 x 36 BC7 image in all 340 paks was checked (2026-11-12).
 typedef struct { uint64_t hash; uint8_t shape; int8_t input; int8_t extra; } GameIcon;
 static const GameIcon k_icons[] = {
     {0x00cd94c75c5e7bc1ull, GA_TRIGGER, BIND_ZR, 0},  // red
@@ -40,6 +41,7 @@ static const GameIcon k_icons[] = {
     {0x19b57a235fc2c475ull, GA_RECT, BIND_R, 0},  // gold
     {0x26c45825c650650dull, GA_STICK, BIND_LSTICK, 0},  // blue
     {0x28f5f058152df467ull, GA_STICK, BIND_LSTICK, 0},  // blue
+    {0x294dc8d0022185caull, GA_DOTS, BIND_UP, -1},  // red (the d-pad: no dot lit)
     {0x347bb64c1419fbb5ull, GA_RECT, BIND_L, 0},  // red
     {0x34a416909a9fd66aull, GA_STICK, BIND_LSTICK, 0},  // red
     {0x36d78d439e9374c3ull, GA_CIRCLE, BIND_MINUS, 0},  // gold
@@ -88,6 +90,7 @@ static const GameIcon k_icons[] = {
     {0x9e7b3a90e3226745ull, GA_CIRCLE, BIND_X, 0},  // blue
     {0xa20390fea6f59570ull, GA_STICK, BIND_LSTICK, 0},  // red
     {0xa4ea4c612e42af6full, GA_RECT, BIND_L, 0},  // blue
+    {0xa8f2ca0f58598752ull, GA_DOTS, BIND_UP, -1},  // blue (the d-pad: no dot lit)
     {0xabfae820dbd8d1e9ull, GA_STICK, BIND_RSTICK, 0},  // blue
     {0xac9b77fafd718b08ull, GA_RECT, BIND_R, 0},  // blue
     {0xaf602390ccc62f29ull, GA_STICK, BIND_LSTICK, 0},  // blue
@@ -160,7 +163,7 @@ uint32_t glyph_generation(void) { return g_gen; }
 // What each Switch button is pressed with now (glyphs_frame), on a controller and with keys: its binding - but in
 // the game's menus (game_in_play false: runtime/hle/input.c's menu face buttons and menu keys) A / B / X / Y are the
 // controller's face buttons labelled so (bind_label_host; Face buttons: Labels), and a button a menu key means shows
-// that key (Enter A, Esc B, Q / E the pause screen's pages - L / R -, the arrows the d-pad: issue #32, Shift / F were
+// that key (Enter A, Esc B, Delete Minus, Q / E the pause screen's pages - L / R -, the arrows the d-pad: issue #32, Shift / F were
 // shown for the pages); of the rest, one whose key means another button there (Space: A) shows none (the game's own).
 // The game's paused messages (an item's "acquired" text: game_message_screen) count as play: their text says what
 // to press in play ("Press [Y] to activate Morph Ball mode" showed the button labelled Y - a PlayStation controller's
@@ -196,6 +199,13 @@ void glyphs_frame(void) {  // what the icons depend on: the set, the bindings, m
     for (int i = 0; i < BIND_PAD_COUNT; i++) MIX(pad_now[i]), MIX(key_now[i]);
     for (int i = BIND_PAD_COUNT; i < BIND_KEY_COUNT; i++) MIX(g_bind_key[i]);
 #undef MIX
+    static int logged = -1;  // (the play log says which set is shown, as it changes: bug reports)
+    if (set != logged) {
+        LOG("[glyphs] button icons: %s (setting %s, last used %s)\n", k_set_names[set],
+            g_icons_names[g_settings.button_icons >= 0 && g_settings.button_icons < ICONS_COUNT ? g_settings.button_icons : 0],
+            g_dev == GLYPH_DEV_KEYS ? "keys" : g_dev == GLYPH_DEV_WII ? "Wii Remote" : g_dev == GLYPH_DEV_PAD ? "controller" : "nothing");
+        logged = set;
+    }
     if (h != sig) {
         if (sig && log_on()) LOG("[glyphs] button icons: %s%s\n", k_set_names[set], menu ? " (menus)" : "");
         sig = h;
@@ -284,9 +294,9 @@ static bool key_symbol(GaSpec *s, int key) {
     }
 }
 
-// a stick's four keys (labels: one or two chars; the arrow keys "^" "v" "<" ">", drawn as arrows)
-static void keys4(GaSpec *s, int up, int left, int down, int right) {
-    const int k[4] = {g_bind_key[up], g_bind_key[left], g_bind_key[down], g_bind_key[right]};
+// four keys standing in for a stick or the d-pad (labels: one or two chars; the arrow keys "^" "v" "<" ">", drawn as
+// arrows): up, left, down, right
+static void keys4_of(GaSpec *s, const int k[4]) {
     s->sym = GS_KEYS4;
     for (int i = 0; i < 4; i++) {
         char l[16];
@@ -296,6 +306,10 @@ static void keys4(GaSpec *s, int up, int left, int down, int right) {
         else snprintf(l, sizeof l, " ");
         snprintf(s->keys[i], sizeof s->keys[i], "%.2s", l);
     }
+}
+static void keys4(GaSpec *s, int up, int left, int down, int right) {  // (a stick's four bindings)
+    const int k[4] = {g_bind_key[up], g_bind_key[left], g_bind_key[down], g_bind_key[right]};
+    keys4_of(s, k);
 }
 
 // The icon's own label in the Switch set, to tell whether a Switch controller's icon would change at all
@@ -312,6 +326,16 @@ static bool icon_spec(const GameIcon *ic, int set, GaSpec *s) {
         if (ic->extra == 1) return key_symbol(s, g_key_now[ic->input]);  // (pressing it in)
         if (ic->input == BIND_LSTICK) keys4(s, BIND_LS_UP, BIND_LS_LEFT, BIND_LS_DOWN, BIND_LS_RIGHT);
         else keys4(s, BIND_RS_UP, BIND_RS_LEFT, BIND_RS_DOWN, BIND_RS_RIGHT);
+        return true;
+    }
+    if (ic->shape == GA_DOTS && ic->extra < 0) {  // the d-pad as a whole: its four keys, or a d-pad
+        if (set == ICONS_SWITCH) return false;
+        if (set == ICONS_KEYBOARD) {
+            const int k[4] = {g_key_now[BIND_UP], g_key_now[BIND_LEFT], g_key_now[BIND_DOWN], g_key_now[BIND_RIGHT]};
+            keys4_of(s, k);
+            return true;
+        }
+        s->sym = GS_DPAD, s->dir = -1;  // (no arm lit)
         return true;
     }
     if (set == ICONS_KEYBOARD) return key_symbol(s, g_key_now[ic->input]);

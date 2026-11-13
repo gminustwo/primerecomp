@@ -1228,7 +1228,8 @@ static void tab_about(void) {
     header("Menu");
     ImGui::TextUnformatted("Open / close this menu:  F1, both sticks pressed in, Back + Start, or the controller's Home button");
     ImGui::TextUnformatted("Switch tabs:  L / R  (Q / E)        Back:  B  (Esc)");
-    ImGui::TextUnformatted("In the game's menus:  Enter / Space confirm, Esc / Backspace go back, Q / E switch pages");
+    ImGui::TextUnformatted("In the game's menus:  Enter / Space confirm, Esc / Backspace go back, Q / E switch pages, Delete is -");
+    ImGui::TextUnformatted("The mouse:  point at an item and click it (the title screen, save slots, difficulty and settings)");
     ImGui::TextUnformatted("Fullscreen:  F11 / Alt+Enter");
 }
 
