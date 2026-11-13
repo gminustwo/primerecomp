@@ -84,20 +84,47 @@ static bool map_stick_key(int sc) {
 }
 
 // Through the bindings (runtime/hle/bindings.c: g_bind_key), read on every key event, so a rebind applies at once.
+// A binding is on while all its keys are held (a combo: E + 1). A combo on makes its keys its own until each is let
+// go: a binding of fewer of them stays off - E + 1 for a visor doesn't also select the beam on 1, nor does letting
+// go of E first (issue #30). (A key bound by itself and also held for a combo, E, is pressed as the combo starts.)
+static uint8_t key_combo[BIND_KEY_HOST_COUNT];  // per key: the most keys of a combo on that it's part of
+static bool key_on[BIND_KEY_COUNT];
 static void recompute_keyboard(void) {
+    int k[BIND_KEY_COUNT][BIND_COMBO], n[BIND_KEY_COUNT];
+    for (int sc = 1; sc < BIND_KEY_HOST_COUNT; sc++)
+        if (!held_key(sc)) key_combo[sc] = 0;
+    for (int i = 0; i < BIND_KEY_COUNT; i++) {
+        n[i] = bind_key_combo(i, k[i]);
+        bool on = n[i] > 0;
+        for (int j = 0; j < n[i] && on; j++) on = bound_held(k[i][j]);
+        key_on[i] = on;
+        for (int j = 0; j < n[i] && on && n[i] > 1; j++)
+            if (key_combo[k[i][j]] < n[i]) key_combo[k[i][j]] = (uint8_t)n[i];
+    }
+    for (int i = 0; i < BIND_KEY_COUNT; i++)
+        for (int j = 0; j < n[i] && key_on[i]; j++) key_on[i] = key_combo[k[i][j]] <= n[i];
+    static int log_keys = -1;
+    if (log_keys < 0) log_keys = getenv("LARECOMP_LOG_KEYS") != NULL;
+    if (log_keys) {  // (test) the inputs on, as they change
+        static char last[256];
+        char now[256] = "";
+        for (int i = 0; i < BIND_KEY_COUNT; i++)
+            if (key_on[i]) snprintf(now + strlen(now), sizeof now - strlen(now), " %s", bind_input_name(i));
+        if (strcmp(now, last)) { LOG("[input] keys on:%s\n", now[0] ? now : " (none)"); snprintf(last, sizeof last, "%s", now); }
+    }
     uint64_t b = 0;
     for (int i = 0; i < BIND_PAD_COUNT; i++)
-        if (bound_held(g_bind_key[i])) b |= 1ull << i;
+        if (key_on[i]) b |= 1ull << i;
     static const uint8_t beam_dir[4] = {BTN_UP, BTN_RIGHT, BTN_DOWN, BTN_LEFT};  // Power, Wave, Ice, Plasma
     for (int i = 0; i < 4; i++)
-        if (bound_held(g_bind_key[BIND_BEAM_POWER + i])) b |= 1ull << BTN_X | 1ull << beam_dir[i];
+        if (key_on[BIND_BEAM_POWER + i]) b |= 1ull << BTN_X | 1ull << beam_dir[i];
     for (int sc = 1; sc < BIND_KEY_HOST_COUNT; sc++)
         if (key_menu[sc] && held_key(sc) && menu_key(sc) >= 0) b |= 1ull << menu_key(sc);
     key_buttons = b;
-    key_lx = (bound_held(g_bind_key[BIND_LS_RIGHT]) - bound_held(g_bind_key[BIND_LS_LEFT])) * 32767;
-    key_ly = (bound_held(g_bind_key[BIND_LS_UP]) - bound_held(g_bind_key[BIND_LS_DOWN])) * 32767;
-    key_rx = (bound_held(g_bind_key[BIND_RS_RIGHT]) - bound_held(g_bind_key[BIND_RS_LEFT])) * 32767;
-    key_ry = (bound_held(g_bind_key[BIND_RS_UP]) - bound_held(g_bind_key[BIND_RS_DOWN])) * 32767;
+    key_lx = (key_on[BIND_LS_RIGHT] - key_on[BIND_LS_LEFT]) * 32767;
+    key_ly = (key_on[BIND_LS_UP] - key_on[BIND_LS_DOWN]) * 32767;
+    key_rx = (key_on[BIND_RS_RIGHT] - key_on[BIND_RS_LEFT]) * 32767;
+    key_ry = (key_on[BIND_RS_UP] - key_on[BIND_RS_DOWN]) * 32767;
 }
 
 // ---- Mouse (runtime/hle/game.c mouse aim)
@@ -532,7 +559,8 @@ static _Atomic int32_t script_lx, script_ly, script_rx, script_ry;
 //   real events (the game's menus with the mouse: runtime/hle/menumouse.c).
 // LARECOMP_BIND_TEST="frame:pad|key:<input>:<host>,..." starts a rebind capture of <input> (bind_* name: a, zl,
 //   ls_up...) at that frame (the Controls tab shows it waiting) and presses <host> 90 frames later ("esc" cancels,
-//   "wait" lets it time out); "frame:reset:pad|key" resets to the defaults.
+//   "wait" lets it time out; keys: names joined by '+', "E+1", held until 420 frames after the start - past the
+//   countdown, which takes them); "frame:reset:pad|key" resets to the defaults.
 static void push_key(SDL_Scancode sc, SDL_Keymod mod, bool down) {
     SDL_Event e;
     memset(&e, 0, sizeof e);
@@ -666,12 +694,33 @@ static void host_test_frame(uint64_t frame) {
                 LOG("[input] test: capture %s %s\n", dev, in);
                 bind_capture_begin(d, bind_slot_from_name(in));
             }
+            if (d == BIND_DEV_KEY && strcmp(host, "esc") && strcmp(host, "wait") &&
+                (frame == start + 90 || frame == start + 420)) {  // (the keys down, then up past the countdown)
+                char names[40];
+                snprintf(names, sizeof names, "%s", host);
+                char *ks = NULL;
+                for (char *nm = strtok_r(names, "+", &ks); nm; nm = strtok_r(NULL, "+", &ks)) {
+                    int sc = bind_key_from_name(nm);
+                    SDL_Event e;
+                    memset(&e, 0, sizeof e);
+                    if (sc >= BIND_MOUSE_LEFT && sc <= BIND_MOUSE_X2) {
+                        e.type = frame == start + 90 ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+                        e.button.button = (Uint8)(sc - BIND_MOUSE_LEFT + 1);
+                    } else {
+                        e.type = frame == start + 90 ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+                        e.key.scancode = (SDL_Scancode)sc;
+                    }
+                    bind_capture_event(&e);
+                }
+                continue;
+            }
+            if (frame > start && frame < start + 1200) bind_capture_active(NULL, NULL, NULL);  // (its countdown ends)
             if (frame == start + 90 && strcmp(host, "wait")) {
                 SDL_Event e;
                 memset(&e, 0, sizeof e);
-                if (!strcmp(host, "esc") || d == BIND_DEV_KEY) {
+                if (!strcmp(host, "esc")) {
                     e.type = SDL_EVENT_KEY_DOWN;
-                    e.key.scancode = !strcmp(host, "esc") ? SDL_SCANCODE_ESCAPE : SDL_GetScancodeFromName(host);
+                    e.key.scancode = SDL_SCANCODE_ESCAPE;
                 } else {
                     int h = bind_pad_from_name(host);
                     if (h >= PADB_LTRIGGER) {

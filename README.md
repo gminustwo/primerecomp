@@ -330,7 +330,10 @@ Keyboard and mouse play like a PC shooter:
 | Pause menu | Esc |
 | Show a hint (F1 menu, Cheats tab) | H (controller: L3) |
 
-In the game's menus Enter / Space confirm, Esc goes back and Q / E switch pages. Everything can be rebound.
+In the game's menus Enter / Space confirm, Esc goes back and Q / E switch pages. Everything can be rebound, to a
+key or a combo of up to three (PrimeRecomp's menu -> Controls: select a binding, hold the keys until the 5-second
+countdown ends). With E + 1 / E + 2 / E + 3 / E + 4 on the visors, 1-4 stay the beams: a combo's keys don't also press
+what they're bound to alone. Right-click a binding to put it back to its default.
 
 **PrimeRecomp's own menu** (graphics, controls, audio, quitting): **F1**, or on a controller both sticks pressed in
 (or Back + Start). Fullscreen: F11 or Alt+Enter.
