@@ -633,6 +633,8 @@ VkDescriptorSet vk_alloc_set(VkDescriptorSetLayout layout) {
 typedef struct { VkBuffer buf; VmaAllocation mem; uint8_t *ptr; uint64_t size, used, seq; } Chunk;
 static Chunk *chunks;
 static int nchunks, active = -1;
+static bool ring_sysmem;  // a chunk is in system memory (no resizable BAR, or the window ran out)
+bool vk_transient_sysmem(void) { return ring_sysmem; }
 
 static void ring_log_memory(const char *why) {
     const VkPhysicalDeviceMemoryProperties *mp;
@@ -709,18 +711,76 @@ static int new_chunk(uint64_t size) {
     }
     c->ptr = info.pMappedData;
     c->size = size;
+    VkMemoryPropertyFlags f;
+    vmaGetMemoryTypeProperties(g_vk.vma, info.memoryType, &f);
+    if (!(f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) ring_sysmem = true;
     static bool spilled;  // (the first chunk in system memory: logged too)
     if (!nchunks || moved || (spill && !spilled)) {  // where the ring lives: device-local (resizable BAR) or system memory read across PCIe
         if (spill) spilled = true;
-        VkMemoryPropertyFlags f;
-        vmaGetMemoryTypeProperties(g_vk.vma, info.memoryType, &f);
         LOG("[vk] transient ring: memory type %u (%s%s%s)\n", info.memoryType, f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ? "device-local " : "system memory ",
             f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT ? "host-visible " : "", f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT ? "cached" : "");
     }
     return nchunks++;
 }
 
-static void ring_retire(void) {}  // chunks are recycled lazily in vk_transient
+// ---- GPU scratch: device-local memory only the GPU touches, for work it writes and reads back in one submission
+// (the ASTC decoder's blocks and texels, textures.c). With the ring in system memory (no resizable BAR) the decoder
+// read its blocks and wrote every texel across PCIe, 4 bytes at a time, and the copy into the image read them back:
+// a second at the frigate's first room on an RTX 5090 (issue #67), and past Windows' 2 s GPU timeout at the Chozo
+// Ruins elevator on an RTX 2060 SUPER (device lost, issue #50). Chunks as the ring's, reused once their submissions are
+// done; the ones (past the first) unused for ~10 s are freed, so a burst of decoding doesn't keep its video memory.
+typedef struct { VkBuffer buf; VmaAllocation mem; uint64_t size, used, seq; } Scratch;
+static Scratch *scr;
+static int nscr, scr_active = -1;
+
+VkSpan vk_gpu_scratch(uint64_t size, uint64_t align) {
+    uint64_t pending = vk_pending_seq();
+    if (scr_active >= 0) {
+        Scratch *c = &scr[scr_active];
+        uint64_t off = (c->used + align - 1) & ~(align - 1);
+        if (off + size <= c->size) {
+            c->used = off + size, c->seq = pending;
+            return (VkSpan){c->buf, off, NULL};
+        }
+    }
+    uint64_t done = vk_completed_seq();
+    int pick = -1;
+    for (int i = 0; i < nscr; i++)
+        if (i != scr_active && scr[i].seq <= done && scr[i].size >= size) { pick = i; break; }
+    if (pick < 0) {
+        Scratch c = {.size = size > CHUNK_SIZE ? size : CHUNK_SIZE};
+        VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = c.size,
+                                 .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                          VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        VkResult r = vmaCreateBuffer(g_vk.vma, &bi, &ai, &c.buf, &c.mem, NULL);
+        if (r != VK_SUCCESS) {
+            static int nlog;
+            if (nlog++ < 3) LOG("[vk] GPU scratch: no memory for %llu MB (error %d)\n", (unsigned long long)(c.size >> 20), r);
+            return (VkSpan){0};
+        }
+        static int nlog;
+        if (nlog++ < 6) LOG("[vk] GPU scratch: chunk %d, %llu MB of video memory\n", nscr + 1, (unsigned long long)(c.size >> 20));
+        scr = realloc(scr, (nscr + 1) * sizeof *scr);
+        scr[pick = nscr++] = c;
+    }
+    scr_active = pick;
+    scr[pick].used = size, scr[pick].seq = pending;
+    return (VkSpan){scr[pick].buf, 0, NULL};
+}
+
+static void ring_retire(void) {  // (after each submission; the ring's own chunks are recycled lazily in vk_transient)
+    if (nscr < 2 || submit_seq % 64) return;
+    uint64_t done = vk_completed_seq();
+    for (int i = nscr - 1; i >= 0 && nscr > 1; i--) {
+        if (i == scr_active || scr[i].seq > done || scr[i].seq + 1200 > submit_seq) continue;
+        vmaDestroyBuffer(g_vk.vma, scr[i].buf, scr[i].mem);
+        scr[i] = scr[--nscr];
+        if (scr_active == nscr) scr_active = i;
+        static int nlog;
+        if (nlog++ < 6) LOG("[vk] GPU scratch: an unused chunk freed, %d left\n", nscr);
+    }
+}
 
 VkSpan vk_transient(uint64_t size, uint64_t align) {
     if (align < 16) align = 16;
