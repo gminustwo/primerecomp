@@ -693,8 +693,18 @@ uint64_t vk_frame_counter(void) { return g_frame_counter; }
 static float g_shot_crop[4] = {0, 0, 1, 1};
 static double last_fps_time;
 static NvnTexture *g_last_presented;
+static _Atomic uint32_t g_game_rect_bits[4];  // where the game's image is in the window, 0..1: x, y, width, height
 
 const float *vk_shot_crop(void) { return g_shot_crop; }
+
+// The game's image in the window, as fractions of its size (runtime/hle/menumouse.c: the pointer over the game's menus)
+void vk_game_rect(float r[4]) {
+    for (int i = 0; i < 4; i++) {
+        uint32_t b = g_game_rect_bits[i];
+        memcpy(&r[i], &b, 4);
+    }
+    if (r[2] <= 0 || r[3] <= 0) r[0] = r[1] = 0, r[2] = r[3] = 1;  // (nothing presented yet)
+}
 
 void backend_present(NvnTexture *t);
 void backend_represent(void) {
@@ -754,6 +764,14 @@ void backend_present(NvnTexture *t) {
             pdw = dw, pdh = dh, psx = sx, psy = sy, pbw = t->width, pbh = t->height;
         }
         renderer_set_scale((float)sx, (float)sy);
+        {
+            const float r[4] = {(float)(vx / dw), (float)(vy / dh), (float)(vw / dw), (float)(vh / dh)};
+            for (int i = 0; i < 4; i++) {
+                uint32_t b;
+                memcpy(&b, &r[i], 4);
+                g_game_rect_bits[i] = b;
+            }
+        }
         VkCommandBuffer cb = vk_cmd();
         float pv[8] = {renderer_origin_lower_left() ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
         memcpy(g_shot_crop, crop, sizeof crop);

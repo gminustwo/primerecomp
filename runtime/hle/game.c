@@ -524,6 +524,8 @@ void game_hooks_init(void) {  // (each boot, after dispatch_init)
     cheats_hooks_init();
     extern void motion_hooks_init(void);  // runtime/hle/motion.c (the Wii Remote's pointer)
     motion_hooks_init();
+    extern void menumouse_hooks_init(void);  // runtime/hle/menumouse.c (the mouse in the game's menus)
+    menumouse_hooks_init();
 }
 
 // The screen now and the one before (0 0: no game)

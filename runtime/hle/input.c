@@ -47,14 +47,17 @@ static int held_key(int sc) { return sc > 0 && sc < BIND_KEY_HOST_COUNT && (keys
 
 // Menu keys: a key pressed while the game isn't in play (its menus, the map, the title screen, cutscenes;
 // game_in_play) means what it would in a PC game's menus - Enter / Space confirm (A), Esc / Backspace go back (B),
-// Q / E switch the pause menu's pages (L / R), the arrows move (d-pad) - instead of its binding. A key keeps the
-// meaning it was pressed with until it's let go (Esc opening the pause menu isn't also its Back).
+// Q / E switch the pause menu's pages (L / R), the arrows move (d-pad), Delete is Minus (the save slots' Erase, the
+// pause screen's Exit: Esc, Minus in play, is Back there, so nothing pressed Minus in menus and its prompts kept the
+// Switch's icon) - instead of its binding. A key keeps the meaning it was pressed with until it's let go (Esc opening
+// the pause menu isn't also its Back).
 extern bool game_in_play(void);  // runtime/hle/game.c
 static uint8_t key_menu[BIND_KEY_HOST_COUNT];
 static int menu_key(int sc) {
     switch (sc) {
     case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: case SDL_SCANCODE_SPACE: return BTN_A;
     case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_BACKSPACE: return BTN_B;
+    case SDL_SCANCODE_DELETE: return BTN_MINUS;
     case SDL_SCANCODE_Q: return BTN_L;
     case SDL_SCANCODE_E: return BTN_R;
     case SDL_SCANCODE_UP: return BTN_UP;
@@ -140,6 +143,35 @@ void input_mouse_frame(SDL_Window *w) {  // (the event loop, each pass)
     mouse_dx = mouse_dy = 0;
     capture_changed_ns = SDL_GetTicksNS();
     LOG("[input] mouse %s\n", want ? "captured (mouse aim)" : "released");
+}
+
+// The game's menus with the mouse (runtime/hle/menumouse.c): where the pointer is (fractions of the window), a serial
+// bumped as it moves and one as the left button goes down - while the game isn't in play and the mouse isn't captured.
+// A click over a menu item makes an A press: held for a few of the game's reads, a couple of reads on (the item
+// selected first takes a frame).
+static _Atomic uint32_t menu_px_bits, menu_py_bits, menu_moves, menu_clicks;
+static _Atomic int64_t menu_a_from, menu_a_to;
+
+static void menu_pointer_at(SDL_WindowID wid, float x, float y) {
+    SDL_Window *w = SDL_GetWindowFromID(wid);
+    int ww = 0, wh = 0;
+    if (!w || !SDL_GetWindowSize(w, &ww, &wh) || ww <= 0 || wh <= 0) return;
+    float fx = x / ww, fy = y / wh;
+    uint32_t bx, by;
+    memcpy(&bx, &fx, 4), memcpy(&by, &fy, 4);
+    menu_px_bits = bx, menu_py_bits = by;
+}
+
+bool input_menu_pointer(float *x, float *y, uint32_t *moves, uint32_t *clicks) {
+    uint32_t bx = menu_px_bits, by = menu_py_bits;
+    memcpy(x, &bx, 4), memcpy(y, &by, 4);
+    *moves = menu_moves, *clicks = menu_clicks;
+    return !mouse_captured && !pad_in_use && !game_in_play();
+}
+
+void input_menu_press_a(void) {  // (the game's thread)
+    menu_a_from = sampling + 1;
+    menu_a_to = sampling + 5;
 }
 
 static void pointer_used(float dx, float dy, bool click) {
@@ -294,6 +326,8 @@ static bool test_event(const SDL_Event *e) {
     case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP: return e->key.which == TEST_DEVICE;
     case SDL_EVENT_TEXT_INPUT: return e->text.windowID == TEST_DEVICE;
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP: return e->gbutton.which == TEST_DEVICE;
+    case SDL_EVENT_MOUSE_MOTION: return e->motion.which == TEST_DEVICE;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP: return e->button.which == TEST_DEVICE;
     default: return false;
     }
 }
@@ -434,10 +468,18 @@ void input_handle_event(const SDL_Event *e) {
         if (mouse_captured) {
             mouse_dx += (int64_t)lroundf(e->motion.xrel * 256);
             mouse_dy += (int64_t)lroundf(e->motion.yrel * 256);
+        } else if (e->motion.xrel != 0 || e->motion.yrel != 0) {
+            menu_pointer_at(e->motion.windowID, e->motion.x, e->motion.y);
+            menu_moves++;
         }
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP:
         if (e->type == SDL_EVENT_MOUSE_BUTTON_DOWN) glyphs_note_device(GLYPH_DEV_KEYS);
+        if (e->type == SDL_EVENT_MOUSE_BUTTON_DOWN && e->button.button == SDL_BUTTON_LEFT && !mouse_captured &&
+            !game_in_play()) {
+            menu_pointer_at(e->button.windowID, e->button.x, e->button.y);
+            menu_clicks++;
+        }
         if (e->button.button >= 1 && e->button.button <= 5 && (e->type == SDL_EVENT_MOUSE_BUTTON_UP || game_in_play())) {
             keys_down[BIND_MOUSE_LEFT + e->button.button - 1] = e->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
             recompute_keyboard();
@@ -486,6 +528,8 @@ static _Atomic int32_t script_lx, script_ly, script_rx, script_ry;
 //   at frame, up `frames` later): they reach menus and the on-screen keyboard first, as a player's would.
 // "frame:shot:<name>" saves the window (game + menus) to build/<name>.png.
 // "frame:mouse:<dx>/<dy>:frames" moves the mouse that many counts each frame (mouse aim; "key:Mouse Left" clicks).
+// "frame:point:<x>/<y>" / "frame:click:<x>/<y>" put the pointer there (fractions of the window) / click there, as
+//   real events (the game's menus with the mouse: runtime/hle/menumouse.c).
 // LARECOMP_BIND_TEST="frame:pad|key:<input>:<host>,..." starts a rebind capture of <input> (bind_* name: a, zl,
 //   ls_up...) at that frame (the Controls tab shows it waiting) and presses <host> 90 frames later ("esc" cancels,
 //   "wait" lets it time out); "frame:reset:pad|key" resets to the defaults.
@@ -508,6 +552,30 @@ static void test_push(uint64_t frame, unsigned long start, unsigned long len, co
     }
     if (!strcmp(dev, "sdlkey")) {
         if (frame == start || frame == start + len) push_key(SDL_GetScancodeFromName(arg), SDL_KMOD_NONE, frame == start);
+        return;
+    }
+    if (!strcmp(dev, "point") || !strcmp(dev, "click")) {  // the pointer to x/y (fractions of the window), a left click
+        float fx = 0, fy = 0;
+        int n = 0, ww = 0, wh = 0;
+        SDL_Window **ws = SDL_GetWindows(&n);
+        SDL_Window *w = ws && n > 0 ? ws[0] : NULL;
+        SDL_free(ws);
+        if (frame != start || !w || sscanf(arg, "%f/%f", &fx, &fy) != 2 || !SDL_GetWindowSize(w, &ww, &wh)) {
+            if (frame == start) LOG("[input] test: no pointer event (window %p, \"%s\")\n", (void *)w, arg);
+            return;
+        }
+        LOG("[input] test: pointer %s at %.0f %.0f of %dx%d\n", dev, fx * ww, fy * wh, ww, wh);
+        e.type = SDL_EVENT_MOUSE_MOTION, e.motion.windowID = SDL_GetWindowID(w), e.motion.which = TEST_DEVICE;
+        e.motion.x = fx * ww, e.motion.y = fy * wh, e.motion.xrel = 20, e.motion.yrel = 0;
+        SDL_PushEvent(&e);
+        if (!strcmp(dev, "click")) {
+            memset(&e, 0, sizeof e);
+            e.type = SDL_EVENT_MOUSE_BUTTON_DOWN, e.button.windowID = SDL_GetWindowID(w), e.button.which = TEST_DEVICE;
+            e.button.button = SDL_BUTTON_LEFT, e.button.down = true, e.button.clicks = 1, e.button.x = fx * ww, e.button.y = fy * wh;
+            SDL_PushEvent(&e);
+            e.type = SDL_EVENT_MOUSE_BUTTON_UP, e.button.down = false;
+            SDL_PushEvent(&e);
+        }
         return;
     }
     if (!strcmp(dev, "sdlpad")) {
@@ -559,7 +627,8 @@ static void host_test_frame(uint64_t frame) {
             unsigned long start = 0, len = 10;
             char dev[8] = "", name[400] = "";
             if (sscanf(tok, "%lu:%7[a-z]:%399[^:]:%lu", &start, dev, name, &len) < 3) continue;
-            if (!strcmp(dev, "type") || !strcmp(dev, "sdlpad") || !strcmp(dev, "sdlkey") || !strcmp(dev, "shot")) {
+            if (!strcmp(dev, "type") || !strcmp(dev, "sdlpad") || !strcmp(dev, "sdlkey") || !strcmp(dev, "shot") ||
+                !strcmp(dev, "point") || !strcmp(dev, "click")) {
                 test_push(frame, start, len, dev, name);
                 continue;
             }
@@ -757,6 +826,7 @@ static void fill_state(Cpu *c) {
     if (wm_b) glyphs_note_device(GLYPH_DEV_WII), pad_used();
     glyphs_frame();  // (the button icons: what they should show now)
     uint64_t b = menu ? script_buttons : key_buttons | pad_buttons | wm_b | script_buttons;
+    if (!menu && sampling >= menu_a_from && sampling < menu_a_to) b |= 1ull << BTN_A;  // (a click on a menu item)
     int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx + wm_lx) + script_lx);
     int32_t ly = clamp_axis((menu ? 0 : key_ly + pad_ly + wm_ly) + script_ly);
     int32_t prx = flick_takes_stick ? 0 : pad_rx, pry = flick_takes_stick ? 0 : pad_ry;
