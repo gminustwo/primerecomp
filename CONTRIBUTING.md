@@ -1,7 +1,6 @@
 # Contributing to PrimeRecomp
 
-Thanks for wanting to help! Bug reports, testing on different hardware (the Steam Deck and real Linux GPUs
-especially) and code contributions are all welcome.
+Thanks for wanting to help! Bug reports, testing on different hardware and code contributions are all welcome.
 
 ## The one hard rule: no Nintendo files
 
@@ -13,20 +12,21 @@ Nothing owned by Nintendo may ever be committed or attached to an issue or pull 
 
 Pull requests that include Nintendo files can't be merged. Screenshots and short clips of the game in bug reports are fine.
 
-## Reporting bugs
+### Bug reporting; Feature requests
 
-Report bugs and request features on the [PrimeRecomp Discord](https://discord.gg/TmWPy28wf) rather than as
-GitHub issues: they're easier to keep track of there. Please include:
+Please report bugs and request features on the [Issues tabs](https://github.com/gminustwo/primerecomp/issues). For a bug, these help the most:
 
-- screenshots, a GIF or a short video of the problem
-- your platform (Windows / Linux / Steam Deck / macOS), hardware (CPU, GPU) and window size / aspect ratio
-- what you did, what happened, and what you expected
-- a copy of your save file: the `save` folder, zipped, from the folder named below
-- `primerecomp.log`, which always holds the latest run (`primerecomp.previous.log` the one before): on Windows in
-  the PrimeRecomp folder, on Linux and the Steam Deck in `~/.local/share/primerecomp`, on macOS in
-  `~/Library/Application Support/io.github.primerecomp`
-- for a graphics problem, an F9 capture at the spot (`build/f9_<frame>/` in that same folder, zipped) and F8 for
-  your position (`positions.txt`)
+- **Screenshots, a GIF or a short video** of the problem
+- **The details:** what happened, what you were doing and where in the game, and your system (Windows, macOS, Linux or
+  Steam Deck; CPU and GPU, or your Mac's model)
+- **A copy of your save file:** zip up the `save` folder (Windows: in the PrimeRecomp folder; macOS:
+  `~/Library/Application Support/io.github.primerecomp/save`; Linux and Steam Deck: `~/.local/share/primerecomp/save`)
+- `primerecomp.log`, if you can, from the folder that holds `save`. It always holds the latest run, and
+  `primerecomp.previous.log` the run before. It notes your settings and what you change, each room you enter and
+  your items there, so it says where you were when something went wrong (nothing leaves your PC unless you send it).
+
+For a graphics problem, you can also press **F9** at the spot: it saves a capture of that frame in
+`build/f9_<frame>/` in that same folder (zip it up). **F8** notes your position in `positions.txt`.
 
 ## Building
 
