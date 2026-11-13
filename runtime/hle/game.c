@@ -306,6 +306,31 @@ static void rt_water_think(Cpu *c) {
     g_water_think(c);
 }
 
+// ... and each steam (CScriptSteamMP1::Think, a trigger too: the box in which it fogs the visor), once ("[steam]")
+static GuestFn g_steam_think;
+static void rt_steam_think(Cpu *c) {
+    static uint64_t seen[64];
+    static int nseen;
+    uint64_t s = c->x[0];
+    bool known = false;
+    for (int i = 0; i < nseen; i++) known |= seen[i] == s;
+    if (!known && nseen < 64) {
+        seen[nseen++] = s;
+        static float *box;
+        if (!box) box = hle_alloc(32);
+        Cpu *saved = malloc(sizeof *saved);
+        *saved = *c;
+        c->x[0] = s;
+        c->x[8] = (uint64_t)(uintptr_t)box;
+        guest_call(c, guest_sym("_ZNK17CScriptTriggerMP118GetTriggerBoundsWREv"));
+        *c = *saved;
+        free(saved);
+        LOG("[steam] %llx box %.2f %.2f %.2f .. %.2f %.2f %.2f\n", (unsigned long long)s, box[0], box[1], box[2], box[3],
+            box[4], box[5]);
+    }
+    g_steam_think(c);
+}
+
 static GuestFn g_fp_think;
 static void rt_fp_think(Cpu *c);
 
@@ -519,6 +544,10 @@ void game_hooks_init(void) {  // (each boot, after dispatch_init)
         static bool whooked;
         g_water_think = dispatch_lookup(t);
         if (g_water_think && !whooked) hle_override(t, rt_water_think, "CScriptWaterMP1::Think"), whooked = true;
+        uint64_t st = guest_sym("_ZN15CScriptSteamMP15ThinkEfR13CStateManager");
+        static bool shooked;
+        g_steam_think = dispatch_lookup(st);
+        if (g_steam_think && !shooked) hle_override(st, rt_steam_think, "CScriptSteamMP1::Think"), shooked = true;
     }
     extern void cheats_hooks_init(void);  // runtime/hle/cheats.c
     cheats_hooks_init();
