@@ -1,6 +1,7 @@
 // Button prompt icons for the controller in use (the Controls tab's "Button icons"). The game draws its prompts with
 // the Switch's buttons: 36 x 36 BC7 images (a blue set in play - the pause screens, the map, the HUD -, a gold one on
-// the start screen and for highlighted prompts, a red one in the front end's menus), placed in its text and UI. As
+// the start screen and for highlighted prompts, a red one in the front end's menus), and 128 x 36 ones with two
+// buttons ("X + d-pad right", "ZR / A": the HUD's hints that name two - k_wide), placed in its text and UI. As
 // one is uploaded, runtime/nvn/vulkan/textures.c asks glyph_match whether it's one of them (by its contents: the
 // table below, from the game's own files), and glyph_redraw has it drawn again (runtime/nvn/glyph_art.c) with what
 // the player presses for that Switch button - through their bindings (runtime/hle/bindings.c): an Xbox controller's
@@ -117,6 +118,36 @@ static const GameIcon k_icons[] = {
     {0xffee2ce306eae5e1ull, GA_STICK, BIND_RSTICK, 0},  // blue
 };
 #define N_ICONS ((int)(sizeof k_icons / sizeof *k_icons))
+
+// Two buttons in one image, 128 x 36 BC7 (4608 bytes as linear blocks): the HUD hints that name two - "Use [X +
+// d-pad right] to switch to the Scan Visor", "Use the Beam [ZR / A] to open doors" kept the Switch's buttons on keys
+// and every controller (user 2026-11-12: only the 36 x 36 icons were known). The left button lies in the 36 x 36 at
+// x 8 (block columns 2-10: its pixels 10-43), the right one in the 36 x 36 at x 84 (columns 21-29: pixels 84-117), a
+// '+' or '/' between them (51-75). All 18 such
+// images in the game's paks (UIMP1, GuiSysMP1; input -1: a Joy-Con's motion, no button - left as it is). Ids after
+// the icons' (N_ICONS + i).
+typedef struct { uint64_t hash; GameIcon l, r; } WideIcon;
+static const WideIcon k_wide[] = {
+    {0x2b0564224dc0a9afull, {0, GA_RECT, BIND_R, 0}, {0, GA_DOTS, BIND_UP, -1}},              // R + d-pad
+    {0x0dcc7b4c7a07aa39ull, {0, GA_RECT, BIND_R, 0}, {0, GA_TRIGGER, BIND_ZR, 0}},            // R / ZR
+    {0x67d2ae987d72b9e1ull, {0, GA_CIRCLE, BIND_X, 0}, {0, GA_DOTS, BIND_RIGHT, GD_RIGHT}},   // X + right
+    {0xea18cf4c3a38435eull, {0, GA_CIRCLE, BIND_X, 0}, {0, GA_DOTS, BIND_LEFT, GD_LEFT}},     // X + left
+    {0xe3031c5c564d6560ull, {0, GA_CIRCLE, BIND_X, 0}, {0, GA_DOTS, BIND_DOWN, GD_DOWN}},     // X + down
+    {0x476c89033a9cec3bull, {0, GA_RECT, BIND_R, 0}, {0, GA_DOTS, BIND_RIGHT, GD_RIGHT}},     // R + right
+    {0x1f75531e44023390ull, {0, GA_RECT, BIND_R, 0}, {0, GA_DOTS, BIND_UP, GD_UP}},           // R + up
+    {0x1df27279bf4ad0cdull, {0, GA_CIRCLE, BIND_X, 0}, {0, GA_DOTS, BIND_UP, -1}},            // X + d-pad
+    {0x5d34bc4238162cf7ull, {0, GA_CIRCLE, BIND_PLUS, 0}, {0, GA_RECT, BIND_R, 0}},           // Plus / R
+    {0x5e108d030dea71deull, {0, GA_RECT, BIND_R, 0}, {0, GA_DOTS, BIND_DOWN, GD_DOWN}},       // R + down
+    {0x8d843583d7c92c9aull, {0, GA_CIRCLE, BIND_X, 0}, {0, GA_DOTS, BIND_UP, GD_UP}},         // X + up
+    {0x50d9e53d1cb406b0ull, {0, GA_RECT, BIND_R, 0}, {0, GA_DOTS, BIND_LEFT, GD_LEFT}},       // R + left
+    {0xcdccb6e98703d822ull, {0, GA_CIRCLE, BIND_PLUS, 0}, {0, GA_TRIGGER, BIND_ZR, 0}},       // Plus / ZR
+    {0xfbe329e555528a72ull, {0, GA_RECT, BIND_L, 0}, {0, GA_RECT, BIND_R, 0}},                // L + R
+    {0x3c80068583bfadc1ull, {0, GA_CIRCLE, -1, 0}, {0, GA_CIRCLE, BIND_X, 0}},                // motion / X
+    {0xe8da0744379a5ca4ull, {0, GA_TRIGGER, BIND_ZR, 0}, {0, GA_CIRCLE, BIND_A, 0}},          // ZR / A
+    {0xfea00ff7e0008bfaull, {0, GA_RECT, BIND_L, 0}, {0, GA_CIRCLE, BIND_B, 0}},              // L / B
+    {0x25a2fb7ae4114298ull, {0, GA_RECT, BIND_L, 0}, {0, GA_TRIGGER, BIND_ZL, 0}},            // L / ZL
+};
+#define N_WIDE ((int)(sizeof k_wide / sizeof *k_wide))
 
 const char *const g_icons_names[ICONS_COUNT] = {"auto", "switch", "xbox", "playstation", "keyboard", "wii"};
 static const char *const k_set_names[ICONS_COUNT] = {"", "Switch", "Xbox", "PlayStation", "keyboard", "Wii Remote"};
@@ -421,6 +452,13 @@ static uint64_t fnv(const uint8_t *p, uint64_t n) {
 }
 
 int glyph_match(uint32_t w, uint32_t h, uint32_t format, uint32_t levels, const uint8_t *lin, uint64_t size) {
+    if (format == 0x4E && w == 128 && h == 36 && levels == 1 && size == 4608) {  // (two buttons: k_wide)
+        uint64_t f = fnv(lin, size);
+        for (int i = 0; i < N_WIDE; i++)
+            if (k_wide[i].hash == f) return N_ICONS + i;
+        if (log_on()) LOG("[glyphs] a 128 x 36 BC7 image that isn't a known two-button icon: %016llx\n", (unsigned long long)f);
+        return -1;
+    }
     if (w == 36 && h == 36 && (format != 0x4E || levels != 1 || size != 1296) && log_on())
         LOG("[glyphs] a 36 x 36 image not checked: format %#x, %u levels, %llu bytes\n", format, levels,
             (unsigned long long)size);
@@ -456,7 +494,65 @@ static const uint8_t *font(void) {  // Baloo 2 SemiBold (the menus' font, shippe
     return data;
 }
 
+// A 36 x 36 part of a 128 x 36 image (block column bx0 .. bx0 + 8), out of / into its linear BC7 blocks
+static void wide_part(uint8_t *lin, uint8_t part[1296], int bx0, bool put) {
+    for (int by = 0; by < 9; by++) {
+        uint8_t *row = lin + by * 512 + bx0 * 16;
+        if (put) memcpy(row, part + by * 144, 144);
+        else memcpy(part + by * 144, row, 144);
+    }
+}
+
+// a two-button image (k_wide) drawn again: each button as the icon it is; on keys, X + a d-pad direction is the one key
+// bound to it (the beam / visor shortcuts - X held and that direction: BIND_BEAM_*, Power up, Wave right, Ice down,
+// Plasma left), and X + the whole d-pad their four, in the middle of the image with the rest cleared
+static bool wide_redraw(const WideIcon *wi, uint8_t *lin, int set) {
+    static const int beam_of[4] = {BIND_BEAM_POWER, BIND_BEAM_ICE, BIND_BEAM_PLASMA, BIND_BEAM_WAVE};  // (GD_ order)
+    uint8_t part[1296];
+    GaSpec s;
+    if (set == ICONS_KEYBOARD && wi->l.input == BIND_X && wi->r.shape == GA_DOTS) {
+        bool one = false;
+        memset(&s, 0, sizeof s);
+        if (wi->r.extra >= 0 && wi->r.extra < 4) {
+            int slot = beam_of[wi->r.extra];
+            one = key_symbol(&s, g_bind_key[slot], g_bind_key_mod[slot]);
+        } else {
+            const int k[4] = {g_bind_key[BIND_BEAM_POWER], g_bind_key[BIND_BEAM_PLASMA], g_bind_key[BIND_BEAM_ICE],
+                              g_bind_key[BIND_BEAM_WAVE]};
+            const int16_t *const m[4] = {g_bind_key_mod[BIND_BEAM_POWER], g_bind_key_mod[BIND_BEAM_PLASMA],
+                                         g_bind_key_mod[BIND_BEAM_ICE], g_bind_key_mod[BIND_BEAM_WAVE]};
+            one = k[0] && k[1] && k[2] && k[3];
+            if (one) keys4_of(&s, k, m);
+        }
+        if (one) {
+            wide_part(lin, part, 2, false);  // (drawn on the X button: its colors)
+            glyph_art_render(part, 36, 36, wi->l.shape, 0, &s, font());
+            static const uint8_t clear[16] = {0x40};  // (BC7 mode 6, all zero: transparent)
+            for (int i = 0; i < 4608; i += 16) memcpy(lin + i, clear, 16);
+            wide_part(lin, part, 12, true);  // (pixels 48-83: the middle)
+            return true;
+        }
+    }
+    bool any = false;
+    for (int side = 0; side < 2; side++) {
+        const GameIcon *ic = side ? &wi->r : &wi->l;
+        if (ic->input < 0 || !icon_spec(ic, set, &s)) continue;
+        wide_part(lin, part, side ? 21 : 2, false);
+        if (glyph_art_render(part, 36, 36, ic->shape, ic->extra, &s, font())) wide_part(lin, part, side ? 21 : 2, true), any = true;
+    }
+    return any;
+}
+
 bool glyph_redraw(int id, uint8_t *lin, uint32_t w, uint32_t h) {
+    if (id >= N_ICONS && id < N_ICONS + N_WIDE && w == 128 && h == 36 && g_now_set) {
+        const WideIcon *wi = &k_wide[id - N_ICONS];
+        int set = g_set;
+        bool done = wide_redraw(wi, lin, set);
+        if (log_on()) LOG("[glyphs] two-button icon %016llx (%s / %s) %s for %s\n", (unsigned long long)wi->hash,
+                          wi->l.input >= 0 ? bind_input_name(wi->l.input) : "motion", bind_input_name(wi->r.input),
+                          done ? "drawn" : "left", k_set_names[set]);
+        return done;
+    }
     if (id < 0 || id >= N_ICONS || !g_now_set) return false;
     const GameIcon *ic = &k_icons[id];
     GaSpec s;

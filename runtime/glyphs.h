@@ -17,7 +17,7 @@ void glyphs_frame(void);
 int glyphs_current(void);
 
 // runtime/nvn/vulkan/textures.c, as a texture's level 0 is uploaded (lin: its texels as linear blocks):
-// one of the game's prompt icons (an id), or -1
+// one of the game's prompt icons (an id: a 36 x 36 button, or a 128 x 36 image of two), or -1
 int glyph_match(uint32_t w, uint32_t h, uint32_t format, uint32_t levels, const uint8_t *lin, uint64_t size);
 // that icon redrawn in place for the controller in use (false: the game's own stays)
 bool glyph_redraw(int id, uint8_t *lin, uint32_t w, uint32_t h);

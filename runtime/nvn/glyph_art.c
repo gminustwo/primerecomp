@@ -507,6 +507,9 @@ bool glyph_art_render(uint8_t *bc7, int w, int h, int shape, int dot_lit, const 
     bool *letter = calloc((size_t)w * h, 1);
     bool keyboard = s->sym >= GS_KEY;
     measure(ic, keyboard ? NULL : letter, 5.0f * k);
+    // (the d-pad with no dot lit: nothing bright inside its rim - the symbol took the dark between the dots, and the
+    // cross drawn for a controller was lost in its fill. The rim's color, as a lit dot's)
+    if (shape == GA_DOTS && lum(ic->glyph) < lum(ic->ring)) memcpy(ic->glyph, ic->ring, sizeof ic->glyph);
     if (keyboard) {  // the icon redrawn whole: a key (or a mouse, or four keys)
         memset(ic->px, 0, sizeof(Px) * w * h);
         if (s->sym == GS_MOUSE) {
