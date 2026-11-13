@@ -1,7 +1,5 @@
 # PrimeRecomp
 
-[![Buy me a coffee](https://img.shields.io/badge/Buy_me_a_coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/rengar)
-
 **PrimeRecomp** runs *Metroid Prime Remastered* (Nintendo Switch, 2023) natively on Windows, macOS (Apple Silicon) and
 Linux, including the Steam Deck. The game's code is statically recompiled - translated ahead of time from the Switch's
 ARM64 code into C and compiled for your PC - and the Switch's system services and NVN graphics are reimplemented on the
@@ -85,11 +83,6 @@ PC, with Vulkan for the graphics. No emulator runs.
 > - Lava rising animation appears in Transport Tunnel A in magmoor when it shouldn't
 >
 > Found something else? See [Bugs and feature requests](#bugs-and-feature-requests).
-
-**New in v0.0.11: no more game packages or keys.** PrimeRecomp no longer sets up from an NSP or XCI, and it never
-asks for, looks for or uses your console's keys: set it up from the game's extracted `exefs` and `romfs` folders. If
-you set up from a package with v0.0.7 - v0.0.10, the start screen asks for the extracted folders once; your saves and
-settings stay. The v0.0.7 - v0.0.10 downloads were taken down for this. Everything else they brought is in v0.0.11.
 
 **New in v0.0.10: the Character Gallery lit, a crosshair switch, and 8 GB Macs.** Extras -> Character Gallery's
 models are lit instead of almost black. Two new options in the F1 menu: Video -> Crosshair hides the Combat Visor's
