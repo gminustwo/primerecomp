@@ -2100,7 +2100,9 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         if (c->stage != STAGE_GEOMETRY || !c->glsl) { fail(c, "out outside a geometry shader"); goto out_done; }
         int type = (int)bits(w, 39, 2);  // 1 emit, 2 cut, 3 both
         if (type & 1) sp(&c->body, "    gs_emit();\n");
-        if (type & 2) sp(&c->body, c->key && c->key->gs_lib ? "    gs_end();\n" : "    EndPrimitive();\n");
+        if (type & 2)
+            sp(&c->body, c->key && c->key->gs_lib ? "    gs_end();\n"
+                         : c->key && c->key->xfb && c->glsl ? "    xfb_n = 0u; EndPrimitive();\n" : "    EndPrimitive();\n");
         set_reg(c, d, R(a));  // (the next vertex's handle)
     out_done:;
     } else if (OPM(0xf0a8000000000000ull, 0xfff8000000000000ull)) {  // BAR
@@ -2286,6 +2288,11 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
                                            c->gs_invocations > 1 || c->gs_out_topo == 1 || c->gs_out_topo == 6))
         fail(c, "geometry shader not run by the other stages: textures, global memory, layers, invocations or points / lines");
     if (c->fail) { free(body.buf); free(c->body.buf); free(c); return info; }
+    // transform feedback (ShaderKey.xfb): xfb_n (the strip's vertices, OUT's cut resets it) always; the capture for
+    // triangle strips, stores into the heap through gmem_
+    bool xfb_decl = stage == STAGE_GEOMETRY && key && key->xfb && !lib;
+    bool xfb = xfb_decl && c->gs_out_topo != 1 && c->gs_out_topo != 6;
+    if (xfb) info->uses_gmem = true, c->uses_gmem_store = true;
     int set = stage == STAGE_FRAGMENT ? 1 : stage == STAGE_GEOMETRY ? 2 : 0;
     Str s = {0};
     // the layer from a vertex output (ShaderKey.layer_attr): a generic attribute the shader writes
@@ -2402,7 +2409,33 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
             if (c->out_attr_mask & (1u << i)) sp(&s, "vec4 gs_v%d = vec4(0, 0, 0, 1);\n", i);
         if (c->gs_writes_layer) sp(&s, "int gs_layer = 0;\n");
         if (lib) goto gs_done;
-        sp(&s, "void gs_emit() {\n  gl_Position = gs_pos;\n");
+        if (xfb_decl) sp(&s, "uint xfb_n = 0u;\n");
+        if (xfb) {  // each triangle of the strip: a slot from XfbCount, its three vertices' words (XfbMap) into the buffer
+            sp(&s, "layout(std430, set = %d, binding = %d) buffer XfbCount { uint prims; uint written; uint bytes; } xfb_;\n",
+               set, XFB_BUFFER_INDEX);
+            sp(&s, "layout(std140, set = %d, binding = %d) uniform XfbMap { uvec4 xfb_hdr; uvec4 xfb_map[%d]; };\n", set,
+               XFB_MAP_INDEX, XFB_WORDS / 4);
+            sp(&s, "uint xfb_rec[2][%d];\nvec4 xfb_vec(uint a) {\n  if (a == 0x1cu) return gs_pos;\n", XFB_WORDS);
+            for (int i = 0; i < 32; i++)
+                if (c->out_attr_mask & (1u << i)) sp(&s, "  if (a == %uu) return gs_v%d;\n", 0x20 + i, i);
+            sp(&s, "  return vec4(0);\n}\n");
+            sp(&s, "void xfb_emit() {\n  uint cur[%d];\n  uint nw = min(xfb_hdr.y, %du);\n", XFB_WORDS, XFB_WORDS);
+            sp(&s, "  for (uint k = 0u; k < nw; k++) { uint m = xfb_map[k >> 2u][k & 3u];"
+                   " cur[k] = m == 0xFFFFFFFFu ? 0u : floatBitsToUint(xfb_vec(m >> 2u)[m & 3u]); }\n");
+            sp(&s, "  if (xfb_n >= 2u) {\n    uint idx = atomicAdd(xfb_.prims, 1u);\n    if (idx < xfb_hdr.z) {\n"
+                   "      atomicAdd(xfb_.written, 1u);\n      atomicAdd(xfb_.bytes, 12u * nw);\n"
+                   "      uint at = xfb_hdr.x + idx * 3u * nw;\n"
+                   "      bool odd = ((xfb_n - 2u) & 1u) != 0u;  // (strip order: (n-2, n-1, n), odd ones (n-1, n-2, n))\n"
+                   "      for (uint k = 0u; k < nw; k++) {\n"
+                   "        gmem_.w[at + k] = odd ? xfb_rec[1][k] : xfb_rec[0][k];\n"
+                   "        gmem_.w[at + nw + k] = odd ? xfb_rec[0][k] : xfb_rec[1][k];\n"
+                   "        gmem_.w[at + 2u * nw + k] = cur[k];\n      }\n    }\n  }\n");
+            sp(&s, "  for (uint k = 0u; k < nw; k++) { xfb_rec[0][k] = xfb_rec[1][k]; xfb_rec[1][k] = cur[k]; }\n"
+                   "  xfb_n++;\n}\n");
+        }
+        sp(&s, "void gs_emit() {\n");
+        if (xfb) sp(&s, "  xfb_emit();\n");
+        sp(&s, "  gl_Position = gs_pos;\n");
         if (key && key->flip_y) sp(&s, "  gl_Position.y = -gl_Position.y;\n");
         if (key && (key->x_mode & 1)) sp(&s, "  gl_Position.x = -gl_Position.x;\n");
         if (key && key->depth_minus_one) sp(&s, "  gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5f;\n");
