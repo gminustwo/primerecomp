@@ -64,6 +64,10 @@ typedef struct {
                             // (gcb<i>, set 2) and outputs (gs_pos, gs_v<i>), no prelude; the caller defines gs_in_pos(i)
                             // / gs_in_v<i>(i) (an input vertex's) and gs_emit() / gs_end(). Vertex (with gs_follows): the
                             // entry point is vs_main(), the outputs are plain globals the geometry shader reads.
+    uint8_t pad_;           // (zero)
+    uint16_t cb1_at;        // the stage's compiler constants (c1) are at the blob + cb1_at * 256, where the translation
+                            // reads its BRX jump tables (maxwell_jump_tables); 0: not read. (In the padding after gs_lib:
+                            // keys without it hash as before - shader records and caches stay valid.)
 } ShaderKey;
 
 typedef struct {
@@ -131,9 +135,13 @@ extern const uint8_t *maxwell_dbg_vs;
 // code: shader binary (with the 0x50-byte SPH header for graphics stages)
 ShaderInfo *maxwell_translate(const uint8_t *code, size_t max_size, int stage, const ShaderKey *key);
 // The bytes of a graphics stage's blob from 0 that maxwell_translate reads (header, SPH, the instructions through the
-// word its end scan stops at): with the key, all a translation depends on - the same bytes give the same source,
-// translated with that as max_size too (runtime/nvn/vulkan/exec.c's shader record). 0 if max_size has no room for code.
-size_t maxwell_code_size(const uint8_t *code, size_t max_size, int stage);
+// word its end scan stops at, and with key->cb1_at the jump tables in the constants after them): with the key, all a
+// translation depends on - the same bytes give the same source, translated with that as max_size too
+// (runtime/nvn/vulkan/exec.c's shader record). 0 if max_size has no room for code.
+size_t maxwell_code_size(const uint8_t *code, size_t max_size, int stage, const ShaderKey *key);
+// The bytes of the compiler constants (c1) a stage's BRX jump tables take, from c1's start - what a key's cb1_at lets the
+// translation read to label just the tables' cases (translate.c); 0: no BRX, or one that isn't a jump table it knows.
+uint32_t maxwell_jump_tables(const uint8_t *code, size_t max_size, int stage);
 void maxwell_free(ShaderInfo *s);
 
 // vsim.c: a straight-line vertex shader (attribute loads / stores, float MOV / ADD / MUL / FMA) run on the CPU, for

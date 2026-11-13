@@ -1,5 +1,6 @@
 // GLSL -> SPIR-V (shaderc), descriptor layouts from the SPIR-V itself, translated NVN programs, built-in shaders.
 #include <pthread.h>
+#include <stdatomic.h>
 #include <shaderc/shaderc.h>
 #include <stdlib.h>
 #include <string.h>
@@ -126,8 +127,16 @@ uint32_t *vk_glsl_to_spirv(const char *src, int stage, const char *name, size_t 
     shaderc_compile_options_set_target_env(o, shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
     shaderc_compile_options_set_optimization_level(o, getenv("LARECOMP_VK_OPT") ? shaderc_optimization_level_performance
                                                                                   : shaderc_optimization_level_zero);
+    uint64_t t0 = plat_now_ns();
     shaderc_compilation_result_t r = shaderc_compile_into_spv(comp, src, strlen(src), kind_of(stage), name, "main", o);
     shaderc_compile_options_release(o);
+    {   // the slow ones (a first visit's waits; issue #61: the gallery's lighting shaders)
+        uint64_t took = plat_now_ns() - t0;
+        static _Atomic int nslow;
+        if (took > 250000000ull && atomic_fetch_add(&nslow, 1) < 40)
+            LOG("[shader] slow GLSL compile: %.2f s (%s, %zu KB of GLSL -> %zu KB of SPIR-V)\n", took / 1e9, name,
+                strlen(src) / 1024, shaderc_result_get_length(r) / 1024);
+    }
     if (shaderc_result_get_compilation_status(r) != shaderc_compilation_status_success) {
         static int nlog;
         if (nlog++ < 20) LOG("[shader] %s: GLSL compile failed:\n%s\n%s\n", name, shaderc_result_get_error_message(r), src);
@@ -143,10 +152,38 @@ uint32_t *vk_glsl_to_spirv(const char *src, int stage, const char *name, size_t 
     return out;
 }
 
+// (debug) LARECOMP_VK_SPIRV_NONCE=<text>: an OpModuleProcessed "<text>" in each module, so the driver's own shader
+// cache can't know it - a first build timed as a new player's (NVIDIA's cache outlives build/cache)
+static uint32_t *with_nonce(const uint32_t *spv, size_t *nwords) {
+    static const char *nonce = (const char *)1;
+    if (nonce == (const char *)1) nonce = getenv("LARECOMP_VK_SPIRV_NONCE");
+    if (!nonce || *nwords < 6) return NULL;
+    size_t at = 0;
+    for (size_t i = 5; i < *nwords;) {  // before the first annotation (or type): the end of the debug section
+        uint32_t wc = spv[i] >> 16, op = spv[i] & 0xFFFF;
+        if (!wc) return NULL;
+        if (op == 71 || op == 72 || op == 73 || op == 74 || op == 332 || op == 5632 || (op >= 19 && op <= 39)) { at = i; break; }
+        i += wc;
+    }
+    if (!at) return NULL;
+    size_t len = strlen(nonce), sw = len / 4 + 1;  // (the string, nul-terminated, in whole words)
+    uint32_t *out = calloc(*nwords + 1 + sw, 4);
+    memcpy(out, spv, at * 4);
+    out[at] = (uint32_t)(1 + sw) << 16 | 330;  // OpModuleProcessed
+    memcpy(out + at + 1, nonce, len);
+    memcpy(out + at + 1 + sw, spv + at, (*nwords - at) * 4);
+    *nwords += 1 + sw;
+    return out;
+}
+
 VkShaderModule vk_module(const uint32_t *spv, size_t nwords) {
-    VkShaderModuleCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = nwords * 4, .pCode = spv};
+    uint32_t *tagged = with_nonce(spv, &nwords);
+    VkShaderModuleCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = nwords * 4,
+                                   .pCode = tagged ? tagged : spv};
     VkShaderModule m;
-    return vkCreateShaderModule(g_vk.dev, &ci, NULL, &m) == VK_SUCCESS ? m : VK_NULL_HANDLE;
+    VkResult r = vkCreateShaderModule(g_vk.dev, &ci, NULL, &m);
+    free(tagged);
+    return r == VK_SUCCESS ? m : VK_NULL_HANDLE;
 }
 
 VkShaderModule vk_compile_glsl(const char *src, int stage, const char *name) {
