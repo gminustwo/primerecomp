@@ -33,6 +33,7 @@ _Static_assert(BIND_MOUSE_LEFT == SDL_SCANCODE_COUNT, "mouse buttons follow SDL'
     SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4}
 static const int16_t k_def_pad[BIND_PAD_COUNT] = DEF_PAD, k_def_key[BIND_KEY_COUNT] = DEF_KEY;
 int16_t g_bind_pad[BIND_PAD_COUNT] = DEF_PAD, g_bind_key[BIND_KEY_COUNT] = DEF_KEY;
+int16_t g_bind_key_mod[BIND_KEY_COUNT][BIND_MODS];  // (the defaults: single keys)
 
 const char *const g_face_names[FACE_COUNT] = {"labels", "nintendo", "xbox"};
 
@@ -179,6 +180,40 @@ const char *bind_key_label(int sc) {
     return n && *n ? n : "(unnamed key)";
 }
 
+int bind_key_combo(int slot, int keys[BIND_COMBO]) {
+    if (slot < 0 || slot >= BIND_KEY_COUNT || g_bind_key[slot] <= 0) return 0;
+    int n = 0;
+    for (int m = 0; m < BIND_MODS; m++)
+        if (g_bind_key_mod[slot][m] > 0) keys[n++] = g_bind_key_mod[slot][m];
+    keys[n++] = g_bind_key[slot];
+    return n;
+}
+
+static void combo_name(const int *keys, int n, char *buf, size_t size) {
+    size_t at = 0;
+    buf[0] = 0;
+    for (int i = 0; i < n && at < size; i++)
+        at += (size_t)snprintf(buf + at, size - at, "%s%s", i ? " + " : "", bind_key_label(keys[i]));
+    if (!n) snprintf(buf, size, "(none)");
+}
+
+const char *bind_key_combo_name(int slot, char *buf, size_t size) {
+    int k[BIND_COMBO], n = bind_key_combo(slot, k);
+    combo_name(k, n, buf, size);
+    return buf;
+}
+
+// the same keys, in any order
+static bool same_keys(const int *a, int na, const int *b, int nb) {
+    if (na != nb) return false;
+    for (int i = 0; i < na; i++) {
+        bool found = false;
+        for (int j = 0; j < nb && !found; j++) found = a[i] == b[j];
+        if (!found) return false;
+    }
+    return true;
+}
+
 int bind_key_from_name(const char *name) {
     for (int i = 0; i < BIND_KEY_HOST_COUNT - BIND_MOUSE_LEFT; i++)
         if (!SDL_strcasecmp(name, k_mouse_names[i])) return BIND_MOUSE_LEFT + i;
@@ -202,13 +237,16 @@ static void result(int kind, int dev, int slot, int other);
 
 void bind_reset(int dev) {  // (the controller's: those of the face buttons setting)
     if (dev == BIND_DEV_PAD) for (int i = 0; i < BIND_PAD_COUNT; i++) g_bind_pad[i] = def_pad(i);
-    else memcpy(g_bind_key, k_def_key, sizeof g_bind_key);
+    else memcpy(g_bind_key, k_def_key, sizeof g_bind_key), memset(g_bind_key_mod, 0, sizeof g_bind_key_mod);
     LOG("[input] %s bindings reset to the defaults\n", dev == BIND_DEV_PAD ? "controller" : "keyboard");
     result(5, dev, -1, -1);
 }
 
 bool bind_is_default_slot(int dev, int slot) {
-    return dev == BIND_DEV_PAD ? g_bind_pad[slot] == def_pad(slot) : g_bind_key[slot] == k_def_key[slot];
+    if (dev == BIND_DEV_PAD) return g_bind_pad[slot] == def_pad(slot);
+    for (int m = 0; m < BIND_MODS; m++)
+        if (g_bind_key_mod[slot][m]) return false;
+    return g_bind_key[slot] == k_def_key[slot];
 }
 
 bool bind_is_default(int dev) {
@@ -222,6 +260,10 @@ bool bind_is_default(int dev) {
 static _Atomic int cap_dev = -1, cap_slot = -1;
 static _Atomic uint64_t cap_deadline;
 static _Atomic int res_kind, res_dev, res_slot, res_other, res_serial;
+// A keyboard capture's keys (cap_lock: the events' thread adds them, the UI's ends the countdown): held now, in the
+// order pressed, and the most held at once since they were last all up
+static SDL_SpinLock cap_lock;
+static int cap_held[BIND_COMBO], cap_nheld, cap_best[BIND_COMBO], cap_nbest;
 
 static void result(int kind, int dev, int slot, int other) {
     res_kind = kind, res_dev = dev, res_slot = slot, res_other = other;
@@ -230,20 +272,65 @@ static void result(int kind, int dev, int slot, int other) {
 
 void bind_capture_begin(int dev, int slot) {
     if (slot < 0 || slot >= (dev == BIND_DEV_PAD ? BIND_PAD_COUNT : BIND_KEY_COUNT)) return;
+    SDL_LockSpinlock(&cap_lock);
+    cap_nheld = cap_nbest = 0;
+    SDL_UnlockSpinlock(&cap_lock);
     cap_deadline = SDL_GetTicks() + BIND_CAPTURE_MS;
     cap_slot = slot;
     cap_dev = dev;
 }
 
 void bind_capture_cancel(void) {
-    if (cap_dev < 0) return;
-    result(3, cap_dev, cap_slot, -1);
-    cap_dev = -1;
+    int d = cap_dev;
+    if (d < 0 || !atomic_compare_exchange_strong(&cap_dev, &d, -1)) return;
+    result(3, d, cap_slot, -1);
+}
+
+static void cap_press(int key) {  // (cap_lock held)
+    for (int i = 0; i < cap_nheld; i++)
+        if (cap_held[i] == key) return;
+    if (!cap_nheld) cap_nbest = 0;  // (a new press: the last one's keys are forgotten)
+    if (cap_nheld == BIND_COMBO) return;  // (more than a combo takes: the first ones)
+    cap_held[cap_nheld++] = key;
+    if (cap_nheld >= cap_nbest) memcpy(cap_best, cap_held, sizeof cap_best), cap_nbest = cap_nheld;
+}
+
+static void cap_release(int key) {  // (cap_lock held)
+    for (int i = 0; i < cap_nheld; i++)
+        if (cap_held[i] == key) {
+            memmove(cap_held + i, cap_held + i + 1, (size_t)(cap_nheld - i - 1) * sizeof *cap_held);
+            cap_nheld--;
+            return;
+        }
+}
+
+int bind_capture_keys(int keys[BIND_COMBO]) {
+    SDL_LockSpinlock(&cap_lock);
+    int n = cap_nheld ? cap_nheld : cap_nbest;
+    memcpy(keys, cap_nheld ? cap_held : cap_best, sizeof(int) * BIND_COMBO);
+    SDL_UnlockSpinlock(&cap_lock);
+    return n;
+}
+
+static void assign_keys(int slot, const int *keys, int n);
+
+// A keyboard capture's end (its countdown, or a wheel notch): the keys held, or the last held together, become the
+// binding; none pressed - nothing changes
+static void key_capture_finish(void) {
+    int d = BIND_DEV_KEY;
+    if (!atomic_compare_exchange_strong(&cap_dev, &d, -1)) return;  // (the other thread ended it)
+    int k[BIND_COMBO], n = bind_capture_keys(k);
+    if (n) assign_keys(cap_slot, k, n);
+    else result(4, BIND_DEV_KEY, cap_slot, -1);
 }
 
 bool bind_capture_active(int *dev, int *slot, int *ms_left) {
     int d = cap_dev;
-    if (d >= 0 && SDL_GetTicks() >= cap_deadline) { result(4, d, cap_slot, -1); cap_dev = d = -1; }
+    if (d >= 0 && SDL_GetTicks() >= cap_deadline) {
+        if (d == BIND_DEV_KEY) key_capture_finish();
+        else if (atomic_compare_exchange_strong(&cap_dev, &d, -1)) result(4, d, cap_slot, -1);
+        d = cap_dev;
+    }
     if (dev) *dev = d;
     if (slot) *slot = d >= 0 ? cap_slot : -1;
     if (ms_left) *ms_left = d >= 0 ? (int)(cap_deadline - SDL_GetTicks()) : 0;
@@ -272,6 +359,39 @@ static void assign(int dev, int slot, int host) {
     result(other >= 0 ? 2 : 1, dev, slot, other);
 }
 
+static void set_keys(int slot, const int *keys, int n) {  // (the held ones, then the one that completes the combo)
+    memset(g_bind_key_mod[slot], 0, sizeof g_bind_key_mod[slot]);
+    for (int i = 0; i + 1 < n && i < BIND_MODS; i++) g_bind_key_mod[slot][i] = (int16_t)keys[i];
+    g_bind_key[slot] = (int16_t)(n ? keys[n - 1] : 0);
+}
+
+// Bind keys to keyboard `slot`; an input already on the same keys (in any order) takes the slot's old ones (swap).
+// A combo sharing some of them (1, and E + 1) is no conflict: that's what combos are for.
+static void assign_keys(int slot, const int *keys, int n) {
+    int old[BIND_COMBO], nold = bind_key_combo(slot, old), other = -1;
+    for (int i = 0; i < BIND_KEY_COUNT && other < 0 && n; i++) {
+        int k[BIND_COMBO], nk = bind_key_combo(i, k);
+        if (i != slot && same_keys(k, nk, keys, n)) other = i;
+    }
+    if (other >= 0) set_keys(other, old, nold);
+    set_keys(slot, keys, n);
+    char a[96], b[96];
+    LOG("[input] keyboard %s -> %s%s%s%s\n", k_names[slot], bind_key_combo_name(slot, a, sizeof a),
+        other >= 0 ? " (swapped with " : "", other >= 0 ? k_names[other] : "", other >= 0 ? ")" : "");
+    if (other >= 0) LOG("[input]   %s -> %s\n", k_names[other], bind_key_combo_name(other, b, sizeof b));
+    result(other >= 0 ? 2 : 1, BIND_DEV_KEY, slot, other);
+}
+
+void bind_reset_slot(int dev, int slot) {
+    if (slot < 0 || slot >= (dev == BIND_DEV_PAD ? BIND_PAD_COUNT : BIND_KEY_COUNT) || bind_is_default_slot(dev, slot)) return;
+    if (dev == BIND_DEV_PAD) { assign(dev, slot, def_pad(slot)); return; }
+    int k = k_def_key[slot];
+    if (k) { assign_keys(slot, &k, 1); return; }
+    set_keys(slot, NULL, 0);  // (no key by default)
+    LOG("[input] keyboard %s -> (none)\n", k_names[slot]);
+    result(1, BIND_DEV_KEY, slot, -1);
+}
+
 bool bind_capture_event(const SDL_Event *e) {
     int dev = cap_dev;
     if (dev < 0) return false;
@@ -284,10 +404,18 @@ bool bind_capture_event(const SDL_Event *e) {
         if (dev != BIND_DEV_KEY || e->key.scancode == SDL_SCANCODE_F1 || e->key.scancode == SDL_SCANCODE_F8 ||
             e->key.scancode == SDL_SCANCODE_F9 ||
             e->key.scancode == SDL_SCANCODE_F11 || e->key.scancode >= SDL_SCANCODE_COUNT) return true;
-        cap_dev = -1;
-        assign(dev, cap_slot, e->key.scancode);
+        SDL_LockSpinlock(&cap_lock);
+        cap_press(e->key.scancode);  // (the countdown's end takes them: bind_capture_active)
+        SDL_UnlockSpinlock(&cap_lock);
         return true;
-    case SDL_EVENT_KEY_UP: case SDL_EVENT_TEXT_INPUT:
+    case SDL_EVENT_KEY_UP:
+        if (dev == BIND_DEV_KEY && e->key.scancode < SDL_SCANCODE_COUNT) {
+            SDL_LockSpinlock(&cap_lock);
+            cap_release(e->key.scancode);
+            SDL_UnlockSpinlock(&cap_lock);
+        }
+        return true;
+    case SDL_EVENT_TEXT_INPUT:
         return true;
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
         // Home / Guide opens the menu; a keyboard capture ignores the controller (it times out, or Esc)
@@ -297,16 +425,20 @@ bool bind_capture_event(const SDL_Event *e) {
         return true;
     case SDL_EVENT_GAMEPAD_BUTTON_UP:
         return true;
-    case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_WHEEL:
-        // the keyboard column takes mouse buttons and the wheel (the click that began the capture came before)
-        if (dev != BIND_DEV_KEY) return true;
-        if (e->type == SDL_EVENT_MOUSE_WHEEL && e->wheel.y == 0) return true;
-        if (e->type == SDL_EVENT_MOUSE_BUTTON_DOWN && (e->button.button < 1 || e->button.button > 5)) return true;
-        cap_dev = -1;
-        assign(dev, cap_slot, e->type == SDL_EVENT_MOUSE_WHEEL ? (e->wheel.y > 0 ? BIND_WHEEL_UP : BIND_WHEEL_DOWN)
-                                                                : BIND_MOUSE_LEFT + e->button.button - 1);
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP:
+        // the keyboard column takes mouse buttons as keys (the click that began the capture came before)
+        if (dev != BIND_DEV_KEY || e->button.button < 1 || e->button.button > 5) return true;
+        SDL_LockSpinlock(&cap_lock);
+        if (e->type == SDL_EVENT_MOUSE_BUTTON_DOWN) cap_press(BIND_MOUSE_LEFT + e->button.button - 1);
+        else cap_release(BIND_MOUSE_LEFT + e->button.button - 1);
+        SDL_UnlockSpinlock(&cap_lock);
         return true;
-    case SDL_EVENT_MOUSE_BUTTON_UP:
+    case SDL_EVENT_MOUSE_WHEEL:  // and the wheel: a notch is pressed and let go at once, so it ends the capture
+        if (dev != BIND_DEV_KEY || e->wheel.y == 0) return true;
+        SDL_LockSpinlock(&cap_lock);
+        cap_press(e->wheel.y > 0 ? BIND_WHEEL_UP : BIND_WHEEL_DOWN);
+        SDL_UnlockSpinlock(&cap_lock);
+        key_capture_finish();
         return true;
     case SDL_EVENT_GAMEPAD_AXIS_MOTION:
         if (dev == BIND_DEV_PAD && e->gaxis.value > 16000 &&
@@ -326,7 +458,17 @@ bool bind_capture_event(const SDL_Event *e) {
 static bool keys_fps;
 
 bool bind_settings_load(const char *key, const char *val) {
-    if (!strcmp(key, "bind_keys")) { keys_fps = !strcmp(val, "fps"); return true; }
+    if (!strcmp(key, "bind_keys")) {  // (the keyboard's lines follow: the defaults, then those)
+        keys_fps = !strcmp(val, "fps");
+        if (keys_fps) memcpy(g_bind_key, k_def_key, sizeof g_bind_key), memset(g_bind_key_mod, 0, sizeof g_bind_key_mod);
+        return true;
+    }
+    int mod = !strncmp(key, "bind_keymod1_", 13) ? 1 : !strncmp(key, "bind_keymod2_", 13) ? 2 : 0;
+    if (mod) {  // a combo's other keys (BIND_MODS)
+        int i = keys_fps ? bind_slot_from_name(key + 13) : -1;
+        if (i >= 0) g_bind_key_mod[i][mod - 1] = (int16_t)(strcmp(val, "none") ? bind_key_from_name(val) : 0);
+        return true;
+    }
     bool pad = !strncmp(key, "bind_pad_", 9), kb = !strncmp(key, "bind_key_", 9);
     if (!pad && !kb) return false;
     if (kb && !keys_fps) {
@@ -352,7 +494,10 @@ void bind_settings_save(void (*put)(void *ctx, const char *fmt, ...), void *ctx)
         if (g_bind_pad[i] != def_pad(i) && g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT)
             put(ctx, "bind_pad_%s = %s\n", k_ini[i], k_pad_ini[g_bind_pad[i]]);
     put(ctx, "bind_keys = fps\n");
-    for (int i = 0; i < BIND_KEY_COUNT; i++)
-        if (g_bind_key[i] != k_def_key[i])
-            put(ctx, "bind_key_%s = %s\n", k_ini[i], g_bind_key[i] ? bind_key_label(g_bind_key[i]) : "none");
+    for (int i = 0; i < BIND_KEY_COUNT; i++) {
+        if (bind_is_default_slot(BIND_DEV_KEY, i)) continue;
+        put(ctx, "bind_key_%s = %s\n", k_ini[i], g_bind_key[i] ? bind_key_label(g_bind_key[i]) : "none");
+        for (int m = 0; m < BIND_MODS; m++)
+            if (g_bind_key_mod[i][m]) put(ctx, "bind_keymod%d_%s = %s\n", m + 1, k_ini[i], bind_key_label(g_bind_key_mod[i][m]));
+    }
 }

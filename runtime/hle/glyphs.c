@@ -168,7 +168,7 @@ uint32_t glyph_generation(void) { return g_gen; }
 // The game's paused messages (an item's "acquired" text: game_message_screen) count as play: their text says what
 // to press in play ("Press [Y] to activate Morph Ball mode" showed the button labelled Y - a PlayStation controller's
 // triangle - where morphing is the left button, square; issue #52). input.c lets the A-labelled button confirm there too.
-static int16_t g_pad_now[BIND_PAD_COUNT], g_key_now[BIND_PAD_COUNT];
+static int16_t g_pad_now[BIND_PAD_COUNT], g_key_now[BIND_PAD_COUNT], g_mod_now[BIND_PAD_COUNT][BIND_MODS];
 static _Atomic bool g_now_set;  // (before the first glyphs_frame an icon stays the game's; that frame redraws it)
 
 void glyphs_frame(void) {  // what the icons depend on: the set, the bindings, menu or play; changed -> redraw
@@ -184,20 +184,21 @@ void glyphs_frame(void) {  // what the icons depend on: the set, the bindings, m
         for (int sc = SDL_SCANCODE_COUNT - 1; sc > 0; sc--)
             if (input_menu_key(sc) >= 0 && input_menu_key(sc) < BIND_PAD_COUNT) menu_for[input_menu_key(sc)] = sc;
     }
-    int16_t pad_now[BIND_PAD_COUNT], key_now[BIND_PAD_COUNT];
+    int16_t pad_now[BIND_PAD_COUNT], key_now[BIND_PAD_COUNT], mod_now[BIND_PAD_COUNT][BIND_MODS] = {{0}};
     for (int i = 0; i < BIND_PAD_COUNT; i++) {
         pad_now[i] = menu && g_settings.face_buttons == FACE_LABELS && i <= BIND_Y ? (int16_t)bind_label_host(i)
                                                                                     : g_bind_pad[i];
         int k = g_bind_key[i];
         if (menu && menu_for[i]) k = menu_for[i];
         else if (menu && input_menu_key(k) >= 0) k = 0;  // (none: the game's own icon)
+        else memcpy(mod_now[i], g_bind_key_mod[i], sizeof mod_now[i]);  // (a combo: E + 1)
         key_now[i] = (int16_t)k;
     }
     uint64_t h = 0xcbf29ce484222325ull;
 #define MIX(v) (h = (h ^ (uint64_t)(v)) * 0x100000001b3ull)
     MIX(set);
-    for (int i = 0; i < BIND_PAD_COUNT; i++) MIX(pad_now[i]), MIX(key_now[i]);
-    for (int i = BIND_PAD_COUNT; i < BIND_KEY_COUNT; i++) MIX(g_bind_key[i]);
+    for (int i = 0; i < BIND_PAD_COUNT; i++) MIX(pad_now[i]), MIX(key_now[i]), MIX(mod_now[i][0]), MIX(mod_now[i][1]);
+    for (int i = BIND_PAD_COUNT; i < BIND_KEY_COUNT; i++) MIX(g_bind_key[i]), MIX(g_bind_key_mod[i][0]), MIX(g_bind_key_mod[i][1]);
 #undef MIX
     static int logged = -1;  // (the play log says which set is shown, as it changes: bug reports)
     if (set != logged) {
@@ -212,6 +213,7 @@ void glyphs_frame(void) {  // what the icons depend on: the set, the bindings, m
         g_set = set;
         memcpy(g_pad_now, pad_now, sizeof pad_now);
         memcpy(g_key_now, key_now, sizeof key_now);
+        memcpy(g_mod_now, mod_now, sizeof mod_now);
         g_now_set = true;
         g_gen++;
     }
@@ -271,8 +273,45 @@ static void key_label(char *out, size_t n, int sc) {
     snprintf(out, n, "%s", nm);
 }
 
-// a key or mouse button (a keyboard binding value): false if none is bound
-static bool key_symbol(GaSpec *s, int key) {
+// a key in a combo's label: at most `max` characters
+static void short_label(char *out, size_t n, int key, int max) {
+    static const struct { int k; const char *t; } names[] = {
+        {BIND_MOUSE_LEFT, "LMB"}, {BIND_MOUSE_RIGHT, "RMB"}, {BIND_MOUSE_MIDDLE, "MMB"}, {BIND_MOUSE_X1, "M4"},
+        {BIND_MOUSE_X2, "M5"}, {BIND_WHEEL_UP, "WhU"}, {BIND_WHEEL_DOWN, "WhD"}, {SDL_SCANCODE_UP, "^"},
+        {SDL_SCANCODE_DOWN, "v"}, {SDL_SCANCODE_LEFT, "<"}, {SDL_SCANCODE_RIGHT, ">"}, {SDL_SCANCODE_LSHIFT, "Sh"},
+        {SDL_SCANCODE_RSHIFT, "Sh"}, {SDL_SCANCODE_LCTRL, "Ctl"}, {SDL_SCANCODE_RCTRL, "Ctl"}, {SDL_SCANCODE_SPACE, "Spc"},
+        {SDL_SCANCODE_RETURN, "Ent"},
+    };
+    char l[16] = "?";
+    bool named = false;
+    for (size_t i = 0; i < sizeof names / sizeof *names && !named; i++)
+        if (names[i].k == key) snprintf(l, sizeof l, "%s", names[i].t), named = true;
+    if (!named && key > 0 && key < SDL_SCANCODE_COUNT) key_label(l, sizeof l, key);
+    snprintf(out, n, "%.*s", max, l);
+}
+
+// a combo (the keys held, then `key`) on one key's top: "E+1", "Sh+F" - the held keys cut to one character if the
+// whole is too long ("C+S+1")
+static void combo_label(char *out, size_t n, int key, const int16_t *mods) {
+    for (int pass = 0; pass < 2; pass++) {
+        size_t at = 0;
+        char l[16];
+        for (int m = 0; m < BIND_MODS; m++)
+            if (mods[m]) short_label(l, sizeof l, mods[m], pass ? 1 : 3), at += (size_t)snprintf(out + at, at < n ? n - at : 0, "%s+", l);
+        short_label(l, sizeof l, key, 3);
+        at += (size_t)snprintf(out + at, at < n ? n - at : 0, "%s", l);
+        if (at < n) return;
+    }
+}
+
+// a key or mouse button (a keyboard binding value), with the keys held with it (mods: a combo, or NULL): false if
+// none is bound
+static bool key_symbol(GaSpec *s, int key, const int16_t *mods) {
+    if (key > 0 && mods && mods[0]) {
+        s->sym = GS_KEY;
+        combo_label(s->text, sizeof s->text, key, mods);
+        return true;
+    }
     switch (key) {
     case 0: return false;
     case BIND_MOUSE_LEFT: s->sym = GS_MOUSE, s->dir = GM_LEFT; return true;
@@ -296,11 +335,17 @@ static bool key_symbol(GaSpec *s, int key) {
 
 // four keys standing in for a stick or the d-pad (labels: one or two chars; the arrow keys "^" "v" "<" ">", drawn as
 // arrows): up, left, down, right
-static void keys4_of(GaSpec *s, const int k[4]) {
+// (a combo's key: the first held key's first character before it, "E1" for E + 1)
+static void keys4_of(GaSpec *s, const int k[4], const int16_t *const mods[4]) {
     s->sym = GS_KEYS4;
     for (int i = 0; i < 4; i++) {
         char l[16];
-        if (k[i] == SDL_SCANCODE_UP || k[i] == SDL_SCANCODE_DOWN || k[i] == SDL_SCANCODE_LEFT || k[i] == SDL_SCANCODE_RIGHT)
+        if (k[i] > 0 && mods[i] && mods[i][0]) {
+            char m[4];
+            short_label(m, sizeof m, mods[i][0], 1);
+            short_label(l + 1, sizeof l - 1, k[i], 1);
+            l[0] = m[0];
+        } else if (k[i] == SDL_SCANCODE_UP || k[i] == SDL_SCANCODE_DOWN || k[i] == SDL_SCANCODE_LEFT || k[i] == SDL_SCANCODE_RIGHT)
             snprintf(l, sizeof l, "%s", k[i] == SDL_SCANCODE_UP ? "^" : k[i] == SDL_SCANCODE_DOWN ? "v" : k[i] == SDL_SCANCODE_LEFT ? "<" : ">");
         else if (k[i] > 0 && k[i] < SDL_SCANCODE_COUNT) key_label(l, sizeof l, k[i]);
         else snprintf(l, sizeof l, " ");
@@ -309,7 +354,8 @@ static void keys4_of(GaSpec *s, const int k[4]) {
 }
 static void keys4(GaSpec *s, int up, int left, int down, int right) {  // (a stick's four bindings)
     const int k[4] = {g_bind_key[up], g_bind_key[left], g_bind_key[down], g_bind_key[right]};
-    keys4_of(s, k);
+    const int16_t *const m[4] = {g_bind_key_mod[up], g_bind_key_mod[left], g_bind_key_mod[down], g_bind_key_mod[right]};
+    keys4_of(s, k, m);
 }
 
 // The icon's own label in the Switch set, to tell whether a Switch controller's icon would change at all
@@ -323,7 +369,7 @@ static bool icon_spec(const GameIcon *ic, int set, GaSpec *s) {
     // is let go)
     if (ic->shape == GA_STICK) {
         if (set != ICONS_KEYBOARD) return false;
-        if (ic->extra == 1) return key_symbol(s, g_key_now[ic->input]);  // (pressing it in)
+        if (ic->extra == 1) return key_symbol(s, g_key_now[ic->input], g_mod_now[ic->input]);  // (pressing it in)
         if (ic->input == BIND_LSTICK) keys4(s, BIND_LS_UP, BIND_LS_LEFT, BIND_LS_DOWN, BIND_LS_RIGHT);
         else keys4(s, BIND_RS_UP, BIND_RS_LEFT, BIND_RS_DOWN, BIND_RS_RIGHT);
         return true;
@@ -332,13 +378,14 @@ static bool icon_spec(const GameIcon *ic, int set, GaSpec *s) {
         if (set == ICONS_SWITCH) return false;
         if (set == ICONS_KEYBOARD) {
             const int k[4] = {g_key_now[BIND_UP], g_key_now[BIND_LEFT], g_key_now[BIND_DOWN], g_key_now[BIND_RIGHT]};
-            keys4_of(s, k);
+            const int16_t *const m[4] = {g_mod_now[BIND_UP], g_mod_now[BIND_LEFT], g_mod_now[BIND_DOWN], g_mod_now[BIND_RIGHT]};
+            keys4_of(s, k, m);
             return true;
         }
         s->sym = GS_DPAD, s->dir = -1;  // (no arm lit)
         return true;
     }
-    if (set == ICONS_KEYBOARD) return key_symbol(s, g_key_now[ic->input]);
+    if (set == ICONS_KEYBOARD) return key_symbol(s, g_key_now[ic->input], g_mod_now[ic->input]);
     if (set == ICONS_WII) {  // (input.c wiimote_buttons: + = X, 2 = Plus, 1 = Minus, C = Y, Z = ZL; A, B and the
                              // d-pad are themselves; L, R and ZR have nothing)
         if (ic->shape == GA_DOTS) { s->sym = GS_DPAD, s->dir = ic->extra; return true; }  // (the remote's cross)
