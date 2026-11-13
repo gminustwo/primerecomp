@@ -4479,6 +4479,26 @@ static bool edge_overlay(uint64_t fs_hash) {
     return false;
 }
 
+// Films on the visor's glass that cover the 16:9 screen with a mesh of their own, by fragment shader hash: the whole
+// draw is stretched sideways to the window's width (draw_ hud_k), wherever the HUD goes - the glass is the whole
+// window. The steam that fogs the visor (CScriptSteamMP1, the canyon past the landing site's waterfalls: a 144-vertex
+// grid with two 512x512 textures) stopped at the 16:9 box's sides, the scene clear beside it (a player's report,
+// 2026-11-13). Too many vertices for edge_quad, and its inner vertices would have stayed put under the edge stretch.
+static bool visor_film(uint64_t fs_hash) {
+    return fs_hash == 0x8ae494b9cc474760ull;
+}
+
+// The visor's glass: draws between the scene and the HUD, depth range 5/1024 .. 10/1024 (the helmet's frame 0 ..
+// 0.625/1024, the HUD's pieces up to 5/1024) - Samus' face reflected in it (CSamusFaceReflectionMP1, lit by an
+// explosion close by: a missile at a wall), the steam (visor_film). Not HUD pieces: no side placement, no helmet-frame
+// stretch, no edge stretch by shader (edge_overlay: those are the frame's; a small quad still gets it - a fade over the
+// whole glass). The face is several draws of one model - two of them with the helmet frame's shader, taken for the
+// frame (helmet_frame: 2304 / 504 vertices) and stretched 1.34 times at 21:9 while the rest stayed in the box: a
+// torn face, a jagged seam down its middle (a player's report, 2026-11-13). Now all in the box, as at 16:9.
+static bool on_glass(void) {
+    return st.depth_range[0][0] > 4.9f / 1024 && st.depth_range[0][1] < 10.1f / 1024;
+}
+
 // The helmet's frame in play (draw_ hud_k): a 3D model through the HUD's camera, drawn with the pause backdrop's
 // fragment shader (edge_overlay), the screen's width (7314 vertices: by count, not run through hud_side - 0.24 ms a
 // frame - as the backdrop is a few quads)
@@ -4942,7 +4962,8 @@ static void draw_(CmdRec *r, bool indexed) {
     // instead (hud_k): the visor's rim, the bar across the top and the curves at the bottom - a 7314-vertex model the
     // screen's width (helmet_frame), and its dark outline, a mesh 1.29 times the screen's width whose ends stay off a
     // 16:9 screen as the HUD sways (+-0.11): any draw wider than the box. Stretched, their ends stay off screen too,
-    // and the pause screens (pause_fill) open without the frame changing width.
+    // and the pause screens (pause_fill) open without the frame changing width. Films on the visor's glass (visor_film:
+    // its steam) are stretched across the whole window, whatever the HUD setting.
     HudSplit hud_split = {0};
     float hud_dx = 0, hud_far = 0, hud_k = 1;  // (hud_far: the shift to a side)
     int hud = 0;
@@ -4959,7 +4980,9 @@ static void draw_(CmdRec *r, bool indexed) {
         float u = fminf(pass_sx, pass_sy), bw = st.rt.color[0]->width * u, bh = st.rt.color[0]->height * u;
         float tw = place == HUD_21_9 ? fminf((float)pw, bh * 21 / 9) : (float)pw;  // (the width the HUD spans)
         hud_far = floorf((tw - bw) * 0.5f);
-        if (place != HUD_MIDDLE && hud_far >= 1 && game_in_play()) {
+        if (visor_film(g_cur_fs_hash)) hud_k = (float)pw / bw;
+        else if (on_glass()) {}  // (in the box, every draw of it alike)
+        else if (place != HUD_MIDDLE && hud_far >= 1 && game_in_play()) {
             if (helmet_frame(r)) hud_k = tw / bw;
             else if (!edge_overlay(g_cur_fs_hash)) {
                 hud = hud_side(pr, r, indexed, &hud_split);
@@ -4972,11 +4995,11 @@ static void draw_(CmdRec *r, bool indexed) {
         renderer_texture_presented(st.rt.color[0]))
         LOG("[draw]   wide: %s\n", !boxed ? "fills the window" : hud == -1 ? "boxed, at the left side" :
                                    hud == 1 ? "boxed, at the right side" : hud >= 2 ? "boxed, in parts to the sides" :
-                                   hud_k != 1 ? "boxed, stretched across the HUD's span" : "boxed (16:9 middle)");
+                                   hud_k != 1 ? "boxed, stretched sideways (the HUD's span, or the window)" : "boxed (16:9 middle)");
     float edge_k = 1;
     if (boxed && !hud && hud_k == 1 && !pr->has_gs && !pr->gs_emul && pass_sx > pass_sy && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
         st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height &&
-        (edge_overlay(g_cur_fs_hash) || edge_quad(r)) && !shows_movie(pr)) {
+        ((edge_overlay(g_cur_fs_hash) && !on_glass()) || edge_quad(r)) && !shows_movie(pr)) {
         ShaderKey vk2 = vkey;
         vk2.x_mode |= 2;
         Prog *p2 = get_program(st.program, &vk2, &fkey, cls0);
