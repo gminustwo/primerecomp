@@ -349,6 +349,108 @@ static void rt_weapon_update(Cpu *c) {
     }
 }
 
+// ---- Particle effects at 90 and 120 fps (issue #17: the arm cannon's muzzle flash)
+// A particle system (CElementGen) runs in whole 1/60 s frames. CElementGen::Update (a virtual call: the jobs that
+// update effects make it) adds the time it's given to the system's time, kept in frames (+0x30, a double: dt * 60 to
+// 1/256 of a frame), and runs a frame - where the system emits - each time that passes a whole number (InternalUpdate;
+// the frame count is +0x2c). At 60 a new system's first update adds a whole frame, so its frame 0 runs at once. At
+// 120 the first adds half a frame and frame 0 waits for the second update; at 90 likewise. So every new effect came a
+// tick late - the Power Beam's flash two frames after its shot, not with it - and one the game stopped within that
+// tick never emitted at all: the muzzle flash (CGunWeaponMP1 +0x588, a CEffectModule started for each shot by
+// CGunWeaponMP1::Fire) is stopped by CGunWeaponMP1::Reset when the fire button comes up, and letting go as the last
+// shot of a rapid-fire burst leaves stops its flash the next tick (CEffectModule::Stop: emission off) - at 120, before
+// its frame 0. A player's report: "Third muzzle flash on power beam doesn't show on 120 fps mode".
+// A new system (+0xa0 bit 12, its first update still to come, at frame 0 and time 0) now starts that update's time
+// short of a whole frame, so frame 0 runs in its first update as at 60; its later frames keep their spacing in time.
+// At 60 nothing changes. (A system with its own time scale, PSTS, steps by more or less than dt * 60: one slower than
+// that starts as before, one faster still runs frame 0 at once.)
+// (debug) LARECOMP_LOG_MUZZLE=1: each shot (CPowerBeamMP1::Fire), its flash starting and stopping (CEffectModule::Start
+// / Stop) and each update of the flash's systems, with their frame, time, flags (+0xa0) and the weapon's muzzle effect
+// index (+0x5f0: 0 the shot's flash is drawn, 1 the charge's) - "[muzzle]".
+static GuestFn g_gen_update, g_muzzle_start, g_muzzle_stop, g_beam_fire;
+static int g_log_muzzle = -1;
+static uint64_t g_muzzle_mod, g_muzzle_weapon;
+static double ldd(uint64_t a) { double d; memcpy(&d, (const void *)(uintptr_t)a, 8); return d; }
+
+static int gen_desc(char *b, size_t n, uint64_t g) {
+    if (!GUEST_PTR_OK(g)) return snprintf(b, n, " -");
+    return snprintf(b, n, " %llx[f%d t%.3f fl%04x]", (unsigned long long)g & 0xffffff, (int)LD32(g + 0x2c),
+                    ldd(g + 0x30), LD16(g + 0xa0));
+}
+
+static void muzzle_log(const char *what) {
+    uint64_t m = g_muzzle_mod, w = g_muzzle_weapon;
+    if (!GUEST_PTR_OK(m)) return;
+    char b[512];
+    int k = snprintf(b, sizeof b, "[muzzle] tick %llu %s: idx %d active", (unsigned long long)game_ticks_total(), what,
+                     GUEST_PTR_OK(w) ? (int)LD32(w + 0x5f0) : -1);
+    k += gen_desc(b + k, sizeof b - k, LD64(m + 0x10));
+    int nf = (int)LD32(m + 0x20);
+    uint64_t arr = LD64(m + 0x28);
+    k += snprintf(b + k, sizeof b - k, " fading %d:", nf);
+    for (int i = 0; i < nf && i < 4 && GUEST_PTR_OK(arr); i++) k += gen_desc(b + k, sizeof b - k, LD64(arr + 16 * i));
+    LOG("%s\n", b);
+}
+
+static bool muzzle_gen(uint64_t g) {  // one of the flash module's systems (active or fading)
+    uint64_t m = g_muzzle_mod;
+    if (!GUEST_PTR_OK(m)) return false;
+    bool r = LD64(m + 0x10) == g;
+    int nf = (int)LD32(m + 0x20);
+    uint64_t arr = LD64(m + 0x28);
+    for (int i = 0; i < nf && i < 4 && GUEST_PTR_OK(arr); i++) r |= LD64(arr + 16 * i) == g;
+    return r;
+}
+
+static void rt_gen_update(Cpu *c) {
+    uint64_t g = c->x[0];
+    double dt;
+    uint64_t db = (uint64_t)c->v[0];
+    memcpy(&dt, &db, 8);
+    static int own = -1;  // (debug) LARECOMP_PARTICLE_OWN_START=1: the game's own first frame, as before
+    if (own < 0) own = getenv("LARECOMP_PARTICLE_OWN_START") && atoi(getenv("LARECOMP_PARTICLE_OWN_START"));
+    if (!own && rt_sim_step_bits(0) != 0x3c888889u && (LD16(g + 0xa0) & 0x1000) && LD32(g + 0x2c) == 0 &&
+        ldd(g + 0x30) == 0) {
+        double frames = floor(dt * 60 * 256 + 0.5) / 256;  // (CParticleGen::CalculateUpdateTicksRequired's rounding)
+        if (frames > 0 && frames < 1) {
+            double t = 1 - frames;
+            memcpy((void *)(uintptr_t)(g + 0x30), &t, 8);
+        }
+    }
+    if (g_log_muzzle <= 0 || !muzzle_gen(g)) {
+        g_gen_update(c);
+        return;
+    }
+    char b0[96], b1[96];
+    gen_desc(b0, sizeof b0, g);
+    g_gen_update(c);
+    gen_desc(b1, sizeof b1, g);
+    LOG("[muzzle] tick %llu update dt %.5f:%s ->%s\n", (unsigned long long)game_ticks_total(), dt, b0, b1);
+}
+
+static void rt_muzzle_start(Cpu *c) {
+    bool ours = c->x[30] == MAIN_BASE + 0xca2ff4;  // (from CGunWeaponMP1::Fire, a normal shot: the weapon in x20)
+    if (ours) g_muzzle_mod = c->x[0], g_muzzle_weapon = c->x[20];
+    g_muzzle_start(c);
+    if (ours) muzzle_log("flash started");
+}
+
+static void rt_muzzle_stop(Cpu *c) {
+    bool ours = c->x[0] == g_muzzle_mod;
+    if (ours)
+        LOG("[muzzle] tick %llu flash stopped (behavior %d, from %llx)\n", (unsigned long long)game_ticks_total(),
+            (int)c->x[1], (unsigned long long)c->x[30]);
+    g_muzzle_stop(c);
+    if (ours) muzzle_log("after the stop");
+}
+
+static void rt_beam_fire(Cpu *c) {
+    extern uint64_t renderer_present_count(void);
+    LOG("[muzzle] tick %llu shot, charge stage %d (frame %llu)\n", (unsigned long long)game_ticks_total(), (int)c->x[2],
+        (unsigned long long)renderer_present_count());
+    g_beam_fire(c);
+}
+
 // ---- The crosshair (Display tab: Crosshair; issue #63)
 // The targeting manager (CTargetingManagerMP1::Draw) draws each of the visor's reticles through its virtual Draw, so
 // the runtime steps in there (hle_override): with the crosshair off, the aiming ones aren't drawn - the Combat Visor's
@@ -388,6 +490,26 @@ void game_hooks_init(void) {  // (each boot, after dispatch_init)
     static bool thooked;
     g_fp_think = dispatch_lookup(t);
     if (g_fp_think && !thooked) hle_override(t, rt_fp_think, "CFirstPersonCameraMP1::Think"), thooked = true;
+    {   // particle systems' first frame at 90 and 120 fps (and LARECOMP_LOG_MUZZLE)
+        uint64_t u = guest_sym("_ZN11CElementGen6UpdateEdN4rstl14enum_bit_fieldIN9NParticle11EUpdateFlagEhLS3_8EEE");
+        static bool uhooked;
+        g_gen_update = dispatch_lookup(u);
+        if (g_gen_update && !uhooked) hle_override(u, rt_gen_update, "CElementGen::Update"), uhooked = true;
+    }
+    if (g_log_muzzle < 0) g_log_muzzle = getenv("LARECOMP_LOG_MUZZLE") && atoi(getenv("LARECOMP_LOG_MUZZLE"));
+    if (g_log_muzzle) {
+        uint64_t s = guest_sym("_ZN13CEffectModule5StartERK10CEntityGOCR13CStateManagerN13NScriptEffect14EStartBehaviorERKN4rstl13intrusive_ptrI21CParticleExternalDataS9_EEi");
+        uint64_t st = guest_sym("_ZN13CEffectModule4StopEN13NScriptEffect13EStopBehaviorE");
+        uint64_t f = guest_sym("_ZN13CPowerBeamMP14FireEfbffN15CPlayerStateMP112EChargeStageERK12CTransform4fR13CStateManagerR10CEntityMP115CValueVersionIdIjjtLj16ELj16EEf");
+        static bool mhooked;
+        g_muzzle_start = dispatch_lookup(s), g_muzzle_stop = dispatch_lookup(st), g_beam_fire = dispatch_lookup(f);
+        if (g_muzzle_start && g_muzzle_stop && g_beam_fire && !mhooked) {
+            hle_override(s, rt_muzzle_start, "CEffectModule::Start");
+            hle_override(st, rt_muzzle_stop, "CEffectModule::Stop");
+            hle_override(f, rt_beam_fire, "CPowerBeamMP1::Fire");
+            mhooked = true;
+        }
+    }
     if (getenv("LARECOMP_LOG_FLUID")) {
         uint64_t f = guest_sym("_ZN10CPlayerMP112FluidFXThinkEN9CActorMP111EFluidStateER15CScriptWaterMP1R13CStateManager");
         static bool fhooked;
