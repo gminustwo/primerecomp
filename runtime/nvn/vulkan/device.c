@@ -17,6 +17,7 @@
 #include "../../ui/menu.h"
 #include "vk.h"
 #include "../output_scale.h"
+#include "../dlss.h"
 #include "../renderer.h"
 
 VkG g_vk;
@@ -46,7 +47,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cb(VkDebugUtilsMessageSeverityFlagBi
 static void create_instance(void) {
     Uint32 n_sdl = 0;
     const char *const *sdl_ext = SDL_Vulkan_GetInstanceExtensions(&n_sdl);
-    const char *ext[16];
+    const char *ext[24];
     uint32_t n_ext = 0;
     for (Uint32 i = 0; i < n_sdl && n_ext < 14; i++) ext[n_ext++] = sdl_ext[i];
     VkInstanceCreateFlags flags = 0;
@@ -76,6 +77,21 @@ static void create_instance(void) {
                 ext[n_ext++] = VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME;
                 g_vk.colorspace_ext = true;
             }
+        free(ie);
+    }
+    {   // NVIDIA DLSS (dlss.cpp): the instance extensions NGX asks for, the ones this loader offers
+        const char *dl[8];
+        uint32_t ndl = dlss_instance_extensions(dl, 8);
+        uint32_t n = 0;
+        vkEnumerateInstanceExtensionProperties(NULL, &n, NULL);
+        VkExtensionProperties *ie = calloc(n ? n : 1, sizeof *ie);
+        vkEnumerateInstanceExtensionProperties(NULL, &n, ie);
+        for (uint32_t k = 0; k < ndl && n_ext < 20; k++) {
+            bool have = false, listed = false;
+            for (uint32_t i = 0; i < n; i++) have |= !strcmp(ie[i].extensionName, dl[k]);
+            for (uint32_t i = 0; i < n_ext; i++) listed |= !strcmp(ext[i], dl[k]);
+            if (have && !listed) ext[n_ext++] = dl[k];
+        }
         free(ie);
     }
     bool validate = getenv("LARECOMP_VK_VALIDATION") != NULL;
@@ -193,7 +209,7 @@ static void create_device(void) {
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, NULL);
     VkExtensionProperties *ep = calloc(ne, sizeof *ep);
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);
-    const char *ext[12];
+    const char *ext[24];
     uint32_t n_ext = 0;
     ext[n_ext++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     g_vk.custom_border = has_ext(ep, ne, VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
@@ -227,6 +243,22 @@ static void create_device(void) {
         ext[n_ext++] = VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
         ext[n_ext++] = VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME;
     }
+    // NVIDIA DLSS (dlss.cpp): the device extensions NGX asks for; DLSS is left out when this GPU lacks one of them
+    bool dlss_exts = false;
+    {
+        const char *dl[12];
+        uint32_t ndl = dlss_device_extensions(g_vk.inst, g_vk.phys, dl, 12);
+        bool all = ndl > 0;
+        for (uint32_t k = 0; k < ndl; k++) all &= has_ext(ep, ne, dl[k]);
+        if (all && n_ext + ndl <= 24) {
+            for (uint32_t k = 0; k < ndl; k++) {
+                bool listed = false;
+                for (uint32_t i = 0; i < n_ext; i++) listed |= !strcmp(ext[i], dl[k]);
+                if (!listed) ext[n_ext++] = dl[k];
+            }
+            dlss_exts = true;
+        } else if (ndl) LOG("[dlss] the GPU lacks Vulkan extensions NGX needs: DLSS stays off\n");
+    }
     free(ep);
     // gl_Layer from vertex shaders (exec.c: passthrough geometry shaders that only pick the layer)
     g_vk.output_layer = have12.shaderOutputLayer && have12.shaderOutputViewportIndex;
@@ -247,7 +279,8 @@ static void create_device(void) {
                                             .uniformAndStorageBuffer8BitAccess = VK_TRUE, .storageBuffer8BitAccess = VK_TRUE,
                                             .scalarBlockLayout = VK_TRUE, .shaderOutputLayer = g_vk.output_layer,
                                             .shaderOutputViewportIndex = g_vk.output_layer,
-                                            .shaderSampledImageArrayNonUniformIndexing = g_vk.tex_nonuniform, .pNext = &f13};
+                                            .shaderSampledImageArrayNonUniformIndexing = g_vk.tex_nonuniform,
+                                            .bufferDeviceAddress = dlss_exts && have12.bufferDeviceAddress, .pNext = &f13};
     VkPhysicalDeviceVulkan11Features f11 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
                                             .storageBuffer16BitAccess = VK_TRUE, .pNext = &f12};
     VkPhysicalDeviceFaultFeaturesEXT ff = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT, .deviceFault = VK_TRUE,
@@ -288,6 +321,7 @@ static void create_device(void) {
                              .pQueueCreateInfos = &qi, .enabledExtensionCount = n_ext, .ppEnabledExtensionNames = ext};
     VK_CHECK(vkCreateDevice(g_vk.phys, &di, NULL, &g_vk.dev));
     vkGetDeviceQueue(g_vk.dev, g_vk.qfam, 0, &g_vk.queue);
+    if (dlss_exts) dlss_init(g_vk.inst, g_vk.phys, g_vk.dev, (void *)vkGetInstanceProcAddr, (void *)vkGetDeviceProcAddr);
 
     VmaAllocatorCreateInfo ai = {.physicalDevice = g_vk.phys, .device = g_vk.dev, .instance = g_vk.inst,
                                  .vulkanApiVersion = VK_API_VERSION_1_3};
