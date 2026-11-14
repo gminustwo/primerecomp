@@ -278,6 +278,7 @@ static void create_device(void) {
     b->geometryShader = h->geometryShader;
     g_vk.geometry = h->geometryShader;
     b->shaderClipDistance = h->shaderClipDistance;
+    g_vk.clip_distance = h->shaderClipDistance;
     b->shaderStorageImageWriteWithoutFormat = h->shaderStorageImageWriteWithoutFormat;  // (SUST: images of any format)
     if (!h->shaderInt64) LOG("[vk] warning: no shaderInt64 (64-bit address math in shaders)\n");
     float prio = 1.0f;

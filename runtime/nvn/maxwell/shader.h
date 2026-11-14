@@ -133,6 +133,9 @@ typedef struct {
                      // [GMAP_MAX].x = count)
 extern uint64_t maxwell_gmem_base, maxwell_gmem_size;
 extern bool maxwell_gmem_window;  // (GLSL) global memory is a window onto the heap: GBase says where (set by the renderer)
+// (GLSL vertex, not before a geometry shader) the clip distances a shader writes (attributes 0x2c0 - 0x2dc) as
+// gl_ClipDistance: the renderer sets it where the device has them (shaderClipDistance); else they're left out as before
+extern bool maxwell_clip_distances;
 // Debug: when translating the shader whose code starts at maxwell_dbg_code, output register
 // maxwell_dbg_reg as captured after the instruction at maxwell_dbg_pc (greyscale, all targets).
 extern const uint8_t *maxwell_dbg_code;
