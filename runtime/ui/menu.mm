@@ -19,6 +19,7 @@ extern "C" bool vk_imgui_backend_init(void);  // runtime/nvn/vulkan/imgui_glue.c
 extern "C" {
 #include "../hle.h"
 #include "../settings.h"
+#include "../nvn/dlss.h"
 #include "../hle/wiimote.h"
 #include "menu.h"
 void input_reset(void);
@@ -536,19 +537,40 @@ static void tab_display(void) {
             else g_settings.res_mode = RES_FIXED, g_settings.res_lines = g_res_lines[ri - 5];
         }
     }
+    // NVIDIA DLSS (runtime/nvn/dlss.h): offered when primerecomp_ngx.dll is next to the executable (Windows) or it was
+    // built in (Linux); it takes over from the upscaler and anti-aliasing below, which stay for when it can't run
+    bool dl_on = false;
+    if (dlss_compiled()) {
+        bool avail = dlss_available();
+        char d[900];
+        snprintf(d, sizeof d,
+                 "NVIDIA's AI upscaling and anti-aliasing, on GeForce RTX graphics cards. It builds each frame from "
+                 "several rendered ones, so a lower internal resolution still looks sharp, and edges are smooth. "
+                 "While it's on it replaces the upscaler and anti-aliasing below. At Match display it only "
+                 "anti-aliases (DLAA).\n\nThe game doesn't tell DLSS how things move, so fast motion can leave "
+                 "trails.\n\nDLSS: %s", dlss_status());
+        if (!avail && !g_settings.dlss) opt_disable_next();
+        opt_toggle("NVIDIA DLSS", &g_settings.dlss, false, d);
+        dl_on = g_settings.dlss && avail;
+    }
     {   // AMD FSR 1 next to bilinear
         static const char *ups[] = {"Bilinear", "AMD FSR 1"};
-        const char *ud = "How the image is scaled up to the window when it renders at a lower resolution. AMD FSR 1: "
-                         "edge-aware upscaling and sharpening, sharper. Bilinear: plain and soft.";
+        char udm[768];
+        snprintf(udm, sizeof udm, "How the image is scaled up to the window when it renders at a lower resolution. AMD FSR 1: "
+                 "edge-aware upscaling and sharpening, sharper. Bilinear: plain and soft.");
         int ui = g_settings.upscaler == UPSCALE_BILINEAR ? 0 : 1;
-        char udm[512];
-        if (g_settings.res_mode == RES_MATCH) {  // (renders at the window's size: nothing to scale up)
-            snprintf(udm, sizeof udm, "%s\n\nNot used at Match display: the game already renders at your display's resolution.", ud);
-            ud = udm;
+        if (dl_on) {
+            size_t n = strlen(udm);
+            snprintf(udm + n, sizeof udm - n, "\n\nNot used while NVIDIA DLSS is on.");
+            opt_disable_next();
+        } else if (g_settings.res_mode == RES_MATCH) {  // (renders at the window's size: nothing to scale up)
+            size_t n = strlen(udm);
+            snprintf(udm + n, sizeof udm - n, "\n\nNot used at Match display: the game already renders at your display's resolution.");
             opt_disable_next();
         }
-        if (opt_choice("Upscaler", &ui, ups, 2, 1, ud)) g_settings.upscaler = ui ? UPSCALE_FSR1 : UPSCALE_BILINEAR;
+        if (opt_choice("Upscaler", &ui, ups, 2, 1, udm)) g_settings.upscaler = ui ? UPSCALE_FSR1 : UPSCALE_BILINEAR;
     }
+    if (dl_on) opt_disable_next();
     static const char *aa[] = {"Off", "SMAA"};
     opt_choice("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,
                "Smooths jagged edges of the game image before it is scaled to the window. SMAA: finds the edges and "

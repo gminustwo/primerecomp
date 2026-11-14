@@ -16,6 +16,7 @@
 #include "../../kernel.h"
 #include "shaders.h"
 #include "vk.h"
+#include "../dlss.h"
 #include "../renderer.h"
 #include "../inflate.h"
 #include "../../settings.h"
@@ -1388,10 +1389,111 @@ static void apply_scissor(void) {
     vkCmdSetScissor(vk_cmd(), 0, 1, &r);
 }
 
+// ---- NVIDIA DLSS (dlss.cpp; Video tab "NVIDIA DLSS"): what the upscaler needs from the frame. The game has no
+// temporal anti-aliasing, so nothing here comes for free:
+// - jitter: the scene passes (a colour target of the game image's size with a depth target, one layer) are drawn
+//   with the viewport shifted by a sub-pixel amount: the same as jittering the projection, without touching a shader.
+// - depth: the biggest depth target drawn into with depth writes this frame. The game clears it for later passes
+//   (the weapon, the HUD), so it is copied (dlss_snapshot) just before the first clear that follows drawing.
+// - reverse-Z: voted per frame from the depth function of the draws that write depth (GREATER / GEQUAL: 1 at the
+//   camera) and from the clear value (0 = reverse-Z); DLSS gets the DepthInverted flag. LARECOMP_DLSS_DEPTH=
+//   normal|inverted overrides, and the verdict is in the log ("[dlss] depth ...").
+// - motion vectors: the game makes none, so DLSS gets zeros (an image that is still is exact; a moving camera ghosts).
+// LARECOMP_DLSS_JITTER_FLIP=1 negates the jitter DLSS is told, if the image shimmers or doubles while still.
+static struct {
+    uint32_t w, h, ow, oh;      // the game image of the last frame, and its place in the window
+    TexBackend *depth;          // this frame's scene depth
+    bool drawn;                 // drawn into since its last clear
+    int inv, norm;              // this frame's reverse-Z votes
+    int verdict;                // 0 not known yet, 1 normal, 2 inverted
+    TexBackend snap;            // the depth before its first clear this frame
+    bool snap_valid;            // snap holds this frame's depth
+    float jx, jy;               // the jitter drawn with this frame (0 when no pass took it)
+    bool jit_done;              // this frame's jitter is chosen
+    float jnext_x, jnext_y;
+    bool had;                   // a frame went through DLSS already (else: reset the history)
+    bool ready;                 // the last frame had its depth: jitter is only drawn when DLSS will take the frame
+} dl;
+
+static bool dlss_wanted(void) { return g_settings.dlss && dlss_available(); }
+
+static bool dlss_depth_ok(const TexBackend *b) {
+    if (!b || !b->image || !(b->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) || b->layers > 1 || b->samples > 1) return false;
+    if (dl.w) return b->width == dl.w && b->height == dl.h;  // (the game image's size: not shadow maps, probes)
+    return !dl.depth || (uint64_t)b->width * b->height >= (uint64_t)dl.depth->width * dl.depth->height;
+}
+
+// A draw that writes depth (fn: NVN's depth function)
+static void dlss_note_draw(NvnTexture *t, uint8_t fn) {
+    if (!dlss_wanted() || !t) return;
+    TexBackend *b = t->backend;
+    if (!dlss_depth_ok(b)) return;
+    dl.depth = b;
+    dl.drawn = true;
+    if (fn == 5 || fn == 7) dl.inv++;
+    else if (fn == 2 || fn == 4) dl.norm++;
+}
+
+static void dlss_snapshot(TexBackend *src) {
+    TexBackend *d = &dl.snap;
+    if (d->image && (d->width != src->width || d->height != src->height || d->format != src->format)) {
+        vk_views_forget(d);
+        vk_defer_image(d->image, d->mem);
+        d->image = VK_NULL_HANDLE;
+        d->mem = VK_NULL_HANDLE;
+    }
+    VkCommandBuffer cb = vk_cmd();
+    if (!d->image) {
+        VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = src->format,
+                                .extent = {src->width, src->height, 1}, .mipLevels = 1, .arrayLayers = 1,
+                                .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        VK_CHECK(vmaCreateImage(g_vk.vma, &ci, &ai, &d->image, &d->mem, NULL));
+        d->format = src->format; d->width = src->width; d->height = src->height; d->depth = 1; d->layers = 1; d->levels = 1;
+        d->samples = 1; d->aspect = src->aspect; d->base_type = VK_IMAGE_VIEW_TYPE_2D;
+        vk_image_init_layout(cb, d->image, d->aspect);
+    }
+    vk_end_pass();
+    vk_full_barrier(cb);
+    VkImageCopy c = {.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1}, .dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
+                     .extent = {src->width, src->height, 1}};
+    vkCmdCopyImage(cb, src->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+    vk_full_barrier(cb);
+    dl.snap_valid = true;
+}
+
+// A depth clear is about to run (v: its value)
+static void dlss_before_depth_clear(NvnTexture *t, float v) {
+    if (!dlss_wanted() || !t) return;
+    TexBackend *b = t->backend;
+    if (!dlss_depth_ok(b)) return;
+    if (v <= 0.0f) dl.inv++;
+    else if (v >= 1.0f) dl.norm++;
+    if (b == dl.depth && dl.drawn && !dl.snap_valid) dlss_snapshot(b);
+    dl.drawn = false;
+}
+
+// The viewport of a scene pass, shifted by this frame's jitter
+static void dlss_jitter_viewport(float *x, float *y) {
+    if (!dl.w || !dl.ready || !dlss_wanted() || pass_layers != 1) return;
+    if (!st.rt.depth || !st.rt.ncolor || !st.rt.color[0]) return;
+    const TexBackend *c = st.rt.color[0]->backend;
+    if (!c || c->width != dl.w || c->height != dl.h) return;
+    if (!dl.jit_done) {
+        dl.jit_done = true;
+        dlss_jitter(dl.w, dl.ow ? dl.ow : dl.w, &dl.jnext_x, &dl.jnext_y);
+    }
+    dl.jx = dl.jnext_x; dl.jy = dl.jnext_y;
+    *x += dl.jx;
+    *y += dl.jy;
+}
+
 // Metal convention (y up in NDC, origin top-left) through a negative-height viewport.
 static void set_viewport(float x, float y, float w, float h, float zn, float zf) {
     if (w <= 0) w = 1;
     if (h == 0) h = 1;
+    dlss_jitter_viewport(&x, &y);
     VkViewport vp = {x, y + h, w, -h, fminf(fmaxf(zn, 0), 1), fminf(fmaxf(zf, 0), 1)};
     if (!ss_need(SS_VP, !memcmp(&vp, &ss.vp, sizeof vp))) return;
     ss.vp = vp;
@@ -5205,6 +5307,7 @@ static void draw_(CmdRec *r, bool indexed) {
     VkBool32 dw = dt && st.ds[1];
     if (ss_need(SS_DW, ss.dw == dw)) { ss.dw = dw; vkCmdSetDepthWriteEnable(cb, dw); }
     VkCompareOp dop = dt ? compare_fn(st.ds[2]) : VK_COMPARE_OP_ALWAYS;
+    if (dw && st.rt.depth) dlss_note_draw(st.rt.depth, st.ds[2]);
     // EQUAL against a depth pre-pass written by a different vertex shader (foliage, trees) needs both shaders to land
     // on identical depths. They do since the translator stopped using unpackHalf2x16 (NVIDIA ran the half math after
     // it in fp16, differently per shader: black slashes in foliage). LARECOMP_VK_EQUAL_TOL=1 brings back the old
@@ -5990,7 +6093,7 @@ static VkPipeline present_pipeline_fs(VkFormat fmt, const char *fs) {
 static VkPipeline present_pipeline(VkFormat fmt) { return present_pipeline_fs(fmt, "present.frag"); }
 
 // Scanout shows the bytes the game wrote: sRGB images are read through a UNORM view (no decode).
-static VkImageView raw_view(TexBackend *b) {
+static VkFormat raw_format(const TexBackend *b) {
     VkFormat f = b->format == VK_FORMAT_R8G8B8A8_SRGB ? VK_FORMAT_R8G8B8A8_UNORM
                : b->format == VK_FORMAT_B8G8R8A8_SRGB ? VK_FORMAT_B8G8R8A8_UNORM
                // (compressed sRGB - native ASTC, a texture mod's BC - read as stored too: the image is mutable)
@@ -5999,8 +6102,11 @@ static VkImageView raw_view(TexBackend *b) {
                : b->format == VK_FORMAT_BC1_RGBA_SRGB_BLOCK || b->format == VK_FORMAT_BC2_SRGB_BLOCK ||
                          b->format == VK_FORMAT_BC3_SRGB_BLOCK || b->format == VK_FORMAT_BC7_SRGB_BLOCK ? (VkFormat)(b->format - 1)
                : b->format;
+    return f;
+}
+static VkImageView raw_view(TexBackend *b) {
     static const VkComponentMapping id = {0};
-    return vk_image_view(b, VK_IMAGE_VIEW_TYPE_2D, f, 0, 1, 0, 1, id, VK_IMAGE_ASPECT_COLOR_BIT);
+    return vk_image_view(b, VK_IMAGE_VIEW_TYPE_2D, raw_format(b), 0, 1, 0, 1, id, VK_IMAGE_ASPECT_COLOR_BIT);
 }
 
 // ---- post passes (Video tab "Anti-aliasing" / "Upscaler"): SMAA 1x at the game image's size, then AMD FSR 1 (EASU
@@ -6071,7 +6177,8 @@ static TexBackend *post_image(int i, uint32_t w, uint32_t h) {
         VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
                                 .format = fmt, .extent = {w, h, 1}, .mipLevels = 1, .arrayLayers = 1,
                                 .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
-                                .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
+                                .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                         VK_IMAGE_USAGE_STORAGE_BIT};  // (STORAGE: DLSS writes its output)
         VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
         VK_CHECK(vmaCreateImage(g_vk.vma, &ci, &ai, &d->image, &d->mem, NULL));
         d->format = fmt; d->width = w; d->height = h; d->depth = 1; d->layers = 1; d->levels = 1;
@@ -6152,28 +6259,117 @@ static bool tex_linear(const TexBackend *b) {
            b->format == VK_FORMAT_R32G32B32A32_SFLOAT;
 }
 
+// DLSS: zero motion vectors (RG16F, the game image's size), cleared when made
+static TexBackend *dlss_mv(VkCommandBuffer cb, uint32_t w, uint32_t h) {
+    static TexBackend mv;
+    TexBackend *d = &mv;
+    if (d->image && (d->width != w || d->height != h)) {
+        vk_views_forget(d);
+        vk_defer_image(d->image, d->mem);
+        d->image = VK_NULL_HANDLE;
+        d->mem = VK_NULL_HANDLE;
+    }
+    if (!d->image) {
+        VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
+                                .format = VK_FORMAT_R16G16_SFLOAT, .extent = {w, h, 1}, .mipLevels = 1, .arrayLayers = 1,
+                                .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        VK_CHECK(vmaCreateImage(g_vk.vma, &ci, &ai, &d->image, &d->mem, NULL));
+        d->format = VK_FORMAT_R16G16_SFLOAT; d->width = w; d->height = h; d->depth = 1; d->layers = 1; d->levels = 1;
+        d->samples = 1; d->aspect = VK_IMAGE_ASPECT_COLOR_BIT; d->base_type = VK_IMAGE_VIEW_TYPE_2D;
+        vk_image_init_layout(cb, d->image, d->aspect);
+        VkClearColorValue zero = {{0, 0, 0, 0}};
+        VkImageSubresourceRange rg = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdClearColorImage(cb, d->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &rg);
+        vk_full_barrier(cb);
+    }
+    return d;
+}
+
+// DLSS: the depth to hand over for the game image b: the copy taken before the game cleared it, else the live one
+static TexBackend *dlss_depth_for(const TexBackend *b) {
+    TexBackend *s = dl.snap_valid ? &dl.snap : dl.depth;
+    if (!s || !s->image || s->width != b->width || s->height != b->height || !(s->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)) return NULL;
+    return s;
+}
+
+// DLSS: reverse-Z or not: the override, else this frame's votes (kept when a frame has none)
+static bool dlss_inverted(void) {
+    static int ov = -1;
+    if (ov < 0) {
+        const char *e = getenv("LARECOMP_DLSS_DEPTH");
+        ov = e && !strcmp(e, "inverted") ? 2 : e && !strcmp(e, "normal") ? 1 : 0;
+    }
+    int v = ov ? ov : dl.inv > dl.norm ? 2 : dl.norm > dl.inv ? 1 : dl.verdict;
+    if (v != dl.verdict) {
+        LOG("[dlss] depth %s (votes: %d reverse-Z, %d normal%s)\n", v == 2 ? "inverted (reverse-Z)" : "normal", dl.inv, dl.norm,
+            ov ? ", overridden" : "");
+        dl.verdict = v;
+    }
+    return v == 2;
+}
+
+// Once per presented frame, after the post passes: the frame's state starts over
+static void dlss_frame_end(const TexBackend *b, uint32_t ow, uint32_t oh) {
+    dl.w = b->width; dl.h = b->height; dl.ow = ow; dl.oh = oh;
+    dl.ready = dlss_wanted() && dlss_depth_for(b) != NULL;
+    dl.jx = dl.jy = 0;
+    dl.depth = NULL; dl.drawn = false; dl.inv = dl.norm = 0; dl.snap_valid = false; dl.jit_done = false;
+}
+
 // The view the present samples: the game image, or its anti-aliased / upscaled version. ow x oh: the whole image's
 // size in the window (its crop is drawn into the viewport). *pq: (an HDR frame) the view holds PQ (hdr_encode).
 static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, double oh_d, bool *pq) {
     VkImageView v = raw_view(b);
-    bool smaa = g_settings.antialias == AA_SMAA;
     uint32_t ow = (uint32_t)lround(ow_d), oh = (uint32_t)lround(oh_d);
     if (ow > 16384) ow = 16384;
     if (oh > 16384) oh = 16384;
-    bool fsr = g_settings.upscaler == UPSCALE_FSR1 && (ow > b->width + 1 || oh > b->height + 1);  // (an upscale only)
+    // DLSS (anti-aliases and upscales; also at the window's own size: DLAA) when it is ready and the frame has its depth;
+    // else the upscaler and anti-aliasing chosen with it
+    TexBackend *dsrc = dlss_wanted() && b->samples == 1 && b->width >= 64 && b->height >= 64 && ow >= b->width && oh >= b->height
+                           ? dlss_depth_for(b) : NULL;
+    bool dlss = dsrc != NULL;
+    bool smaa = g_settings.antialias == AA_SMAA && !dlss;
+    bool fsr = g_settings.upscaler == UPSCALE_FSR1 && !dlss && (ow > b->width + 1 || oh > b->height + 1);  // (an upscale only)
     *pq = false;
-    if (!smaa && !fsr) return v;
+    if (!smaa && !fsr && !dlss) {
+        dl.had = false;
+        dlss_frame_end(b, ow, oh);
+        return v;
+    }
     extern void vk_frame_suspend(void);
     extern void vk_frame_resume(void);
     vk_frame_suspend();
-    if (vk_hdr_frame()) {  // an HDR frame: SMAA and FSR (made for gamma-encoded pictures) on the image as PQ
+    TexBackend *src_tb = b;  // (the image `v` is a view of, and its format: for DLSS)
+    VkFormat src_fmt = raw_format(b);
+    if (vk_hdr_frame()) {  // an HDR frame: SMAA, FSR and DLSS (made for gamma-encoded pictures) on the image as PQ
         float m[8] = {tex_linear(b) ? 0.0f : 1.0f, (float)g_settings.hdr_paper};
         TexBackend *e = post_image(5, b->width, b->height);
         VkImageView in[3] = {v};
         post_pass(cb, "hdr_encode.frag", in, 1, e, m, false);
         v = post_view(e);
+        src_tb = e;
+        src_fmt = e->format;
         *pq = true;
     }
+    if (dlss) {  // NVIDIA DLSS: the game image + its depth + zero motion vectors, jittered as dlss_jitter_viewport drew them
+        TexBackend *mv = dlss_mv(cb, b->width, b->height), *o = post_image(3, ow, oh);
+        static const VkComponentMapping id = {0};
+        VkImageView dv = vk_image_view(dsrc, VK_IMAGE_VIEW_TYPE_2D, dsrc->format, 0, 1, 0, 1, id, VK_IMAGE_ASPECT_DEPTH_BIT);
+        static int flip = -1;
+        if (flip < 0) flip = getenv("LARECOMP_DLSS_JITTER_FLIP") != NULL;
+        DlssEval ev = {.cmd = cb, .color_image = src_tb->image, .color_view = v, .color_format = (uint32_t)src_fmt,
+                       .in_w = b->width, .in_h = b->height,
+                       .depth_image = dsrc->image, .depth_view = dv, .depth_format = (uint32_t)dsrc->format,
+                       .mv_image = mv->image, .mv_view = post_view(mv), .mv_format = (uint32_t)mv->format,
+                       .out_image = o->image, .out_view = post_view(o), .out_format = (uint32_t)o->format, .out_w = ow, .out_h = oh,
+                       .jitter_x = flip ? -dl.jx : dl.jx, .jitter_y = flip ? -dl.jy : dl.jy,
+                       .depth_inverted = dlss_inverted(), .reset = !dl.had};
+        vk_full_barrier(cb);
+        if (dlss_evaluate(&ev)) { v = post_view(o); dl.had = true; }
+        else dl.had = false;  // (the game image goes to the window as it is)
+    } else dl.had = false;
     if (smaa) {  // SMAA 1x: luma edges -> blending weights -> neighbourhood blending
         float w = (float)b->width, h = (float)b->height;
         float m[8] = {1.0f / w, 1.0f / h, w, h};
@@ -6202,11 +6398,12 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, 
     vk_frame_resume();
     {
         static uint32_t piw, pih, pow_, poh;
-        static int psm = -1, pfs = -1;
-        if (b->width != piw || b->height != pih || ow != pow_ || oh != poh || smaa != psm || fsr != pfs)
-            LOG("[post] %ux%u%s%s -> %ux%u\n", b->width, b->height, smaa ? " smaa" : "", fsr ? " fsr1" : "", ow, oh);
-        piw = b->width; pih = b->height; pow_ = ow; poh = oh; psm = smaa; pfs = fsr;
+        static int psm = -1, pfs = -1, pdl = -1;
+        if (b->width != piw || b->height != pih || ow != pow_ || oh != poh || smaa != psm || fsr != pfs || dlss != pdl)
+            LOG("[post] %ux%u%s%s%s -> %ux%u\n", b->width, b->height, smaa ? " smaa" : "", fsr ? " fsr1" : "", dlss ? " dlss" : "", ow, oh);
+        piw = b->width; pih = b->height; pow_ = ow; poh = oh; psm = smaa; pfs = fsr; pdl = dlss;
     }
+    dlss_frame_end(b, ow, oh);
     return v;
 }
 
@@ -6468,6 +6665,7 @@ static void exec_list(uint64_t handle, int depth) {
                         st.rt.dview.setmask, st.rt.ncolor);
                 alias_before_write(d, full, "clear");
             }
+            if (st.rt.depth && r->x[0] != 0) dlss_before_depth_clear(st.rt.depth, r->f[0]);
             if (st.rt.depth) {
                 bool has_stencil = renderer_format_has_stencil(st.rt.depth->format);
                 clear(-1, 0, NULL, 0, r->x[0] != 0, r->f[0], has_stencil && r->x[2] != 0, (uint32_t)r->x[1], (uint32_t)r->x[2]);

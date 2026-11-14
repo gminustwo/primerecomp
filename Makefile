@@ -215,6 +215,18 @@ $(B)/rt/%.o: runtime/%.cpp $(RT_HDRS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(OSFLAGS) -c $< -o $@
 
+# NVIDIA DLSS (runtime/nvn/dlss.h). NVIDIA's SDK has its own license: it is not in this repository and not shipped.
+# Linux: make NGX_SDK=<a clone of github.com/NVIDIA/DLSS> links it in. Windows: the executable needs nothing at build
+# time; tools/build_ngx_bridge_windows.bat builds primerecomp_ngx.dll (MSVC) from the same SDK, for next to the exe.
+NGX_SDK ?=
+ifneq ($(NGX_SDK),)
+ifeq ($(PLATFORM),linux)
+$(B)/rt/nvn/vulkan/dlss.o: CXXFLAGS += -DHAVE_DLSS -I$(NGX_SDK)/include
+$(B)/rt/nvn/vulkan/dlss.o: runtime/nvn/ngx/dlss_ngx.cpp
+LDFLAGS += $(NGX_SDK)/lib/Linux_x86_64/libnvsdk_ngx.a
+endif
+endif
+
 # linked to a temp file, then renamed over: a copy of the game still running keeps its (old) file - relinking in
 # place gets running copies killed by macOS (code signature of the changed pages). The temp file keeps the real name
 # (in a folder of its own): on Windows the import library records the name the game code library loads it by.

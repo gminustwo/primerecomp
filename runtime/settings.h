@@ -61,6 +61,8 @@ typedef struct {
     int res_mode;        // RES_MATCH, RES_FIXED (res_lines), RES_DYNAMIC, RES_Q75/50/25 (share of the display)
     int res_lines;       // RES_FIXED: render height in lines, one of g_res_lines (2160 = 4K)
     int upscaler;        // UPSCALE_*: how a lower internal resolution reaches the window (FSR 1: AMD's)
+    bool dlss;           // NVIDIA DLSS in place of the upscaler and anti-aliasing where it runs (runtime/nvn/dlss.h);
+                         // elsewhere, or when it can't, the upscaler and anti-aliasing above
     int antialias;       // AA_*: anti-aliasing of the game image before it is scaled to the window
     int aniso;           // texture filtering: anisotropic level forced on the game's mipmapped samplers (2..16), 0 =
                          // the game's own (runtime/nvn/vulkan/textures.c vk_sampler)

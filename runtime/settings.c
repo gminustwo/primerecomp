@@ -264,7 +264,11 @@ void settings_load(void) {
             if (g_settings.res_mode == RES_FIXED)
                 g_settings.res_lines = res_snap(unit == 'p' ? n : unit == 'k' ? n * 540 : n * 1080);
         }
-        else if (!strcmp(key, "upscaler")) g_settings.upscaler = !strcmp(val, "bilinear") ? UPSCALE_BILINEAR : UPSCALE_FSR1;  // (fsr1, LAS's metalfx)
+        else if (!strcmp(key, "upscaler")) {  // (fsr1, LAS's metalfx; "dlss": an early DLSS build's, the checkbox now)
+            g_settings.upscaler = !strcmp(val, "bilinear") ? UPSCALE_BILINEAR : UPSCALE_FSR1;
+            if (!strcmp(val, "dlss")) g_settings.dlss = true;
+        }
+        else if (!strcmp(key, "dlss")) g_settings.dlss = atoi(val) != 0;
         else if (!strcmp(key, "aniso")) { int a = atoi(val); g_settings.aniso = a >= 16 ? 16 : a >= 8 ? 8 : a >= 4 ? 4 : a >= 2 ? 2 : 0; }
         else if (!strcmp(key, "antialias")) g_settings.antialias = !strcmp(val, "off") ? AA_OFF : AA_SMAA;  // ("fxaa": SMAA now)
         // (before the bind_pad_* lines, which settings_save writes last: they're the differences from its defaults)
@@ -379,6 +383,7 @@ static void write_settings(void *o) {
             g_settings.wiimote_mid[0], g_settings.wiimote_mid[1], g_settings.wiimote_area, g_settings.wiimote_smooth);
     if (g_settings.steam_controller_direct) put(o, "steam_controller_direct = 1\n");  // (written only when set)
     put(o, "upscaler = %s\n", g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
+    put(o, "dlss = %d\n", g_settings.dlss);
     put(o, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");
     put(o, "aniso = %d\n", g_settings.aniso);
     if (g_settings.res_mode == RES_DYNAMIC) put(o, "resolution = dynamic\n");
