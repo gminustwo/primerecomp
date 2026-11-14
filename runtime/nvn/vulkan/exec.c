@@ -1477,8 +1477,10 @@ static void dlss_before_depth_clear(NvnTexture *t, float v) {
 // The viewport of a scene pass, shifted by this frame's jitter
 static void dlss_jitter_viewport(float *x, float *y) {
     if (!dl.w || !dl.ready || !dlss_wanted() || pass_layers != 1) return;
-    if (!st.rt.depth || !st.rt.ncolor || !st.rt.color[0]) return;
-    const TexBackend *c = st.rt.color[0]->backend;
+    // (depth-only passes too: the game's depth pre-pass, which the colour passes after it test EQUAL against - with
+    // only those jittered, the floor and the arm cannon went black every other frame)
+    if (!st.rt.depth) return;
+    const TexBackend *c = st.rt.ncolor && st.rt.color[0] ? st.rt.color[0]->backend : st.rt.depth->backend;
     if (!c || c->width != dl.w || c->height != dl.h) return;
     if (!dl.jit_done) {
         dl.jit_done = true;
