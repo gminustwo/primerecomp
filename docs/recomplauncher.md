@@ -19,7 +19,7 @@ number is guessed before those features ship.
 
 Choose your own **Metroid Prime Remastered v1.0.0, without updates**, extracted: a folder holding
 `exefs` and `romfs`. PrimeRecomp validates the main module's build ID and the required game files
-before building its code. It doesn't read game packages (NSP, XCI) and takes no keys.
+before building its code. It takes only that extracted folder, and no keys.
 
 The extracted files are copied/linked into PrimeRecomp's data folder. Setups and compilation can take
 several minutes; the manifest allows up to one hour. Cancelling preserves saves, and retrying can
