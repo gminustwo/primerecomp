@@ -871,14 +871,22 @@ void kernel_reset(void) {
 // here) - where a boot that stops making progress is stuck
 static bool guest_ptr_ok(uint64_t p) { return p >= GUEST_LO && p + 16 <= GUEST_HI && !(p & 7); }
 
-static void dump_threads(void) {
+static void dump_threads_(bool running_only) {
     static const char *const kinds[] = {"run", "mutex", "condvar", "arbiter"};
-    // (a deadlock may hold the kernel lock: read the thread list without it after a few seconds of trying)
+    // (a deadlock may hold the kernel lock: read the thread list without it after a few seconds of trying; a short
+    // stall's report doesn't wait - the lock held may be the stall)
     bool locked = false;
-    for (int i = 0; i < 300 && !(locked = pthread_mutex_trylock(&g_klock) == 0); i++) plat_sleep_until_ns(plat_now_ns() + 10000000);
+    for (int i = 0; i < (running_only ? 1 : 300) && !(locked = pthread_mutex_trylock(&g_klock) == 0); i++)
+        plat_sleep_until_ns(plat_now_ns() + 10000000);
     if (!locked) LOG("[hang] (kernel lock held: reading the threads without it)\n");
     LOG("[hang] ---- threads\n");
+    int skipped[5] = {0};  // (running_only: the threads left out, by what they wait on; [4] a GPU sync)
     for (KThread *t = g_threads; t; t = t->anext) {
+        if (running_only && (t->finished || !t->started)) continue;
+        if (running_only && ((t->wait_kind & 3) || t->in_sync_wait)) {  // (a short stall: who is doing work)
+            skipped[t->in_sync_wait ? 4 : t->wait_kind & 3]++;
+            continue;
+        }
         Cpu *c = &t->cpu;
         uint64_t off;
         const char *en = loader_symbol_at(t->entry, &off);
@@ -906,7 +914,48 @@ static void dump_threads(void) {
             fp = next;
         }
     }
+    if (running_only)
+        LOG("[hang]   (waiting: %d on a mutex, %d on a condvar, %d on an arbiter, %d on a GPU sync)\n", skipped[1],
+            skipped[2], skipped[3], skipped[4]);
     if (locked) pthread_mutex_unlock(&g_klock);
+}
+static void dump_threads(void) { dump_threads_(false); }
+
+// Short stalls (on by default; LARECOMP_SHORT_STALL_MS=<ms>, 0 = off; 300): a frame that takes that long - the game
+// stopping for half a second, its sound running dry, each time Samus was frozen (a player's report, 2026-11-13) -
+// logs the guest threads that are running then (not waiting): what the game was doing. 16 times a session at most.
+static void *short_stall_watch(void *arg) {
+    uint64_t lim = (uint64_t)(*(double *)arg * 1e6);
+    extern uint64_t renderer_present_count(void);
+    extern bool g_debug_frame;
+    extern _Atomic uint64_t g_audio_ticks;  // (runtime/services/audio.c: its renderer thread's frames)
+    uint64_t last = renderer_present_count(), since = plat_now_ns(), audio0 = 0;
+    bool dumped = false;
+    int left = 16;
+    while (left > 0) {
+        plat_sleep_until_ns(plat_now_ns() + 25000000ull);
+        uint64_t n = renderer_present_count(), now = plat_now_ns();
+        if (n != last || g_debug_frame) {
+            if (dumped)  // (5 ms frames: a sound that kept playing made about one per 5 ms)
+                LOG("[stall] frame %llu came after %.0f ms; the sound made %llu frames meanwhile\n", (unsigned long long)n,
+                    (now - since) / 1e6, (unsigned long long)(g_audio_ticks - audio0));
+            last = n; since = now; dumped = false;
+            audio0 = g_audio_ticks;
+            continue;
+        }
+        extern bool game_played_recently(uint64_t frames);  // (runtime/hle/game.c)
+        if (!dumped && now - since > lim && game_played_recently(240)) {
+            bool klock_free = pthread_mutex_trylock(&g_klock) == 0;
+            if (klock_free) pthread_mutex_unlock(&g_klock);
+            LOG("[stall] no frame for %.0f ms (frame %llu; kernel lock %s; sound frames since: %llu): the running "
+                "guest threads\n", (now - since) / 1e6, (unsigned long long)last, klock_free ? "free" : "HELD",
+                (unsigned long long)(g_audio_ticks - audio0));
+            dump_threads_(true);
+            dumped = true;
+            left--;
+        }
+    }
+    return NULL;
 }
 
 // Stall watch (on by default; LARECOMP_STALL_DUMP=<seconds>, 0 = off): when no frame has been presented for that
@@ -967,6 +1016,10 @@ void kernel_init(void) {
         stall_secs = e ? atof(e) : 10;
         pthread_t th;
         if (stall_secs > 0) pthread_create(&th, NULL, stall_watch, &stall_secs);
+        static double short_ms;
+        e = getenv("LARECOMP_SHORT_STALL_MS");
+        short_ms = e ? atof(e) : 300;
+        if (short_ms > 0) pthread_create(&th, NULL, short_stall_watch, &short_ms);
     }
 }
 

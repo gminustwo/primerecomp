@@ -225,6 +225,12 @@ bool game_in_play(void) {
     extern uint64_t vk_frame_counter(void);
     return g_player_seen && vk_frame_counter() <= g_player_seen + 2;
 }
+// The player updated within the last `frames` frames (runtime/kernel.c's short-stall report: stalls in play, not
+// the loads between rooms or the boot)
+bool game_played_recently(uint64_t frames) {
+    extern uint64_t vk_frame_counter(void);
+    return g_player_seen && vk_frame_counter() <= g_player_seen + frames;
+}
 
 #define GUEST_PTR_OK(p) ((p) >= GUEST_LO && (p) < GUEST_HI && !((p) & 7))
 
@@ -690,7 +696,30 @@ static void debug_message_screen(Cpu *c) {
     free(saved);
 }
 
+// (test) LARECOMP_TEST_STALL=<frame>:<ms>[,...]: the game thread stops that long at that frame - what a stall does to
+// the sound (a player's report, 2026-11-13: the sound cut out and came back with a pop as the game stopped for half a
+// second each time Samus was frozen)
+static void debug_stall(void) {
+    static struct { long at, ms; } st[8];
+    static int n = -1, cur;
+    if (n < 0) {
+        n = 0;
+        for (const char *e = getenv("LARECOMP_TEST_STALL"); e && *e && n < 8;) {
+            if (sscanf(e, "%ld:%ld", &st[n].at, &st[n].ms) == 2) n++;
+            e = strchr(e, ',');
+            e = e ? e + 1 : NULL;
+        }
+    }
+    extern uint64_t vk_frame_counter(void);
+    if (cur >= n || (long)vk_frame_counter() < st[cur].at) return;
+    LOG("[test] LARECOMP_TEST_STALL: the game thread stops for %ld ms at frame %llu\n", st[cur].ms,
+        (unsigned long long)vk_frame_counter());
+    plat_sleep_until_ns(plat_now_ns() + (uint64_t)st[cur].ms * 1000000ull);
+    cur++;
+}
+
 void rt_debug_autosave(Cpu *c) {
+    debug_stall();
     debug_teleport(c);
     debug_message_screen(c);
     fov_frame(c);

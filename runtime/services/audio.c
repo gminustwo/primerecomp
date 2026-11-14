@@ -1188,6 +1188,8 @@ static void renderer_speakers(Renderer *r) {
     r->out_ch = g_out_ch = ch;
 }
 
+// (the kernel's short-stall report, runtime/kernel.c: whether this thread kept going while the game stood still)
+_Atomic uint64_t g_audio_ticks;
 static void *renderer_tick(void *arg) {
     Renderer *r = arg;
     uint32_t N = r->sample_count;
@@ -1246,6 +1248,7 @@ static void *renderer_tick(void *arg) {
         pthread_mutex_lock(&g_klock);
         kernel_signal(r->event);
         pthread_mutex_unlock(&g_klock);
+        g_audio_ticks++;
     }
     free(sink), free(out), free(wav);
     return NULL;
