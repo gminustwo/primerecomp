@@ -185,9 +185,17 @@ static bool hdr_target(const NvnTexture *t, const TexBackend *b) {
 }
 uint64_t renderer_present_count(void);
 
+// The game's 16:9 render targets drawn at the output resolution - but not the quarter-size ones and smaller (under
+// 480 wide: the 1600x900 frame's 400x225 to 50x28): its glow (bloom) and exposure chains, whose blurs step a texel
+// of the game's size at a time. Scaled, each step skipped texels, so a small bright light's glow broke into a grid
+// of copies (a player's report, 2026-11-13: the frigate's strings of lights at 2160p); at the game's size they're
+// what the Switch draws. (test) LARECOMP_SCALE_SMALL=1: scaled as before.
 static bool tex_scalable(const NvnTexture *t) {
     if (getenv("LARECOMP_NO_SCALE")) return false;
     if (t->target != 1 || t->samples > 1 || !(t->flags & 8) || t->width < 32 || t->height < 16) return false;
+    static int small = -1;
+    if (small < 0) small = getenv("LARECOMP_SCALE_SMALL") != NULL;
+    if (t->width < 480 && !small) return false;
     float a = (float)t->width / (float)t->height;
     return a > 1.74f && a < 1.81f;
 }
