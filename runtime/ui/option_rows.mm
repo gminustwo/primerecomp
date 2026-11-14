@@ -16,7 +16,7 @@ static float g_scale = 1;
 static std::string g_desc_hover, g_desc_focus, g_desc_shown;  // this frame's hovered / selected row, and the last shown
 static std::string g_desc_first;  // the page's first row (shown until a row is selected or hovered)
 
-static const ImU32 kAccent = theme::u32(theme::accent);  // (the selected / hovered row: theme.h)
+static const ImU32 kAccent = theme::u32(theme::mp_bright);  // (a selected choice: theme.h's pause-screen orange)
 static bool g_next_disabled;
 void opt_disable_next(void) { g_next_disabled = true; }
 static int g_indent;
@@ -45,13 +45,19 @@ void opt_section(const char *title) {
     std::string t = title;
     for (char &c : t) c = (char)toupper((unsigned char)c);
     if (ImGui::GetCursorPosY() > ImGui::GetStyle().WindowPadding.y + 1) ImGui::Dummy(ImVec2(0, 10 * g_scale));
-    ImGui::TextColored(theme::text_dim, "%s", t.c_str());
+    ImGui::TextColored(theme::mp_text_dim, "%s", t.c_str());
+    {   // (a thin line on from the heading, as the pause screens' frames run on from their titles)
+        ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+        float x0 = b.x + 12 * g_scale, x1 = a.x + ImGui::GetContentRegionAvail().x, y = (a.y + b.y) * 0.5f;
+        if (x1 > x0) ImGui::GetWindowDrawList()->AddLine(ImVec2(x0, y), ImVec2(x1, y), theme::u32(theme::mp_line, 0.35f), 1.0f);
+    }
 }
 
 // One row: draws it, handles A / click and left / right while selected. Returns 2 (A / click), -1 / +1 (left / right) or 0.
 // arrows: ◀ value ▶ (a choice of several, or a stepper): left / right step it, and the arrows click too
+// check: a check box on the right (0 unticked, 1 ticked; -1 none), the value (if any) before it
 static int row(const char *label, const std::string &value, bool changed, const char *desc, bool upper = true,
-               bool arrows = false) {
+               bool arrows = false, int check = -1) {
     ImGui::PushID(label);
     if (g_indent) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + g_indent * 28 * g_scale);  // (an option of the row above)
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -88,23 +94,32 @@ static int row(const char *label, const std::string &value, bool changed, const 
     if (hov) g_desc_hover = desc ? desc : "";
     if (g_desc_first.empty() && desc) g_desc_first = desc;
 
+    // (as the game's pause screen buttons: a cut-corner box, dim orange-brown; selected, lit with a glowing outline)
     ImDrawList *dl = ImGui::GetWindowDrawList();
-    float r = 9 * g_scale, pad = 16 * g_scale, fs = ImGui::GetFontSize();
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov || foc ? theme::u32(theme::accent, 0.10f) : IM_COL32(0, 0, 0, 40), r);
-    dl->AddRect(p, ImVec2(p.x + w, p.y + h), hov || foc ? (off ? theme::u32(theme::accent, 0.45f) : kAccent)
-                                                        : IM_COL32(255, 255, 255, off ? 18 : 38), r, 0,
-                hov || foc ? 2.0f : 1.0f);
+    float pad = 16 * g_scale, fs = ImGui::GetFontSize(), cut = h * 0.26f;
+    ImVec2 q(p.x + w, p.y + h);
+    bool lit = hov || foc;
+    ImVec4 fill = lit && !off ? theme::mp_fill_hot : theme::mp_fill;
+    if (off) fill.w *= 0.55f;
+    theme::chamfer_fill(dl, p, q, cut, theme::u32(fill));
+    if (lit) theme::chamfer_glow(dl, p, q, cut, off ? theme::mp_line : theme::mp_bright, 2.0f * g_scale, g_scale, off ? 0.5f : 1);
+    else theme::chamfer_line(dl, p, q, cut, theme::u32(theme::mp_line, off ? 0.25f : 0.55f), 1.2f * g_scale);
     std::string t = label;
     if (upper)
         for (char &c : t) c = (char)toupper((unsigned char)c);
     float ty = p.y + (h - fs) * 0.5f;
-    ImU32 label_col = off ? IM_COL32(100, 110, 120, 255) : theme::u32(theme::text);  // (greyed out: clearly dim)
+    ImU32 label_col = off ? IM_COL32(135, 110, 90, 255) : theme::u32(theme::mp_text);  // (greyed out: clearly dim)
     dl->AddText(ImVec2(p.x + pad, ty), label_col, t.c_str());
     float right = p.x + w - pad;  // (the value's right edge)
+    if (check >= 0) {  // a check box at the right end; the value (a number, say) before it
+        float s = fs * 0.95f;
+        theme::check_box(dl, ImVec2(right - s * 0.5f, p.y + h * 0.5f), s, check > 0, lit, off, g_scale);
+        right -= s + fs * 0.5f;
+    }
     if (arrows && !value.empty()) {  // ◀ value ▶, drawn (the fonts have no arrow glyphs); a click on one steps
         float aw = fs * 0.42f, gap = fs * 0.55f, cy = ty + fs * 0.52f;
         float rx = right - aw, lx = rx - gap - ImGui::CalcTextSize(value.c_str()).x - gap - aw;
-        ImU32 ac = off ? IM_COL32(100, 110, 120, 255) : hov || foc ? kAccent : IM_COL32(150, 170, 185, 255);
+        ImU32 ac = off ? IM_COL32(135, 110, 90, 255) : lit ? theme::u32(theme::mp_bright) : theme::u32(theme::mp_line);
         dl->AddTriangleFilled(ImVec2(lx, cy), ImVec2(lx + aw, cy - aw * 0.75f), ImVec2(lx + aw, cy + aw * 0.75f), ac);
         dl->AddTriangleFilled(ImVec2(rx + aw, cy), ImVec2(rx, cy - aw * 0.75f), ImVec2(rx, cy + aw * 0.75f), ac);
         if (clicked && !off) {
@@ -116,17 +131,21 @@ static int row(const char *label, const std::string &value, bool changed, const 
     }
     if (!value.empty()) {
         float vw = ImGui::CalcTextSize(value.c_str()).x, vx = right - vw;
-        dl->AddText(ImVec2(vx, ty), off ? IM_COL32(100, 110, 120, 255) : changed ? IM_COL32(255, 255, 255, 255)
-                                                                                 : IM_COL32(190, 205, 218, 255), value.c_str());
+        dl->AddText(ImVec2(vx, ty), off ? IM_COL32(135, 110, 90, 255) : changed ? IM_COL32(255, 255, 255, 255)
+                                                                                : IM_COL32(236, 214, 184, 255), value.c_str());
     }
     ImGui::PopID();
     return step;
 }
 
 bool opt_toggle(const char *label, bool *v, bool def, const char *desc) {
-    if (!row(label, *v ? "On" : "Off", *v != def, desc)) return false;  // (any step flips it)
+    if (!row(label, "", *v != def, desc, true, false, *v)) return false;  // (any step flips it)
     *v = !*v;
     return true;
+}
+
+bool opt_check(const char *label, bool on, const char *value, const char *desc, bool upper) {
+    return row(label, value ? value : "", false, desc, upper, false, on) == 2;
 }
 
 bool opt_choice(const char *label, int *v, const char *const *names, int n, int def, const char *desc, bool wrap) {
@@ -175,7 +194,7 @@ bool opt_radio(const char *label, bool selected, const char *desc) {
     ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
     float r = ImGui::GetFontSize() * 0.32f, cx = b.x - 16 * g_scale - r, cy = (a.y + b.y) * 0.5f;
     ImDrawList *dl = ImGui::GetWindowDrawList();
-    ImU32 col = off ? IM_COL32(130, 140, 150, 255) : selected ? kAccent : IM_COL32(190, 205, 218, 255);
+    ImU32 col = off ? IM_COL32(135, 110, 90, 255) : selected ? kAccent : theme::u32(theme::mp_line);
     dl->AddCircle(ImVec2(cx, cy), r, col, 0, 2.0f);
     if (selected) dl->AddCircleFilled(ImVec2(cx, cy), r * 0.55f, col);
     return chosen && !selected;
@@ -217,15 +236,28 @@ void opt_end(void) {
     ImGui::SameLine(0, 0);
     ImVec2 p = ImGui::GetCursorScreenPos(), avail = ImGui::GetContentRegionAvail();
     float gap = 24 * g_scale;
-    ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + gap * 0.5f, p.y), ImVec2(p.x + gap * 0.5f, p.y + avail.y),
-                                        theme::u32(theme::accent, 0.40f), 1.0f);
+    {   // the description in a pause-screen panel: a cut-corner frame with the dot grid behind
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        ImVec2 a(p.x + gap, p.y + 2 * g_scale), b(p.x + avail.x - 2 * g_scale, p.y + avail.y - 2 * g_scale);
+        float cut = 22 * g_scale;
+        theme::chamfer_fill(dl, a, b, cut, IM_COL32(0, 0, 0, 90));
+        theme::dot_grid(dl, a, b, 22 * g_scale, theme::u32(theme::mp_line, 0.10f));
+        theme::chamfer_line(dl, a, b, cut, theme::u32(theme::mp_line, 0.70f), 1.5f * g_scale);
+        float in = 6 * g_scale;  // (a second, fainter line inside, as the game's frames)
+        theme::chamfer_line(dl, ImVec2(a.x + in, a.y + in), ImVec2(b.x - in, b.y - in), cut - in * 0.4f,
+                            theme::u32(theme::mp_line, 0.22f), 1.0f);
+    }
     ImGui::SetCursorScreenPos(ImVec2(p.x + gap, p.y));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * g_scale, 6 * g_scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(26 * g_scale, 18 * g_scale));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
     ImGui::BeginChild("##desc", ImVec2(0, avail.y), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoNav);
+    ImGui::PopStyleColor();
     ImGui::PopStyleVar();
     ImGui::SetWindowFontScale(1.3f);  // (the description reads at a glance)
     ImGui::PushTextWrapPos(0);
+    ImGui::PushStyleColor(ImGuiCol_Text, theme::mp_text);
     ImGui::TextUnformatted(g_desc_shown.c_str());
+    ImGui::PopStyleColor();
     ImGui::PopTextWrapPos();
     ImGui::SetWindowFontScale(1.0f);
     ImGui::EndChild();

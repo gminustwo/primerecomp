@@ -308,10 +308,37 @@ int g_tab_request_ext = -1;
 static void style_init(void) {
     ImGuiStyle &s = ImGui::GetStyle();
     ImGui::StyleColorsDark();
-    s.WindowRounding = 14; s.FrameRounding = 8; s.GrabRounding = 8; s.TabRounding = 8; s.ChildRounding = 10;
+    s.WindowRounding = 0; s.FrameRounding = 2; s.GrabRounding = 2; s.TabRounding = 0; s.ChildRounding = 0;
     s.WindowPadding = ImVec2(28, 24); s.FramePadding = ImVec2(14, 8); s.ItemSpacing = ImVec2(14, 12);
-    s.WindowBorderSize = 0; s.ScrollbarSize = 18;
-    theme::apply(s);  // (Metroid Prime's cyan / orange / deep blue)
+    s.WindowBorderSize = 0; s.ScrollbarSize = 18; s.ScrollbarRounding = 2;
+    theme::apply(s);
+    // the game's pause screens (theme.h mp_*): ImGui's own widgets - the Controls page's sliders and check boxes,
+    // buttons, fields - in their orange; the window, the tabs and the option rows are drawn (menu_render, tabs_body,
+    // option_rows.mm)
+    ImVec4 *c = s.Colors;
+    c[ImGuiCol_WindowBg] = theme::mp_bg;  // (the menu's own window: drawn, menu_render)
+    c[ImGuiCol_ChildBg] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_PopupBg] = ImVec4(0.03f, 0.025f, 0.02f, 0.98f);
+    c[ImGuiCol_Text] = theme::mp_text;
+    c[ImGuiCol_TextDisabled] = ImVec4(0.55f, 0.45f, 0.36f, 1);
+    c[ImGuiCol_FrameBg] = c[ImGuiCol_Button] = c[ImGuiCol_Header] = theme::mp_fill;
+    c[ImGuiCol_FrameBgHovered] = c[ImGuiCol_ButtonHovered] = c[ImGuiCol_HeaderHovered] = theme::mp_fill_hot;
+    c[ImGuiCol_FrameBgActive] = c[ImGuiCol_ButtonActive] = c[ImGuiCol_HeaderActive] = ImVec4(0.75f, 0.32f, 0.08f, 0.95f);
+    c[ImGuiCol_CheckMark] = theme::mp_bright;
+    c[ImGuiCol_SliderGrab] = theme::mp_line;
+    c[ImGuiCol_SliderGrabActive] = theme::mp_bright;
+    c[ImGuiCol_NavCursor] = theme::mp_bright;
+    c[ImGuiCol_Separator] = ImVec4(theme::mp_line.x, theme::mp_line.y, theme::mp_line.z, 0.45f);
+    c[ImGuiCol_Border] = ImVec4(theme::mp_line.x, theme::mp_line.y, theme::mp_line.z, 0.55f);
+    c[ImGuiCol_ScrollbarBg] = ImVec4(0, 0, 0, 0.25f);
+    c[ImGuiCol_ScrollbarGrab] = ImVec4(0.45f, 0.18f, 0.05f, 0.9f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.70f, 0.30f, 0.08f, 1);
+    c[ImGuiCol_ScrollbarGrabActive] = theme::mp_line;
+    c[ImGuiCol_TableHeaderBg] = theme::mp_fill;
+    // (tabs_body draws the tabs' shapes under ImGui's labels)
+    c[ImGuiCol_Tab] = c[ImGuiCol_TabHovered] = c[ImGuiCol_TabSelected] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_TabDimmed] = c[ImGuiCol_TabDimmedSelected] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_TabSelectedOverline] = c[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0, 0, 0, 0);
 }
 
 
@@ -571,10 +598,13 @@ static void tab_display(void) {
         if (opt_choice("Upscaler", &ui, ups, 2, 1, udm)) g_settings.upscaler = ui ? UPSCALE_FSR1 : UPSCALE_BILINEAR;
     }
     if (dl_on) opt_disable_next();
-    static const char *aa[] = {"Off", "SMAA"};
-    opt_choice("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,
-               "Smooths jagged edges of the game image before it is scaled to the window. SMAA: finds the edges and "
-               "blends only along them, so textures stay sharp. Most useful at a lower internal resolution.");
+    {   // (SMAA or nothing: a check box)
+        bool aa = g_settings.antialias == AA_SMAA;
+        if (opt_toggle("Anti-aliasing (SMAA)", &aa, false,
+                       "Smooths jagged edges of the game image before it is scaled to the window. SMAA finds the edges "
+                       "and blends only along them, so textures stay sharp. Most useful at a lower internal resolution."))
+            g_settings.antialias = aa ? AA_SMAA : AA_OFF;
+    }
     {
         static const char *const af[] = {"Game's own", "2x", "4x", "8x", "16x"};
         static const int levels[] = {0, 2, 4, 8, 16};
@@ -835,8 +865,8 @@ static void tab_mods(void) {
                  "Ctrl+Down: lower. When two mods have the same game file, the higher one's is used.\n\nChanges are "
                  "used from the game's next start (Quit tab: Quit to Start Screen, then PLAY).",
                  parts);
-        snprintf(value, sizeof value, "%d.  %s", i + 1, m.on ? "On" : "Off");
-        if (opt_action(m.name, value, d, false)) { mods_set_on(i, !m.on); settings_save(); }
+        snprintf(value, sizeof value, "%d.", i + 1);  // (its place in the order, then its check box)
+        if (opt_check(m.name, m.on, value, d, false)) { mods_set_on(i, !m.on); settings_save(); }
         if (ImGui::IsItemFocused()) {
             // (X and Y, as key_from_pad has them: GamepadFaceUp / R3. FaceUp is also ImGui's "activate" - it switched
             // the mod: the row's while it has the cursor)
@@ -911,7 +941,7 @@ static void cheat_files_section(void) {
             continue;
         default:
             snprintf(d, sizeof d, "From %s.\n\n%s", c.mod, how);
-            if (opt_action(label, c.on ? "On" : "Off", d, false)) { atmo_cheat_set(i, !c.on); settings_save(); }
+            if (opt_check(label, c.on, "", d, false)) { atmo_cheat_set(i, !c.on); settings_save(); }
         }
     }
 }
@@ -1333,7 +1363,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     // (Cosmetics, id 7: LAS Recomp's tunic / heart colors - nothing to recolor in Metroid Prime, so not shown)
     // (Mods, id 2: emulator mods and texture mods)
     static const char *names[] = {"Video", "Audio", "Mods", "", "", "Cheats", "Gameplay", "", "Controls", "Quit"};
-    static const int order[] = {6, 8, 0, 1, 2, 5, 9};  // Gameplay, Controls, Video, Audio, Mods, Cheats, Quit
+    static const int order[] = {6, 0, 1, 8, 2, 5, 9};  // Gameplay, Video, Audio, Controls, Mods, Cheats, Quit
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT)
         if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
@@ -1360,6 +1390,13 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                          (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown) ||
                           ImGui::IsKeyPressed(ImGuiKey_DownArrow));
     opt_focus_first(down_from_tab);
+    // the tabs as the pause screens' buttons (style_init leaves ImGui's own tab shapes clear): cut-corner boxes drawn
+    // under the labels - a second draw channel for the labels, the shapes put in the first as each tab is laid out
+    ImDrawList *tdl = ImGui::GetWindowDrawList();
+    ImDrawListSplitter tsplit;
+    tsplit.Split(tdl, 2);
+    tsplit.SetCurrentChannel(tdl, 1);
+    float tab_bottom = 0;
     if (ImGui::BeginTabBar("##tabs", ImGuiTabBarFlags_NoTabListScrollingButtons)) {
         for (int k = 0; k < ntabs; k++) {
             const Tab &t = tabs[k];
@@ -1372,9 +1409,9 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
             // (focused_tab: from the frame before - colors go in before the tab is drawn)
             bool lit = focused_tab == t.id && ImGui::GetCurrentContext()->NavCursorVisible;
             ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
-            if (lit) {
-                ImGui::PushStyleColor(ImGuiCol_Tab, theme::frame_hot);
-                ImGui::PushStyleColor(ImGuiCol_TabHovered, theme::frame_hot);
+            if (lit) {  // (ImGui's own tab clear: the shape drawn below shows it lit)
+                ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_TabHovered, ImVec4(0, 0, 0, 0));
             }
             if (g_focus_tab == -1 && !prelaunch) g_focus_tab = order[0];  // (no Prelaunch in game: the first tab)
             bool focus_here = g_focus_tab == t.id || (g_focus_tab == -100 && t.id == g_tab);
@@ -1387,11 +1424,20 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 if (++g_focus_frames >= 4) g_focus_tab = -99, g_focus_frames = 0;
                 else g_focus_tab = t.id;
             }
-            if (lit) {
+            {   // its shape: dim orange-brown; the open page's lit, with a glowing outline; the cursor's (controller /
+                // keyboard focus) or the mouse's a little lit
                 ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-                float h = 4 * scale > 2 ? 4 * scale : 2;
-                ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(a.x + 2, b.y - h), ImVec2(b.x - 2, b.y),
-                                                          theme::u32(theme::accent));  // (the menu's cyan)
+                a.x += 2 * scale, b.x -= 2 * scale, b.y -= 3 * scale;
+                bool hot = lit || ImGui::IsItemHovered();
+                float cut = (b.y - a.y) * 0.32f;
+                ImVec4 fill = open ? theme::mp_fill_hot : hot ? ImVec4(0.46f, 0.18f, 0.05f, 0.88f) : theme::mp_fill;
+                if (!t.on) fill.w *= 0.45f;
+                tsplit.SetCurrentChannel(tdl, 0);
+                theme::chamfer_fill(tdl, a, b, cut, theme::u32(fill));
+                if (open || lit) theme::chamfer_glow(tdl, a, b, cut, theme::mp_bright, 2.0f * scale, scale, open ? 1 : 0.6f);
+                else theme::chamfer_line(tdl, a, b, cut, theme::u32(theme::mp_line, t.on ? 0.6f : 0.25f), 1.2f * scale);
+                tsplit.SetCurrentChannel(tdl, 1);
+                if (b.y > tab_bottom) tab_bottom = b.y;
             }
             if (ImGui::IsItemFocused()) focused_tab = t.id;
             else if (focused_tab == t.id) focused_tab = -99;
@@ -1425,6 +1471,21 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case 8: tab_about(); break;
                 case 9: tab_quit(scale, in_game); break;
                 }
+                if (t.id == -1 || t.id == 8) {
+                    // pages of ImGui's own controls (Prelaunch, Controls): Down with nowhere further down to go - text
+                    // after the last control, as Prelaunch's About - scrolls the page instead (a controller couldn't
+                    // reach it; user 2026-11-13). The move is ImGui's a frame later: unmoved two frames on, scroll.
+                    static ImGuiID down_from;
+                    static int down_wait;
+                    bool down = ImGui::GetCurrentContext()->NavCursorVisible && !any_popup &&
+                                ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+                                (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown) ||
+                                 ImGui::IsKeyPressed(ImGuiKey_DownArrow));
+                    if (down) down_from = ImGui::GetFocusID(), down_wait = 2;
+                    else if (down_wait > 0 && --down_wait == 0 && ImGui::GetFocusID() == down_from &&
+                             ImGui::GetScrollY() < ImGui::GetScrollMaxY())
+                        ImGui::SetScrollY(fminf(ImGui::GetScrollY() + ImGui::GetWindowHeight() * 0.3f, ImGui::GetScrollMaxY()));
+                }
                 static const char *scroll_test = getenv("LARECOMP_MENU_SCROLL");  // test hook: page scroll, 0..1
                 if (scroll_test) ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)atof(scroll_test));
                 ImGui::EndChild();
@@ -1434,6 +1495,13 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
         g_tab_request = -2;
         opt_focus_first(false);  // (a page without option rows: nothing took it)
         ImGui::EndTabBar();
+    }
+    tsplit.Merge(tdl);
+    if (tab_bottom > 0) {  // (a line under the tabs, across the window, as the pause screens' frames)
+        float x0 = ImGui::GetWindowPos().x + ImGui::GetStyle().WindowPadding.x * 0.5f;
+        float x1 = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x * 0.5f;
+        tdl->AddLine(ImVec2(x0, tab_bottom + 2 * scale), ImVec2(x1, tab_bottom + 2 * scale), theme::u32(theme::mp_line, 0.7f),
+                     1.5f * scale);
     }
 }
 
@@ -1446,6 +1514,51 @@ void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, v
     tabs_body(scale, in_game, prelaunch);
     ImGui::GetStyle() = saved;
     g_font = f0, g_font_big = f1;
+}
+
+// The settings window's look and header, here and on the start screen (launcher.mm), as the game's pause screens: a
+// dark panel with a dot grid, cut corners, a glowing orange frame and a fainter one inside it; the title in the middle
+// between two lines (as their "Inventory"), and a close X in the corner. Drawn into the current window (its background
+// left clear); true when the X was clicked.
+bool menu_window_header(float scale, ImFont *title_font) {
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    {
+        ImVec2 a = ImGui::GetWindowPos(), b(a.x + ImGui::GetWindowWidth(), a.y + ImGui::GetWindowHeight());
+        float cut = 34 * scale, in = 9 * scale;
+        theme::chamfer_fill(dl, a, b, cut, theme::u32(theme::mp_bg));
+        theme::dot_grid(dl, ImVec2(a.x + in, a.y + in), ImVec2(b.x - in, b.y - in), 26 * scale, theme::u32(theme::mp_line, 0.07f));
+        theme::chamfer_glow(dl, a, b, cut, theme::mp_line, 2.5f * scale, scale, 1.4f);
+        theme::chamfer_line(dl, ImVec2(a.x + in, a.y + in), ImVec2(b.x - in, b.y - in), cut - in * 0.4f,
+                            theme::u32(theme::mp_line, 0.35f), 1.2f * scale);
+    }
+    ImGui::PushFont(title_font);
+    {
+        const char *title = "SETTINGS";
+        float tw = ImGui::CalcTextSize(title).x, ww = ImGui::GetWindowWidth();
+        ImGui::SetCursorPosX((ww - tw) * 0.5f);
+        ImGui::TextColored(theme::mp_bright, "%s", title);
+        ImVec2 ta = ImGui::GetItemRectMin(), tb = ImGui::GetItemRectMax();
+        float y = (ta.y + tb.y) * 0.5f, gap = 26 * scale, wx = ImGui::GetWindowPos().x, edge = 96 * scale;
+        ImU32 lc = theme::u32(theme::mp_line, 0.8f);
+        dl->AddLine(ImVec2(wx + edge, y), ImVec2(ta.x - gap, y), lc, 2 * scale);  // (with a bracket at the title)
+        dl->AddLine(ImVec2(ta.x - gap, y - 9 * scale), ImVec2(ta.x - gap, y + 9 * scale), lc, 2 * scale);
+        dl->AddLine(ImVec2(tb.x + gap, y), ImVec2(wx + ww - edge, y), lc, 2 * scale);
+        dl->AddLine(ImVec2(tb.x + gap, y - 9 * scale), ImVec2(tb.x + gap, y + 9 * scale), lc, 2 * scale);
+    }
+    ImGui::PopFont();
+    float bx = 44 * scale;
+    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - bx);
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
+    bool close = ImGui::InvisibleButton("##close", ImVec2(bx, bx), ImGuiButtonFlags_EnableNav);
+    ImGui::PopStyleColor();
+    bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+    ImU32 col = hot ? theme::u32(theme::mp_bright) : theme::u32(theme::mp_line);
+    float m = bx * 0.3f, t = (hot ? 3.0f : 2.4f) * scale * 1.5f;
+    if (hot) theme::chamfer_fill(dl, p, ImVec2(p.x + bx, p.y + bx), bx * 0.25f, theme::u32(theme::mp_fill_hot));
+    dl->AddLine(ImVec2(p.x + m, p.y + m), ImVec2(p.x + bx - m, p.y + bx - m), col, t);
+    dl->AddLine(ImVec2(p.x + bx - m, p.y + m), ImVec2(p.x + m, p.y + bx - m), col, t);
+    return close;
 }
 
 void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
@@ -1508,31 +1621,15 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         float w = fminf(io.DisplaySize.x * 0.9f, 1500 * scale), h = io.DisplaySize.y - 2 * 18 * scale;  // (all the height: a slim margin)
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));  // (drawn below: the panel has cut corners)
         ImGui::Begin("##menu", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+        ImGui::PopStyleColor();
         ImFont *keep_big = g_font_big;  // (the window in the menu's font; header() uses g_font_big)
         g_font_big = g_menu_font_big;
         ImGui::PushFont(g_menu_font);
-        // header as on the start screen's Settings: the title, and a close X in the corner (B / Esc too). ("Title
-        // screen" - rt_request_reboot(RT_REBOOT_TITLE) - is to find a new home; user 2026-10-11.)
-        ImGui::PushFont(g_font_big);
-        ImGui::TextColored(theme::heading, "Settings");
-        ImGui::PopFont();
-        {
-            float bx = 44 * scale;
-            ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - bx);
-            ImVec2 p = ImGui::GetCursorScreenPos();
-            ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
-            bool close = ImGui::InvisibleButton("##close", ImVec2(bx, bx), ImGuiButtonFlags_EnableNav);
-            ImGui::PopStyleColor();
-            bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-            ImU32 col = hot ? theme::u32(theme::accent) : theme::u32(theme::text);
-            float m = bx * 0.3f, t = (hot ? 3.0f : 2.4f) * scale * 1.5f;
-            ImDrawList *dl = ImGui::GetWindowDrawList();
-            if (hot) dl->AddRectFilled(p, ImVec2(p.x + bx, p.y + bx), IM_COL32(255, 255, 255, 20), 8 * scale);
-            dl->AddLine(ImVec2(p.x + m, p.y + m), ImVec2(p.x + bx - m, p.y + bx - m), col, t);
-            dl->AddLine(ImVec2(p.x + bx - m, p.y + m), ImVec2(p.x + m, p.y + bx - m), col, t);
-            if (close) set_open(false);
-        }
+        // (B / Esc close it too. "Title screen" - rt_request_reboot(RT_REBOOT_TITLE) - is to find a new home; user
+        // 2026-10-11.)
+        if (menu_window_header(scale, g_font_big)) set_open(false);
 
         bool any_popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), typing = ui_text_busy();  // (before the
         tabs_body(scale, true, NULL);                                                                          //  pages run)
