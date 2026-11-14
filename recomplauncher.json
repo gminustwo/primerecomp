@@ -205,6 +205,15 @@
       "defaults": {"hdr_paper_white_nits": "200"}
     },
     {
+      "id": "hdr_wide_color",
+      "label": "HDR wide color",
+      "group": "Video",
+      "advanced": true,
+      "help": "Percent. Makes the world's colors richer, out into the wider range HDR displays have (up to BT.2020 at 100%). The game has no colors of its own past the ordinary range: 0 keeps its look. Grays, brightness and the HUD stay as they are.",
+      "slider": {"key": "hdr_wide_color", "min": 0, "max": 100, "step": 5, "format": "%d"},
+      "defaults": {"hdr_wide_color": "0"}
+    },
+    {
       "id": "fov",
       "label": "Field of view",
       "group": "Video",

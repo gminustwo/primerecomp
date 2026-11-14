@@ -567,6 +567,15 @@ static void tab_display(void) {
                 "How bright white is - the menus, the HUD, a white wall in daylight: everything up to the game's own "
                 "white. 200 suits most rooms; more in a bright room, less in a dark one. The highlights go above it "
                 "up to the peak brightness.");
+        if (!g_settings.hdr) opt_disable_next();
+        opt_int("Wide color", &g_settings.hdr_wide, 0, HDR_WIDE_MAX, 5, 0, "%d%%",
+                "Makes the world's colors richer - lava, energy, plants, water, Phazon, the sky - out into the wider "
+                "color range HDR displays have, past what an ordinary (SDR) screen can show (up to BT.2020 at 100%: "
+                "your display shows as much of it as it can). The game has no colors of its own past the ordinary "
+                "range: these are made from its colors, so Off keeps the game's look. The more colorful something "
+                "is, the more it changes; grays stay gray, nothing gets brighter or darker, and the HUD, visors and "
+                "menus keep their colors.",
+                "Off");
     }
 
     opt_section("Rendering");

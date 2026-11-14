@@ -4287,7 +4287,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
     float rs[66][4] = {{1, 1, 0, 0}};  // ([65]: mirror mode)
     if (rscale_row0) memcpy(rs[0], rscale_row0, 16);
     rs[65][0] = g_mirror_w;
-    rs[64][2] = vk_hdr_shoulder();  // (the patched tonemapper: hdr.c hdr_patch_tonemap)
+    rs[64][2] = vk_hdr_shoulder(), rs[64][3] = vk_hdr_wide();  // (the patched tonemapper: hdr.c hdr_patch_tonemap)
     for (int i = 0; i < p->nbinds; i++) {
         VkBindingInfo *b = &p->binds[i];
         if (b->set != set) continue;

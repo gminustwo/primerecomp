@@ -232,6 +232,7 @@ void settings_load(void) {
         else if (!strcmp(key, "hdr")) g_settings.hdr = atoi(val) != 0;
         else if (!strcmp(key, "hdr_peak_nits")) g_settings.hdr_peak = atoi(val);
         else if (!strcmp(key, "hdr_paper_white_nits")) g_settings.hdr_paper = atoi(val);
+        else if (!strcmp(key, "hdr_wide_color")) g_settings.hdr_wide = atoi(val);
         else if (!strcmp(key, "fov")) g_settings.fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
         else if (!strcmp(key, "weapon_fov"))
             g_settings.weapon_fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
@@ -326,6 +327,8 @@ void settings_load(void) {
     if (g_settings.hdr_peak > HDR_PEAK_MAX) g_settings.hdr_peak = HDR_PEAK_MAX;
     if (g_settings.hdr_paper < HDR_PAPER_MIN) g_settings.hdr_paper = HDR_PAPER_MIN;
     if (g_settings.hdr_paper > HDR_PAPER_MAX) g_settings.hdr_paper = HDR_PAPER_MAX;
+    if (g_settings.hdr_wide < 0) g_settings.hdr_wide = 0;
+    if (g_settings.hdr_wide > HDR_WIDE_MAX) g_settings.hdr_wide = HDR_WIDE_MAX;
     LOG("[settings] loaded %s\n", SETTINGS_FILE);
     log_settings(true);
     if (migrated) settings_save();
@@ -368,8 +371,8 @@ static void write_settings(void *o) {
     if (g_settings.mods_order[0]) put(o, "mods_order = %s\n", g_settings.mods_order);
     if (g_settings.mods_disabled[0]) put(o, "mods_disabled = %s\n", g_settings.mods_disabled);
     if (g_settings.cheats_on[0]) put(o, "cheats_on = %s\n", g_settings.cheats_on);
-    put(o, "hdr = %d\nhdr_peak_nits = %d\nhdr_paper_white_nits = %d\n", g_settings.hdr, g_settings.hdr_peak,
-            g_settings.hdr_paper);
+    put(o, "hdr = %d\nhdr_peak_nits = %d\nhdr_paper_white_nits = %d\nhdr_wide_color = %d\n", g_settings.hdr,
+        g_settings.hdr_peak, g_settings.hdr_paper, g_settings.hdr_wide);
     put(o, "fov = %d\nweapon_fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.weapon_fov,
             g_settings.skippable_cutscenes, g_settings.gyro);
     put(o, "crosshair = %d\n", g_settings.crosshair);

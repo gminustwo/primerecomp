@@ -175,6 +175,7 @@ VkShaderModule vk_builtin_shader(const char *name);  // internal shaders (clear,
 enum { HDR_OUT_NONE, HDR_OUT_SCRGB, HDR_OUT_PQ, HDR_OUT_TEST /* (LARECOMP_HDR_TEST: on the SDR swapchain) */ };
 int vk_hdr_choose(const VkSurfaceFormatKHR *f, uint32_t n, VkSurfaceFormatKHR *out);  // an HDR format of these (HDR_OUT_*)
 float vk_hdr_shoulder(void);   // the patched tonemapper's peak over paper white (0: not an HDR frame)
+float vk_hdr_wide(void);       // the patched tonemapper's Wide color, 0..1 (0: not an HDR frame)
 bool vk_hdr_frame(void);       // the frame being drawn is HDR (its rendering is into the composite)
 void vk_hdr_frame_begin(VkCommandBuffer cb, const float clear[4]);
 void vk_hdr_frame_resume(VkCommandBuffer cb);

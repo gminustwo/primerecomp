@@ -466,6 +466,10 @@ static const char *builtin_src(const char *name, int *stage) {
     // ---- HDR output (hdr.c): the shared transfer functions, then the passes
 #define HDR_FUNCS                                                                                                 \
     "vec3 srgb_dec(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }\n" \
+    "const mat3 to2020 = mat3(0.6274040, 0.0690970, 0.0163916, 0.3292820, 0.9195400, 0.0880132,\n"               \
+    "                         0.0433136, 0.0113612, 0.8955950);\n"                                                \
+    "const mat3 from2020 = mat3(1.6604910, -0.1245505, -0.0181508, -0.5876411, 1.1328999, -0.1005789,\n"         \
+    "                           -0.0728499, -0.0083494, 1.1187297);\n"                                            \
     "vec3 pq_enc(vec3 nits) {\n"                                                                                 \
     "  vec3 y = pow(clamp(nits / 10000.0, 0.0, 1.0), vec3(0.1593017578125));\n"                                 \
     "  return pow((0.8359375 + 18.8515625 * y) / (1.0 + 18.6875 * y), vec3(78.84375));\n"                       \
@@ -474,8 +478,9 @@ static const char *builtin_src(const char *name, int *stage) {
     "  vec3 p = pow(clamp(e, 0.0, 1.0), vec3(1.0 / 78.84375));\n"                                               \
     "  return 10000.0 * pow(max(p - 0.8359375, 0.0) / (18.8515625 - 18.6875 * p), vec3(1.0 / 0.1593017578125));\n" \
     "}\n"
-    // The game's image (post pass, before SMAA / FSR) as PQ. a.x: 1 = its texels are sRGB-encoded bytes (else linear);
-    // a.y: paper white, nits
+    // The game's image (post pass, before SMAA / FSR / DLSS) as PQ, in BT.2020 (Wide color's colors past BT.709 are
+    // linear BT.709 with a channel below 0: inside BT.2020 they're all positive). a.x: 1 = its texels are sRGB-encoded
+    // bytes (else linear); a.y: paper white, nits
     if (!strcmp(name, "hdr_encode.frag")) {
         *stage = STAGE_FRAGMENT;
         return "#version 450\n"
@@ -485,12 +490,13 @@ static const char *builtin_src(const char *name, int *stage) {
                "void main() {\n"
                "  vec3 c = texelFetch(t, ivec2(gl_FragCoord.xy), 0).rgb;\n"
                "  if (pc.a.x > 0.5) c = srgb_dec(c);\n"
-               "  o = vec4(pq_enc(max(c, 0.0) * pc.a.y), 1.0);\n"
+               "  o = vec4(pq_enc(max(to2020 * c, 0.0) * pc.a.y), 1.0);\n"
                "}\n";
     }
     // The game's image into the frame's composite (linear, 1.0 = paper white), with present.vert. m.x: what its
     // texels are - 0 linear, 1 sRGB-encoded bytes, 2 PQ (hdr_encode, SMAA / FSR); m.y: paper white, nits; m.z: 1 =
-    // into an SDR window image instead, sRGB-encoded (a frame of linear texels that goes out as SDR after all)
+    // into an SDR window image instead, sRGB-encoded (a frame of linear texels that goes out as SDR after all).
+    // Kept inside BT.2020, so Wide color's colors (hdr.c) stay as they are: linear BT.709 with a channel below 0.
     if (!strcmp(name, "present_hdr.frag")) {
         *stage = STAGE_FRAGMENT;
         return "#version 450\n"
@@ -500,10 +506,10 @@ static const char *builtin_src(const char *name, int *stage) {
                "layout(location = 0) out vec4 o;\n" HDR_FUNCS
                "void main() {\n"
                "  vec3 c = texture(t, uv).rgb;\n"
-               "  if (pc.m.x > 1.5) c = pq_dec(c) / pc.m.y;\n"
+               "  if (pc.m.x > 1.5) c = from2020 * (pq_dec(c) / pc.m.y);\n"
                "  else if (pc.m.x > 0.5) c = srgb_dec(c);\n"
-               "  c = max(c, 0.0);\n"
-               "  if (pc.m.z > 0.5) { c = min(c, 1.0); c = mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }\n"
+               "  c = from2020 * max(to2020 * c, 0.0);\n"
+               "  if (pc.m.z > 0.5) { c = clamp(c, 0.0, 1.0); c = mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }\n"
                "  o = vec4(c, 1.0);\n"
                "}\n";
     }
@@ -519,21 +525,20 @@ static const char *builtin_src(const char *name, int *stage) {
                "}\n";
     }
     // The composite into the HDR swapchain. m.x: 1 scRGB (linear BT.709, 1.0 = 80 nits), 2 HDR10 (BT.2020, PQ),
-    // 3 (LARECOMP_HDR_TEST) sRGB-encoded, paper white = 1; m.y: paper white, m.z: peak, nits
+    // 3 (LARECOMP_HDR_TEST) sRGB-encoded, paper white = 1; m.y: paper white, m.z: peak, nits. A channel below 0: a
+    // color past BT.709 (Wide color) - scRGB as it is, HDR10 inside BT.2020 then.
     if (!strcmp(name, "hdr_out.frag")) {
         *stage = STAGE_FRAGMENT;
         return "#version 450\n"
                "layout(set = 0, binding = 0) uniform sampler2D t;\n"
                "layout(push_constant) uniform P { layout(offset = 32) vec4 m; } pc;\n"
                "layout(location = 0) out vec4 o;\n" HDR_FUNCS
-               "const mat3 to2020 = mat3(0.6274040, 0.0690970, 0.0163916, 0.3292820, 0.9195400, 0.0880132,\n"
-               "                         0.0433136, 0.0113612, 0.8955950);\n"
                "void main() {\n"
-               "  vec3 nits = max(texelFetch(t, ivec2(gl_FragCoord.xy), 0).rgb, 0.0) * pc.m.y;\n"
+               "  vec3 nits = texelFetch(t, ivec2(gl_FragCoord.xy), 0).rgb * pc.m.y;\n"
                "  if (pc.m.x > 2.5) { vec3 c = clamp(nits / pc.m.y, 0.0, 1.0);\n"
                "    o = vec4(mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)), 1.0); }\n"
-               "  else if (pc.m.x > 1.5) o = vec4(pq_enc(min(to2020 * nits, vec3(pc.m.z))), 1.0);\n"
-               "  else o = vec4(min(nits, vec3(pc.m.z)) / 80.0, 1.0);\n"
+               "  else if (pc.m.x > 1.5) o = vec4(pq_enc(clamp(to2020 * nits, 0.0, pc.m.z)), 1.0);\n"
+               "  else o = vec4(clamp(nits, -pc.m.z, pc.m.z) / 80.0, 1.0);\n"
                "}\n";
     }
 #undef HDR_FUNCS

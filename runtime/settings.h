@@ -31,6 +31,7 @@ enum { N_HINT_WAITS = 33 };
 extern const int g_hint_waits[N_HINT_WAITS];
 int settings_hint_wait_index(int seconds);  // the offered wait nearest to it
 enum { HDR_PEAK_MIN = 400, HDR_PEAK_MAX = 4000, HDR_PAPER_MIN = 80, HDR_PAPER_MAX = 500 };  // (nits: Video tab "HDR")
+enum { HDR_WIDE_MAX = 100 };  // (percent: Video tab "Wide color")
 // Gameplay tab "Suit colors" (runtime/nvn/vulkan/suitmods.c): Samus' suit as the game made it or in the player's own
 // colors, from a palette
 enum { SUIT_ORIGINAL = 0, SUIT_CUSTOM = 1, SUIT_STYLES };
@@ -93,6 +94,8 @@ typedef struct {
                          // past paper white, up to hdr_peak
     int hdr_peak;        // HDR: the display's peak brightness, nits (HDR_PEAK_MIN..MAX)
     int hdr_paper;       // HDR: paper white - the menus, the HUD, a white wall in daylight - nits (HDR_PAPER_MIN..MAX)
+    int hdr_wide;        // HDR: Wide color, percent (0..HDR_WIDE_MAX; 0 = the game's colors): the scene's colors pushed
+                         // past BT.709, up to BT.2020 (runtime/nvn/vulkan/hdr.c pr_widen)
     int fov;             // first-person vertical field of view in degrees, FOV_MIN..FOV_MAX (55: the game's): game.c
     int weapon_fov;      // the arm cannon's, drawn as at this field of view whatever the view's (FOV_MIN..FOV_MAX;
                          // 55: as the game draws it; = fov: as before 2026-11, wider with the view): game.c, exec.c
