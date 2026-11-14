@@ -168,6 +168,17 @@
       "defaults": {"pause": "fill"}
     },
     {
+      "id": "crosshair",
+      "label": "Crosshair",
+      "group": "Video",
+      "help": "The aiming crosshair in the middle of the Combat Visor. Off hides it; the lock-on, scan and grapple markers still show what you can target.",
+      "choices": [
+        {"label": "Off", "set": {"crosshair": "0"}},
+        {"label": "On", "set": {"crosshair": "1"}}
+      ],
+      "defaults": {"crosshair": "1"}
+    },
+    {
       "id": "hdr",
       "label": "HDR",
       "group": "Video",
@@ -286,6 +297,14 @@
       "group": "Controls",
       "slider": {"key": "deadzone_right", "min": 0, "max": 0.3, "step": 0.01, "format": "%.2f"},
       "defaults": {"deadzone_right": "0.05"}
+    },
+    {
+      "id": "left_stick_straight",
+      "label": "Left stick straight ahead",
+      "group": "Controls",
+      "help": "Walks dead straight when the left stick is within this many degrees of straight up or down. 0 turns it off.",
+      "slider": {"key": "left_stick_straight", "min": 0, "max": 20, "step": 1, "format": "%d"},
+      "defaults": {"left_stick_straight": "0"}
     },
     {
       "id": "gyro",
@@ -476,6 +495,107 @@
         {"label": "On", "set": {"hint_on_l3": "1"}}
       ],
       "defaults": {"hint_on_l3": "1"}
+    },
+    {
+      "id": "suit_colors",
+      "label": "Suit colors",
+      "group": "Suit",
+      "help": "Samus' suit in other colors. Original is the game's; Custom uses the helmet, armor and body colors below. Made from your own game files as the suit loads.",
+      "choices": [
+        {"label": "Original", "set": {"suit_colors": "original"}},
+        {"label": "Custom", "set": {"suit_colors": "custom"}}
+      ],
+      "defaults": {"suit_colors": "original"}
+    },
+    {
+      "id": "suit_helmet",
+      "label": "Helmet",
+      "group": "Suit",
+      "help": "The helmet's shell, the brow over the visor and the bulbs at its sides.",
+      "choices": [
+        {"label": "Red", "set": {"suit_helmet": "red"}},
+        {"label": "Crimson", "set": {"suit_helmet": "crimson"}},
+        {"label": "Orange", "set": {"suit_helmet": "orange"}},
+        {"label": "Gold", "set": {"suit_helmet": "gold"}},
+        {"label": "Yellow", "set": {"suit_helmet": "yellow"}},
+        {"label": "Lime", "set": {"suit_helmet": "lime"}},
+        {"label": "Green", "set": {"suit_helmet": "green"}},
+        {"label": "Teal", "set": {"suit_helmet": "teal"}},
+        {"label": "Cyan", "set": {"suit_helmet": "cyan"}},
+        {"label": "Sky blue", "set": {"suit_helmet": "sky blue"}},
+        {"label": "Blue", "set": {"suit_helmet": "blue"}},
+        {"label": "Navy", "set": {"suit_helmet": "navy"}},
+        {"label": "Purple", "set": {"suit_helmet": "purple"}},
+        {"label": "Magenta", "set": {"suit_helmet": "magenta"}},
+        {"label": "Pink", "set": {"suit_helmet": "pink"}},
+        {"label": "White", "set": {"suit_helmet": "white"}},
+        {"label": "Silver", "set": {"suit_helmet": "silver"}},
+        {"label": "Graphite", "set": {"suit_helmet": "graphite"}},
+        {"label": "Black", "set": {"suit_helmet": "black"}},
+        {"label": "Brown", "set": {"suit_helmet": "brown"}}
+      ],
+      "defaults": {"suit_helmet": "blue"},
+      "when": {"suit_colors": "custom"}
+    },
+    {
+      "id": "suit_armor",
+      "label": "Armor",
+      "group": "Suit",
+      "help": "The chest and shoulders of the Power Suit, and the chest of the Varia and Gravity Suits.",
+      "choices": [
+        {"label": "Red", "set": {"suit_armor": "red"}},
+        {"label": "Crimson", "set": {"suit_armor": "crimson"}},
+        {"label": "Orange", "set": {"suit_armor": "orange"}},
+        {"label": "Gold", "set": {"suit_armor": "gold"}},
+        {"label": "Yellow", "set": {"suit_armor": "yellow"}},
+        {"label": "Lime", "set": {"suit_armor": "lime"}},
+        {"label": "Green", "set": {"suit_armor": "green"}},
+        {"label": "Teal", "set": {"suit_armor": "teal"}},
+        {"label": "Cyan", "set": {"suit_armor": "cyan"}},
+        {"label": "Sky blue", "set": {"suit_armor": "sky blue"}},
+        {"label": "Blue", "set": {"suit_armor": "blue"}},
+        {"label": "Navy", "set": {"suit_armor": "navy"}},
+        {"label": "Purple", "set": {"suit_armor": "purple"}},
+        {"label": "Magenta", "set": {"suit_armor": "magenta"}},
+        {"label": "Pink", "set": {"suit_armor": "pink"}},
+        {"label": "White", "set": {"suit_armor": "white"}},
+        {"label": "Silver", "set": {"suit_armor": "silver"}},
+        {"label": "Graphite", "set": {"suit_armor": "graphite"}},
+        {"label": "Black", "set": {"suit_armor": "black"}},
+        {"label": "Brown", "set": {"suit_armor": "brown"}}
+      ],
+      "defaults": {"suit_armor": "red"},
+      "when": {"suit_colors": "custom"}
+    },
+    {
+      "id": "suit_body",
+      "label": "Body",
+      "group": "Suit",
+      "help": "The rest of the suit: the arms and legs and the Varia Suit's shoulders.",
+      "choices": [
+        {"label": "Red", "set": {"suit_body": "red"}},
+        {"label": "Crimson", "set": {"suit_body": "crimson"}},
+        {"label": "Orange", "set": {"suit_body": "orange"}},
+        {"label": "Gold", "set": {"suit_body": "gold"}},
+        {"label": "Yellow", "set": {"suit_body": "yellow"}},
+        {"label": "Lime", "set": {"suit_body": "lime"}},
+        {"label": "Green", "set": {"suit_body": "green"}},
+        {"label": "Teal", "set": {"suit_body": "teal"}},
+        {"label": "Cyan", "set": {"suit_body": "cyan"}},
+        {"label": "Sky blue", "set": {"suit_body": "sky blue"}},
+        {"label": "Blue", "set": {"suit_body": "blue"}},
+        {"label": "Navy", "set": {"suit_body": "navy"}},
+        {"label": "Purple", "set": {"suit_body": "purple"}},
+        {"label": "Magenta", "set": {"suit_body": "magenta"}},
+        {"label": "Pink", "set": {"suit_body": "pink"}},
+        {"label": "White", "set": {"suit_body": "white"}},
+        {"label": "Silver", "set": {"suit_body": "silver"}},
+        {"label": "Graphite", "set": {"suit_body": "graphite"}},
+        {"label": "Black", "set": {"suit_body": "black"}},
+        {"label": "Brown", "set": {"suit_body": "brown"}}
+      ],
+      "defaults": {"suit_body": "white"},
+      "when": {"suit_colors": "custom"}
     },
     {
       "id": "infinite_energy",
