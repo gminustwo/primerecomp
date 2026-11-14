@@ -150,6 +150,39 @@ static bool capturing() { return g_open.load() || g_kbd.load() == 1; }
 // The game gets no input while this is true (runtime/hle/input.c): menu or name entry up.
 extern "C" bool menu_input_captured(void) { return capturing(); }
 
+// The keyboard's menu keys (Controls: Menus: accept / back - Space and Left Alt by default) in ImGui's terms, here and
+// on the start screen (launcher.mm): accept as Space (activates), back as Escape. A modifier as back (Left Alt) acts as
+// it's let go by itself, so Alt+Tab / Alt+Enter aren't also back (and ImGui never sees it: Alt alone would move its
+// cursor to a window's menu layer). True: the event is taken - emit got what it means.
+bool menu_key_event(const SDL_Event *e, void (*emit)(ImGuiKey key, bool down, void *ctx), void *ctx) {
+    static bool back_pending;
+    if (e->type == SDL_EVENT_MOUSE_BUTTON_DOWN) back_pending = false;
+    if (e->type != SDL_EVENT_KEY_DOWN && e->type != SDL_EVENT_KEY_UP) return false;
+    int sc = e->key.scancode, acc = g_bind_key[BIND_MENU_ACCEPT], back = g_bind_key[BIND_MENU_BACK];
+    bool down = e->type == SDL_EVENT_KEY_DOWN;
+    if (down && !e->key.repeat && sc != back) back_pending = false;
+    if (back > 0 && sc == back) {
+        if (sc >= SDL_SCANCODE_LCTRL && sc <= SDL_SCANCODE_RGUI) {
+            if (down && !e->key.repeat) back_pending = true;
+            else if (!down && back_pending) back_pending = false, emit(ImGuiKey_Escape, true, ctx), emit(ImGuiKey_Escape, false, ctx);
+            return true;
+        }
+        if (sc == SDL_SCANCODE_ESCAPE) return false;  // (Escape itself: as it is)
+        emit(ImGuiKey_Escape, down, ctx);
+        return true;
+    }
+    if (acc > 0 && sc == acc && sc != SDL_SCANCODE_SPACE) {
+        emit(ImGuiKey_Space, down, ctx);
+        return true;
+    }
+    return false;
+}
+static void overlay_key(ImGuiKey k, bool down, void *) {
+    QEvent q = {};
+    q.kind = QEvent::KEY, q.key = k, q.down = down;
+    push(q);
+}
+
 bool menu_handle_event(const SDL_Event *e) {
     static bool back_down, start_down, ls_down, rs_down;
     if (g_open.load() && bind_capture_event(e)) return true;  // Controls tab waiting for a new binding: it takes the press
@@ -165,6 +198,7 @@ bool menu_handle_event(const SDL_Event *e) {
     }
     // typing (a text field, the on-screen keyboard, the name entry): keys are text, not menu shortcuts
     bool typing = g_kbd.load() == 1 || (g_open.load() && g_text_busy.load());
+    if (g_open.load() && !typing && menu_key_event(e, overlay_key, NULL)) return true;  // (the menu keys as bound)
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN:
         // F1 only: Esc is the game's pause menu, as in a PC shooter (runtime/hle/bindings.c; it also closes this menu,
@@ -1279,8 +1313,11 @@ static void tab_about(void) {
     ImGui::Spacing();
     header("Menu");
     ImGui::TextUnformatted("Open / close this menu:  F1, both sticks pressed in, Back + Start, or the controller's Home button");
-    ImGui::TextUnformatted("Switch tabs:  L / R  (Q / E)        Back:  B  (Esc)");
-    ImGui::TextUnformatted("In the game's menus:  Enter / Space confirm, Esc / Backspace go back, Q / E switch pages, Delete is -");
+    {   // (the keyboard's menu keys as bound: Controls, Menus: accept / back)
+        const char *acc = bind_key_label(g_bind_key[BIND_MENU_ACCEPT]), *back = bind_key_label(g_bind_key[BIND_MENU_BACK]);
+        ImGui::Text("Switch tabs:  L / R  (Q / E)        Accept:  A  (%s)        Back:  B  (%s)", acc, back);
+        ImGui::Text("In the game's menus:  %s confirms, %s goes back, Q / E switch pages, Delete is -", acc, back);
+    }
     ImGui::TextUnformatted("The mouse:  point at an item and click it (the title screen, save slots, difficulty and settings)");
     ImGui::TextUnformatted("Fullscreen:  F11 / Alt+Enter");
 }

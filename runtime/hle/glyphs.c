@@ -215,6 +215,11 @@ void glyphs_frame(void) {  // what the icons depend on: the set, the bindings, m
         for (int sc = SDL_SCANCODE_COUNT - 1; sc > 0; sc--)
             if (input_menu_key(sc) >= 0 && input_menu_key(sc) < BIND_PAD_COUNT) menu_for[input_menu_key(sc)] = sc;
     }
+    // A and B: the keyboard's Menus: accept / back bindings (Space / Left Alt by default), as they are now
+    for (int i = 0; i < 2; i++) {
+        int k = g_bind_key[i ? BIND_MENU_BACK : BIND_MENU_ACCEPT];
+        if (k > 0 && k < SDL_SCANCODE_COUNT) menu_for[i ? BIND_B : BIND_A] = k;
+    }
     int16_t pad_now[BIND_PAD_COUNT], key_now[BIND_PAD_COUNT], mod_now[BIND_PAD_COUNT][BIND_MODS] = {{0}};
     for (int i = 0; i < BIND_PAD_COUNT; i++) {
         pad_now[i] = menu && g_settings.face_buttons == FACE_LABELS && i <= BIND_Y ? (int16_t)bind_label_host(i)

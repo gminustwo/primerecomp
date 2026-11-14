@@ -655,6 +655,7 @@ static int g_refocus = MAIN;  // back on the main page: select the item of the p
 static bool g_menu_small;  // sub pages: buttons in the small font
 void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, void (*prelaunch)(float));  // menu.mm
 bool menu_window_header(float scale, ImFont *title_font);  // menu.mm
+bool menu_key_event(const SDL_Event *e, void (*emit)(ImGuiKey key, bool down, void *ctx), void *ctx);  // menu.mm
 void menu_tabs_focus(bool first_tab);
 extern int g_tab_request_ext;
 extern "C" void menu_apply_window_requests(void *sdl_window);
@@ -1344,6 +1345,9 @@ extern "C" void launcher_run(const char *root) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (page == SETTINGS && bind_capture_event(&e)) continue;  // (waiting for a new binding: controls_ui.mm)
+            // the keyboard's menu keys as bound (Space accepts, Left Alt goes back: menu.mm), not while typing
+            if (!io.WantTextInput && menu_key_event(&e, [](ImGuiKey k, bool down, void *) { ImGui::GetIO().AddKeyEvent(k, down); }, NULL))
+                continue;
             if (!launcher_pad_event(e)) ImGui_ImplSDL3_ProcessEvent(&e);
             if (e.type == SDL_EVENT_QUIT) exit(0);
         }
@@ -1376,11 +1380,20 @@ extern "C" void launcher_run(const char *root) {
             // controller is connected
             if (SDL_HasGamepad()) io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
             {   // (test) LARECOMP_LAUNCHER_KEYS=<frame>:<key>[,...]: a controller press at that start-screen frame,
-                // let go the frame after (key: up, down, left, right, a, b, l1, r1)
-                static struct { long at; ImGuiKey k; } tk[32];
+                // let go the frame after (key: up, down, left, right, a, b, l1, r1); or a keyboard key as SDL events
+                // (space, lalt, enter, esc: through the event loop, as typed)
+                static struct { long at; ImGuiKey k; int sc; } tk[32];
                 static int ntk = -1;
                 static long tframe;
                 static ImGuiKey held = ImGuiKey_None;
+                static int held_sc;
+                auto key_ev = [win](int sc, bool down) {  // (the window's: ImGui's backend drops other windows' keys)
+                    SDL_Event ev = {};
+                    ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+                    ev.key.scancode = (SDL_Scancode)sc, ev.key.down = down, ev.key.windowID = SDL_GetWindowID(win);
+                    ev.key.key = SDL_GetKeyFromScancode((SDL_Scancode)sc, SDL_KMOD_NONE, false);
+                    SDL_PushEvent(&ev);
+                };
                 if (ntk < 0) {
                     ntk = 0;
                     for (const char *e = getenv("LARECOMP_LAUNCHER_KEYS"); e && *e && ntk < 32;) {
@@ -1392,7 +1405,11 @@ extern "C" void launcher_run(const char *root) {
                                 {"left", ImGuiKey_GamepadDpadLeft}, {"right", ImGuiKey_GamepadDpadRight},
                                 {"a", ImGuiKey_GamepadFaceDown}, {"b", ImGuiKey_GamepadFaceRight},
                                 {"l1", ImGuiKey_GamepadL1}, {"r1", ImGuiKey_GamepadR1}};
-                            for (auto &m : map) if (!strcmp(name, m.n)) tk[ntk].at = at, tk[ntk++].k = m.k;
+                            static const struct { const char *n; int sc; } kmap[] = {
+                                {"space", SDL_SCANCODE_SPACE}, {"lalt", SDL_SCANCODE_LALT}, {"enter", SDL_SCANCODE_RETURN},
+                                {"esc", SDL_SCANCODE_ESCAPE}};
+                            for (auto &m : map) if (!strcmp(name, m.n)) tk[ntk].at = at, tk[ntk].sc = 0, tk[ntk++].k = m.k;
+                            for (auto &m : kmap) if (!strcmp(name, m.n)) tk[ntk].at = at, tk[ntk].k = ImGuiKey_None, tk[ntk++].sc = m.sc;
                         }
                         e = strchr(e, ',');
                         e = e ? e + 1 : NULL;
@@ -1400,8 +1417,12 @@ extern "C" void launcher_run(const char *root) {
                 }
                 tframe++;
                 if (held != ImGuiKey_None) io.AddKeyEvent(held, false), held = ImGuiKey_None;
+                if (held_sc) key_ev(held_sc, false), held_sc = 0;
                 for (int i = 0; i < ntk; i++)
-                    if (tk[i].at == tframe) io.AddKeyEvent(tk[i].k, true), held = tk[i].k;
+                    if (tk[i].at == tframe) {
+                        if (tk[i].sc) key_ev(tk[i].sc, true), held_sc = tk[i].sc;
+                        else io.AddKeyEvent(tk[i].k, true), held = tk[i].k;
+                    }
                 if (ntk > 0) io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
             }
             ImGui::NewFrame();
@@ -1790,7 +1811,7 @@ extern "C" void launcher_run(const char *root) {
             osk_draw(g_font_menu, s * 0.7f);  // (a text field activated with the controller)
             typed_before = ui_text_busy();
 
-            {   // PLAY while the shader pre-load runs: wait for it (B / Esc: play now, the game takes what's ready)
+            {   // PLAY while the shader pre-load runs: wait for it (B / back: play now, the game takes what's ready)
                 int done = 0, total = 0;
                 bool loading = vk_preload_progress(&done, &total);
                 if (autoplay) play = true, autoplay = false;
@@ -1807,8 +1828,11 @@ extern "C" void launcher_run(const char *root) {
                     if (total) snprintf(line, sizeof line, "%d of %d   %d%%", done, total, (int)(100.0 * done / total));
                     else if (stotal) snprintf(line, sizeof line, "Finding the game's shaders: %d of %d", sdone, stotal);
                     else snprintf(line, sizeof line, "Reading the shader record...");
+                    char now_line[96];  // (back as bound on the keyboard: Left Alt by default, menu.mm menu_key_event)
+                    snprintf(now_line, sizeof now_line, "B / %s: play now - the rest loads while you play.",
+                             bind_key_label(g_bind_key[BIND_MENU_BACK]));
                     const char *notes[] = {"The game's shaders, so nothing pops in or hitches the first time you see it.",
-                                           "B / Esc: play now - the rest loads while you play."};
+                                           now_line};
                     progress_panel(ds, ds.y / 1080.0f, "Loading shaders", line, notes, 2, total ? (float)done / total : 0);
                 }
             }

@@ -24,8 +24,13 @@ enum {
     BIND_RS_UP, BIND_RS_DOWN, BIND_RS_LEFT, BIND_RS_RIGHT,
     // one key for a beam: X held (the game's beam select) and that beam's d-pad direction
     BIND_BEAM_POWER, BIND_BEAM_WAVE, BIND_BEAM_ICE, BIND_BEAM_PLASMA,
-    BIND_KEY_COUNT                                       // keyboard: buttons + both sticks + beams
+    // the keyboard's menu keys - the game's menus, the in-game menu, the start screen: accept (A; Space by default) and
+    // back (B; Left Alt). Not bindings in play: they don't conflict with the ones above, and take a single key. A
+    // modifier (Left Alt) as back acts as it's let go by itself, so Alt+Tab / Alt+Enter aren't also back.
+    BIND_MENU_ACCEPT, BIND_MENU_BACK,
+    BIND_KEY_COUNT                                       // keyboard: buttons + both sticks + beams + menu keys
 };
+#define BIND_PLAY_KEY_COUNT BIND_MENU_ACCEPT              // (the keyboard's bindings in play: those before the menu keys)
 enum { BIND_DEV_PAD, BIND_DEV_KEY };
 // Controller binding values: an SDL_GamepadButton, or the analog triggers as buttons
 enum { PADB_LTRIGGER = 26 /* SDL_GAMEPAD_BUTTON_COUNT */, PADB_RTRIGGER, PADB_HOST_COUNT };

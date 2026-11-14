@@ -19,7 +19,7 @@ _Static_assert(BIND_MOUSE_LEFT == SDL_SCANCODE_COUNT, "mouse buttons follow SDL'
 // mouse aim; the arrows turn), left click shoots (ZR), right click locks on / scans (ZL), Space jumps (B), F fires a
 // missile (R), Left Ctrl morphs (Y), Q / E / R / T the Combat / Scan / Thermal / X-Ray visors (d-pad up / right /
 // down / left), 1-4 the beams, Tab the map (Plus), Esc the pause menu (Minus), Enter = A, X = X (beam select),
-// Left Shift = L (jump).
+// Left Shift = L (jump). In menus Space accepts and Left Alt goes back (BIND_MENU_*: the user's choice, 2026-11-13).
 #define DEF_PAD { \
     SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_NORTH, SDL_GAMEPAD_BUTTON_WEST, \
     SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_GAMEPAD_BUTTON_RIGHT_STICK, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, \
@@ -30,7 +30,8 @@ _Static_assert(BIND_MOUSE_LEFT == SDL_SCANCODE_COUNT, "mouse buttons follow SDL'
     SDL_SCANCODE_LSHIFT, SDL_SCANCODE_F, BIND_MOUSE_RIGHT, BIND_MOUSE_LEFT, SDL_SCANCODE_TAB, SDL_SCANCODE_ESCAPE, \
     SDL_SCANCODE_T, SDL_SCANCODE_Q, SDL_SCANCODE_E, SDL_SCANCODE_R, \
     SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A, SDL_SCANCODE_D, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, \
-    SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4}
+    SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4, \
+    SDL_SCANCODE_SPACE, SDL_SCANCODE_LALT}
 static const int16_t k_def_pad[BIND_PAD_COUNT] = DEF_PAD, k_def_key[BIND_KEY_COUNT] = DEF_KEY;
 int16_t g_bind_pad[BIND_PAD_COUNT] = DEF_PAD, g_bind_key[BIND_KEY_COUNT] = DEF_KEY;
 int16_t g_bind_key_mod[BIND_KEY_COUNT][BIND_MODS];  // (the defaults: single keys)
@@ -113,13 +114,13 @@ void bind_load_face_buttons(int mode) {
 static const char *const k_ini[BIND_KEY_COUNT] = {
     "a", "b", "x", "y", "lstick", "rstick", "l", "r", "zl", "zr", "plus", "minus", "left", "up", "right", "down",
     "ls_up", "ls_down", "ls_left", "ls_right", "rs_up", "rs_down", "rs_left", "rs_right",
-    "beam_power", "beam_wave", "beam_ice", "beam_plasma",
+    "beam_power", "beam_wave", "beam_ice", "beam_plasma", "menu_accept", "menu_back",
 };
 static const char *const k_names[BIND_KEY_COUNT] = {
     "A", "B", "X", "Y", "Left stick press", "Right stick press", "L", "R", "ZL", "ZR", "Plus", "Minus",
     "D-pad Left", "D-pad Up", "D-pad Right", "D-pad Down", "Left stick Up", "Left stick Down", "Left stick Left",
     "Left stick Right", "Right stick Up", "Right stick Down", "Right stick Left", "Right stick Right",
-    "X + D-pad Up", "X + D-pad Right", "X + D-pad Down", "X + D-pad Left",
+    "X + D-pad Up", "X + D-pad Right", "X + D-pad Down", "X + D-pad Left", "Menus: accept", "Menus: back",
 };
 // What the game's Dual Stick scheme does with each (its Options -> Controls -> View Controls page; the game's "Swap
 // Beam and Visor" option trades the d-pad's visors for the beams)
@@ -127,7 +128,7 @@ static const char *const k_actions[BIND_KEY_COUNT] = {
     "Shoot beam", "Jump", "Beam select (hold)", "Morph Ball", "Show a hint (Cheats tab)", "", "Jump", "Missile", "Lock on / scan (hold)",
     "Shoot beam (hold: charge)", "Map", "Pause menu", "X-Ray Visor", "Combat Visor", "Scan Visor", "Thermal Visor",
     "Move forward", "Move back", "Strafe left", "Strafe right", "Look up", "Look down", "Turn left", "Turn right",
-    "Power Beam", "Wave Beam", "Ice Beam", "Plasma Beam",
+    "Power Beam", "Wave Beam", "Ice Beam", "Plasma Beam", "Confirm (A)", "Go back (B)",
 };
 // controller buttons by position (primerecomp.ini)
 static const char *const k_pad_ini[PADB_HOST_COUNT] = {
@@ -366,10 +367,13 @@ static void set_keys(int slot, const int *keys, int n) {  // (the held ones, the
 }
 
 // Bind keys to keyboard `slot`; an input already on the same keys (in any order) takes the slot's old ones (swap).
-// A combo sharing some of them (1, and E + 1) is no conflict: that's what combos are for.
+// A combo sharing some of them (1, and E + 1) is no conflict: that's what combos are for. The menu keys (accept /
+// back) are a set of their own - Space can jump in play and accept in menus - and a single key each: a combo's last.
 static void assign_keys(int slot, const int *keys, int n) {
+    bool menu = slot >= BIND_PLAY_KEY_COUNT;
+    if (menu && n > 1) keys += n - 1, n = 1;
     int old[BIND_COMBO], nold = bind_key_combo(slot, old), other = -1;
-    for (int i = 0; i < BIND_KEY_COUNT && other < 0 && n; i++) {
+    for (int i = menu ? BIND_PLAY_KEY_COUNT : 0; i < (menu ? BIND_KEY_COUNT : BIND_PLAY_KEY_COUNT) && other < 0 && n; i++) {
         int k[BIND_COMBO], nk = bind_key_combo(i, k);
         if (i != slot && same_keys(k, nk, keys, n)) other = i;
     }

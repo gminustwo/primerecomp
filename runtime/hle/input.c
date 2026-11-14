@@ -2,8 +2,8 @@
 //
 // All go through the player's bindings (runtime/hle/bindings.c, defaults there: keyboard and mouse as a PC shooter,
 // WASD, the mouse aiming (runtime/hle/game.c mouse aim), clicks to shoot and lock on; controller by position,
-// Switch A = east) - except in the game's menus, where Enter / Esc and the controller's face buttons by their labels
-// confirm and go back (menu keys, menu face buttons below).
+// Switch A = east) - except in the game's menus, where the keyboard's menu keys (Space / Left Alt by default) and the
+// controller's face buttons by their labels confirm and go back (menu keys, menu face buttons below).
 #include <SDL3/SDL.h>
 #include <ctype.h>
 #include <math.h>
@@ -46,16 +46,21 @@ static bool host_test;  // (then a real controller is left out: the player's own
 static int held_key(int sc) { return sc > 0 && sc < BIND_KEY_HOST_COUNT && (keys_down[sc] || test_keys[sc]); }
 
 // Menu keys: a key pressed while the game isn't in play (its menus, the map, the title screen, cutscenes;
-// game_in_play) means what it would in a PC game's menus - Enter / Space confirm (A), Esc / Backspace go back (B),
-// Q / E switch the pause menu's pages (L / R), the arrows move (d-pad), Delete is Minus (the save slots' Erase, the
-// pause screen's Exit: Esc, Minus in play, is Back there, so nothing pressed Minus in menus and its prompts kept the
-// Switch's icon) - instead of its binding. A key keeps the meaning it was pressed with until it's let go (Esc opening
-// the pause menu isn't also its Back).
+// game_in_play) means what it would in a PC game's menus - the keyboard's Menus: accept / back bindings (Space and
+// Left Alt by default; Enter and Esc / Backspace too, not shown) confirm (A) and go back (B), Q / E switch the pause
+// menu's pages (L / R), the arrows move (d-pad), Delete is Minus (the save slots' Erase, the pause screen's Exit: Esc,
+// Minus in play, is Back there, so nothing pressed Minus in menus and its prompts kept the Switch's icon) - instead of
+// its binding. A key keeps the meaning it was pressed with until it's let go (Esc opening the pause menu isn't also
+// its Back). A modifier as back (Left Alt) is a B press as it's let go by itself (back_on_release).
 extern bool game_in_play(void);  // runtime/hle/game.c
 static uint8_t key_menu[BIND_KEY_HOST_COUNT];
+static bool modifier_key(int sc) { return sc >= SDL_SCANCODE_LCTRL && sc <= SDL_SCANCODE_RGUI; }
+static bool back_on_release(int sc) { return sc > 0 && sc == g_bind_key[BIND_MENU_BACK] && modifier_key(sc); }
 static int menu_key(int sc) {
+    if (sc > 0 && sc == g_bind_key[BIND_MENU_ACCEPT]) return BTN_A;
+    if (sc > 0 && sc == g_bind_key[BIND_MENU_BACK]) return BTN_B;
     switch (sc) {
-    case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: case SDL_SCANCODE_SPACE: return BTN_A;
+    case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: return BTN_A;
     case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_BACKSPACE: return BTN_B;
     case SDL_SCANCODE_DELETE: return BTN_MINUS;
     case SDL_SCANCODE_Q: return BTN_L;
@@ -93,7 +98,7 @@ static void recompute_keyboard(void) {
     int k[BIND_KEY_COUNT][BIND_COMBO], n[BIND_KEY_COUNT];
     for (int sc = 1; sc < BIND_KEY_HOST_COUNT; sc++)
         if (!held_key(sc)) key_combo[sc] = 0;
-    for (int i = 0; i < BIND_KEY_COUNT; i++) {
+    for (int i = 0; i < BIND_PLAY_KEY_COUNT; i++) {  // (the menu keys aren't bindings in play)
         n[i] = bind_key_combo(i, k[i]);
         bool on = n[i] > 0;
         for (int j = 0; j < n[i] && on; j++) on = bound_held(k[i][j]);
@@ -101,14 +106,14 @@ static void recompute_keyboard(void) {
         for (int j = 0; j < n[i] && on && n[i] > 1; j++)
             if (key_combo[k[i][j]] < n[i]) key_combo[k[i][j]] = (uint8_t)n[i];
     }
-    for (int i = 0; i < BIND_KEY_COUNT; i++)
+    for (int i = 0; i < BIND_PLAY_KEY_COUNT; i++)
         for (int j = 0; j < n[i] && key_on[i]; j++) key_on[i] = key_combo[k[i][j]] <= n[i];
     static int log_keys = -1;
     if (log_keys < 0) log_keys = getenv("LARECOMP_LOG_KEYS") != NULL;
     if (log_keys) {  // (test) the inputs on, as they change
         static char last[256];
         char now[256] = "";
-        for (int i = 0; i < BIND_KEY_COUNT; i++)
+        for (int i = 0; i < BIND_PLAY_KEY_COUNT; i++)
             if (key_on[i]) snprintf(now + strlen(now), sizeof now - strlen(now), " %s", bind_input_name(i));
         if (strcmp(now, last)) { LOG("[input] keys on:%s\n", now[0] ? now : " (none)"); snprintf(last, sizeof last, "%s", now); }
     }
@@ -119,7 +124,7 @@ static void recompute_keyboard(void) {
     for (int i = 0; i < 4; i++)
         if (key_on[BIND_BEAM_POWER + i]) b |= 1ull << BTN_X | 1ull << beam_dir[i];
     for (int sc = 1; sc < BIND_KEY_HOST_COUNT; sc++)
-        if (key_menu[sc] && held_key(sc) && menu_key(sc) >= 0) b |= 1ull << menu_key(sc);
+        if (key_menu[sc] && held_key(sc) && menu_key(sc) >= 0 && !back_on_release(sc)) b |= 1ull << menu_key(sc);
     key_buttons = b;
     key_lx = (key_on[BIND_LS_RIGHT] - key_on[BIND_LS_LEFT]) * 32767;
     key_ly = (key_on[BIND_LS_UP] - key_on[BIND_LS_DOWN]) * 32767;
@@ -178,6 +183,9 @@ void input_mouse_frame(SDL_Window *w) {  // (the event loop, each pass)
 // selected first takes a frame).
 static _Atomic uint32_t menu_px_bits, menu_py_bits, menu_moves, menu_clicks;
 static _Atomic int64_t menu_a_from, menu_a_to;
+// (and B, the same way: a modifier bound to Menus: back let go by itself - back_on_release)
+static _Atomic int64_t menu_b_from, menu_b_to;
+static bool back_pending;  // (it's held, and nothing else was pressed since)
 
 static void menu_pointer_at(SDL_WindowID wid, float x, float y) {
     SDL_Window *w = SDL_GetWindowFromID(wid);
@@ -488,6 +496,14 @@ void input_handle_event(const SDL_Event *e) {
             keys_down[e->key.scancode] = e->type == SDL_EVENT_KEY_DOWN;
             if (e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat)
                 key_menu[e->key.scancode] = !game_in_play() && !map_stick_key(e->key.scancode);
+            // a modifier as Menus: back - Left Alt: a B press as it's let go, if nothing else was pressed meanwhile
+            // (Alt+Tab, Alt+Enter aren't back)
+            if (e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat)
+                back_pending = back_on_release(e->key.scancode) && key_menu[e->key.scancode];
+            else if (e->type == SDL_EVENT_KEY_UP && back_on_release(e->key.scancode)) {
+                if (back_pending && !game_in_play()) menu_b_from = sampling + 1, menu_b_to = sampling + 5;
+                back_pending = false;
+            }
         }
         recompute_keyboard();
         break;
@@ -501,7 +517,7 @@ void input_handle_event(const SDL_Event *e) {
         }
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP:
-        if (e->type == SDL_EVENT_MOUSE_BUTTON_DOWN) glyphs_note_device(GLYPH_DEV_KEYS);
+        if (e->type == SDL_EVENT_MOUSE_BUTTON_DOWN) glyphs_note_device(GLYPH_DEV_KEYS), back_pending = false;
         if (e->type == SDL_EVENT_MOUSE_BUTTON_DOWN && e->button.button == SDL_BUTTON_LEFT && !mouse_captured &&
             !game_in_play()) {
             menu_pointer_at(e->button.windowID, e->button.x, e->button.y);
@@ -876,6 +892,7 @@ static void fill_state(Cpu *c) {
     glyphs_frame();  // (the button icons: what they should show now)
     uint64_t b = menu ? script_buttons : key_buttons | pad_buttons | wm_b | script_buttons;
     if (!menu && sampling >= menu_a_from && sampling < menu_a_to) b |= 1ull << BTN_A;  // (a click on a menu item)
+    if (!menu && sampling >= menu_b_from && sampling < menu_b_to) b |= 1ull << BTN_B;  // (Left Alt let go: back)
     int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx + wm_lx) + script_lx);
     int32_t ly = clamp_axis((menu ? 0 : key_ly + pad_ly + wm_ly) + script_ly);
     int32_t prx = flick_takes_stick ? 0 : pad_rx, pry = flick_takes_stick ? 0 : pad_ry;

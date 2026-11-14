@@ -47,9 +47,11 @@ static void cell(int dev, int slot, int fam, int cap_dev, int cap_slot, int ms_l
         snprintf(lbl, sizeof lbl, "%s##%d_%d", dev == BIND_DEV_PAD ? bind_pad_label(g_bind_pad[slot], fam) :
                                                bind_key_combo_name(slot, keys, sizeof keys), dev, slot);
     // changed from the default: orange text; the same button / keys on two inputs (a hand-edited primerecomp.ini): red
-    int n = dev == BIND_DEV_PAD ? BIND_PAD_COUNT : BIND_KEY_COUNT, pushed = 0;
+    // (the keyboard's menu keys are a set of their own: Space jumping in play and accepting in menus is no clash)
+    bool menu_slot = dev == BIND_DEV_KEY && slot >= BIND_PLAY_KEY_COUNT;
+    int n = dev == BIND_DEV_PAD ? BIND_PAD_COUNT : menu_slot ? BIND_KEY_COUNT : BIND_PLAY_KEY_COUNT, pushed = 0;
     bool dup = false;
-    for (int i = 0; i < n; i++)
+    for (int i = menu_slot ? BIND_PLAY_KEY_COUNT : 0; i < n; i++)
         dup |= i != slot && (dev == BIND_DEV_PAD ? g_bind_pad[i] == g_bind_pad[slot] && g_bind_pad[slot] > -1 : same_keys(i, slot));
     if (waiting) { ImGui::PushStyleColor(ImGuiCol_Button, theme::frame_on); pushed++; }
     else if (dup) { ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.16f, 0.12f, 1)); pushed++; }
@@ -162,7 +164,7 @@ extern "C" void controls_bindings_draw(float scale) {
         if ((kind == 1 || kind == 2) && rdev == BIND_DEV_KEY) {  // a combo's first keys bound by themselves too
             int k[BIND_COMBO], nk = bind_key_combo(rslot, k);
             for (int j = 0; j + 1 < nk; j++)
-                for (int i = 0; i < BIND_KEY_COUNT; i++) {
+                for (int i = 0; i < BIND_PLAY_KEY_COUNT; i++) {  // (the menu keys don't act in play)
                     int o[BIND_COMBO];
                     if (i == rslot || bind_key_combo(i, o) != 1 || o[0] != k[j]) continue;
                     size_t at = strlen(msg);
@@ -190,7 +192,7 @@ extern "C" void controls_bindings_draw(float scale) {
                                     BIND_MINUS, BIND_UP, BIND_DOWN, BIND_LEFT, BIND_RIGHT, BIND_LSTICK, BIND_RSTICK,
                                     BIND_LS_UP, BIND_LS_DOWN, BIND_LS_LEFT, BIND_LS_RIGHT, BIND_RS_UP, BIND_RS_DOWN,
                                     BIND_RS_LEFT, BIND_RS_RIGHT, BIND_BEAM_POWER, BIND_BEAM_WAVE, BIND_BEAM_ICE,
-                                    BIND_BEAM_PLASMA};
+                                    BIND_BEAM_PLASMA, BIND_MENU_ACCEPT, BIND_MENU_BACK};
         for (int slot : order) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
@@ -202,7 +204,8 @@ extern "C" void controls_bindings_draw(float scale) {
             ImGui::TableNextColumn();
             if (slot < BIND_PAD_COUNT) cell(BIND_DEV_PAD, slot, fam, cd, cs, ms);
             else ImGui::TextDisabled(slot < BIND_RS_UP ? "Left stick" : slot < BIND_BEAM_POWER ? "Right stick" :
-                                                                          "X held, then the d-pad");
+                                     slot < BIND_MENU_ACCEPT ? "X held, then the d-pad" :
+                                     slot == BIND_MENU_ACCEPT ? "The button labeled A" : "The button labeled B");
             ImGui::TableNextColumn();
             cell(BIND_DEV_KEY, slot, fam, cd, cs, ms);
         }
@@ -217,10 +220,11 @@ extern "C" void controls_bindings_draw(float scale) {
     if (ImGui::Button("Reset keyboard to defaults")) { bind_capture_cancel(); bind_reset(BIND_DEV_KEY); }
     ImGui::EndDisabled();
     ImGui::PushTextWrapPos(0);
-    ImGui::TextDisabled("Bindings apply to the game in play only. Menus select with A / Enter and go back with B / Esc "
-                        "(A and B as the face buttons above place them), and the in-game menu always opens with F1, or both of "
-                        "the controller's sticks pressed in, Back + Start held together, or its Home / Guide button - so this "
-                        "page can't be "
-                        "locked out. The game's button icons follow the controller bindings.");
+    ImGui::TextDisabled("Bindings apply to the game in play only, except Menus: accept / back - the keys that confirm "
+                        "and go back in every menu (%s and %s now; Enter and Esc work there too). On a controller, menus "
+                        "go by the buttons labeled A and B (as Face buttons places them). The in-game menu always opens "
+                        "with F1, or both of the controller's sticks pressed in, Back + Start held together, or its Home / "
+                        "Guide button - so this page can't be locked out. The game's button icons follow the bindings.",
+                        bind_key_label(g_bind_key[BIND_MENU_ACCEPT]), bind_key_label(g_bind_key[BIND_MENU_BACK]));
     ImGui::PopTextWrapPos();
 }
