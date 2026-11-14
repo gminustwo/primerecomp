@@ -3500,8 +3500,9 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
 // There the GPU's memory is the Mac's own and pinned pages count against what the GPU may use at once: the whole
 // 3.3 GB heap left an 8 GB MacBook (5.4 GB for the GPU) out of memory - "Insufficient Memory", device lost - wherever
 // a new effect's resources came on top (issue #66); the pools take ~1.8 GB of it in the first rooms. The window grows
-// in GMEM_PIECE steps as pools appear (the game makes them from the top of the heap down while loading); a window
-// replaced by a larger one stays alive until the submissions that may use it are done (gmem_dead).
+// in GMEM_PIECE steps as pools appear (the game makes them from the top of the heap down while loading). On macOS it
+// grows only before a command list runs, the old window freed first (gmem_grow); elsewhere a window replaced by a
+// larger one stays alive until the submissions that may use it are done (gmem_dead).
 // It stops at the device's largest allocation (g_vk.max_alloc: 2 GB on Mesa's llvmpipe, whose vertex fetches from a
 // larger import came out empty - the title screen's logo and movie): vertex / index data past that is copied.
 // LARECOMP_VK_NO_GMEM=1: no import, reads return zero.
@@ -3636,6 +3637,8 @@ static bool gmem_import_dmabuf(uint64_t base, uint64_t size, VkBuffer *pbuf, VkD
 #endif
 }
 
+static uint64_t gmem_idle_ns;  // (gmem_grow) the wait for the GPU before this import, for its log line
+
 // The window [base, base + size) (heap offsets, GMEM_PIECE-aligned base) imported, replacing the current one.
 static bool gmem_import(uint64_t base, uint64_t size) {
     if (gmem_buf && gmem_ndead == GMEM_DEAD) gmem_free_dead(false);
@@ -3680,6 +3683,7 @@ static bool gmem_import(uint64_t base, uint64_t size) {
     if (base || size < kernel_heap_size()) LOG(" at heap +%llu MB (the game's memory pools)", (unsigned long long)(base >> 20));
     LOG(", %.1f ms", (SDL_GetTicksNS() - t0) / 1e6);
     if (npieces) LOG(", %d dma-bufs", npieces);
+    if (gmem_idle_ns) LOG(", the old one freed first (%.1f ms waiting for the GPU)", gmem_idle_ns / 1e6), gmem_idle_ns = 0;
     LOG("\n");
     return true;
 }
@@ -3712,7 +3716,8 @@ static VkDescriptorBufferInfo gmem_info(void) {
     if (off < 0) off = getenv("LARECOMP_VK_NO_GMEM") != NULL || (!g_vk.host_import && !g_vk.dmabuf_import);
     if (gmem_ndead) gmem_free_dead(false);
     uint64_t lo, hi;
-    if (!off && gmem_want(&lo, &hi) && (!gmem_buf || lo < gmem_base || hi > gmem_base + gmem_size)) {
+    // (macOS: only the first window is made here, with draws recorded - gmem_grow grows it, between command lists)
+    if (!off && !(GMEM_WINDOW && gmem_buf) && gmem_want(&lo, &hi) && (!gmem_buf || lo < gmem_base || hi > gmem_base + gmem_size)) {
         if (gmem_buf) {  // (a window only grows: what it covered stays covered)
             if (gmem_base < lo) lo = gmem_base;
             if (gmem_base + gmem_size > hi) hi = gmem_base + gmem_size;
@@ -3733,6 +3738,37 @@ static VkDescriptorBufferInfo gmem_info(void) {
     static uint32_t zero[1024];
     VkSpan s = vk_transient_copy(zero, sizeof zero, 256);
     return (VkDescriptorBufferInfo){s.buf, s.off, sizeof zero};
+}
+
+// (macOS) The window grown where nothing recorded uses the current one: before a command list runs (the game makes
+// the pools a list uses before recording it). The GPU finishes everything submitted and the current window is freed
+// before the larger one is imported: Metal counts each import whole, pages shared with another included, and MoltenVK
+// keeps every allocation resident for every command buffer, so the replaced window kept alive beside the new one
+// doubled what was pinned - ~4 GB when it grew to 2048 MB in the Chozo Ruins, and an 8 GB Mac (5.4 GB for the GPU)
+// ran out of GPU memory, device lost (issue #75). Costs one wait on the GPU each time the window grows (a few times a
+// session, mostly while loading).
+static void gmem_grow(void) {
+#if GMEM_WINDOW
+    uint64_t lo, hi;
+    if (!gmem_buf || !gmem_want(&lo, &hi) || (lo >= gmem_base && hi <= gmem_base + gmem_size)) return;
+    if (gmem_base < lo) lo = gmem_base;  // (a window only grows: what it covered stays covered)
+    if (gmem_base + gmem_size > hi) hi = gmem_base + gmem_size;
+    if (lo == gmem_tried_lo && hi == gmem_tried_hi) return;  // (that one failed: not again and again)
+    gmem_tried_lo = lo, gmem_tried_hi = hi;
+    uint64_t t0 = SDL_GetTicksNS(), base = gmem_base, size = gmem_size;
+    wait_why = "heap window";
+    renderer_flush();  // (what was recorded since the last submission, submitted; every submission done)
+    gmem_idle_ns = SDL_GetTicksNS() - t0;
+    gmem_release();
+    gmem_free_dead(true);
+    if (gmem_import(lo, hi - lo)) return;
+    gmem_idle_ns = 0;
+    if (gmem_import(base, size))
+        LOG("[vk] guest heap window not grown to %llu MB (heap +%llu MB): the current one made again\n",
+            (unsigned long long)((hi - lo) >> 20), (unsigned long long)(lo >> 20));
+    else
+        LOG("[vk] guest heap import failed (%llu MB): shader global memory reads return zero\n", (unsigned long long)(size >> 20));
+#endif
 }
 
 // Compute dispatches that use global memory: the imported heap is host memory across PCIe on a discrete GPU, and a
@@ -6788,6 +6824,7 @@ static void exec_list(uint64_t handle, int depth) {
 }
 
 void backend_execute(uint64_t handle) {
+    gmem_grow();  // (macOS: the heap window grown before this list records anything)
     PROF_T0();
     exec_list(handle, 0);
     PROF_ADD(prof_exec);
