@@ -1721,6 +1721,7 @@ static void translate_program(void *arg) {
     maxwell_gmem_base = HEAP_BASE;
     maxwell_gmem_size = HEAP_MAX;
     maxwell_gmem_window = GMEM_WINDOW;
+    maxwell_clip_distances = g_vk.clip_distance && !getenv("LARECOMP_NO_CLIP_DISTANCE");  // ((test) off: as before)
     pthread_mutex_lock(&translate_lock);
     p->vi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[0], p->cmax[0], STAGE_VERTEX, &p->vkey);
     if (p->vi->msl && (p->has_gs || p->gs_emul)) {  // the geometry shader reads the vertex shader's outputs, the fragment

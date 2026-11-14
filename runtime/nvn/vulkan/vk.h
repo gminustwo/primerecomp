@@ -47,6 +47,7 @@ typedef struct {
                           // bindless texture arrays; without it those programs are left out)
     bool occlusion_precise;  // occlusion queries count samples (occlusionQueryPrecise), not just any-passed
     bool geometry;  // geometry shaders (geometryShader): programs with one are translated with it (else exec.c gs_emul)
+    bool clip_distance;  // gl_ClipDistance (shaderClipDistance): vertex shaders' clip distances kept (maxwell_clip_distances)
     // window
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;

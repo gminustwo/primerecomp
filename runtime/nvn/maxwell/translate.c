@@ -24,6 +24,7 @@
 
 uint64_t maxwell_gmem_base, maxwell_gmem_size;
 bool maxwell_gmem_window;
+bool maxwell_clip_distances;
 const uint8_t *maxwell_dbg_code;
 uint32_t maxwell_dbg_pc;
 int maxwell_dbg_reg;
@@ -98,6 +99,7 @@ typedef struct {
     uint8_t hix_used[256];
     uint8_t tex_hix[64];     // a texture array slot's index register (hix<r>)
     uint32_t pc;             // the instruction being translated (error messages)
+    uint32_t clip_mask;      // (GLSL vertex) the clip distances written: gl_ClipDistance (maxwell_clip_distances)
 } Ctx;
 
 static uint64_t bits(uint64_t w, int lo, int n) { return (w >> lo) & ((n == 64) ? ~0ull : ((1ull << n) - 1)); }
@@ -402,6 +404,12 @@ static void attr_store(Ctx *c, int src, uint32_t addr) {
     } else if (addr == 0x6C) {
         c->info->writes_point_size = true;
         sp(&c->body, "    out.psize = as_type<float>(%s);\n", v);
+    } else if (addr >= 0x2C0 && addr < 0x2E0 && c->glsl && maxwell_clip_distances && !(c->key && c->key->gs_follows)) {
+        // clip distance 0 - 7: the primitive is cut where it's negative (NVN clips with those its shaders write). The
+        // shadow decals' planes, a box around the blob: without them the blob repeated over the whole floor they cover
+        int i = (int)(addr - 0x2C0) >> 2;
+        c->clip_mask |= 1u << i;
+        sp(&c->body, "    gl_ClipDistance[%d] = as_type<float>(%s);\n", i, v);
     } else {
         sp(&c->body, "    /* store attr %#x */\n", addr);
     }
@@ -2294,6 +2302,8 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     bool xfb = xfb_decl && c->gs_out_topo != 1 && c->gs_out_topo != 6;
     if (xfb) info->uses_gmem = true, c->uses_gmem_store = true;
     int set = stage == STAGE_FRAGMENT ? 1 : stage == STAGE_GEOMETRY ? 2 : 0;
+    int nclip = 0;  // (vertex) gl_ClipDistance's size: up to the last clip distance written
+    for (int i = 0; i < 8; i++) if (c->clip_mask & (1u << i)) nclip = i + 1;
     Str s = {0};
     // the layer from a vertex output (ShaderKey.layer_attr): a generic attribute the shader writes
     int layer_out = -1;
@@ -2368,6 +2378,7 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         // compiler fuses or reorders the math feeding it (MSL gets this from preserveInvariance; without it foliage
         // drawn twice flickered black)
         sp(&s, "invariant gl_Position;\nprecise gl_Position;\n");
+        if (nclip) sp(&s, "out float gl_ClipDistance[%d];\n", nclip);
         for (int i = 0; i < 32; i++) {
             if (!(c->out_attr_mask & (1u << i))) continue;
             if (lib) sp(&s, "vec4 v%d = vec4(0, 0, 0, 1);\n", i);  // (the geometry shader's input: it has the outputs)
@@ -2453,6 +2464,7 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         for (int i = 0; i < 32; i++)
             if (c->out_attr_mask & (1u << i)) sp(&s, "  v%d = vec4(0, 0, 0, 1);\n", i);
         if (info->writes_point_size) sp(&s, "  gl_PointSize = 0.0f;\n");
+        for (int i = 0; i < nclip; i++) sp(&s, "  gl_ClipDistance[%d] = 0.0f;\n", i);  // (one a path skips: kept)
     }
     for (int i = 0; i < 256; i++)
         if (c->reg_used[i]) sp(&s, "  uint r%d = 0u;\n", i);
