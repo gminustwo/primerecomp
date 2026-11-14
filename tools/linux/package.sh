@@ -48,7 +48,7 @@ mkdir "$APPDIR/usr/bin/gamelib-src"
 cp runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
    "$APPDIR/usr/bin/gamelib-src/"
 cp tools/linux/AppRun "$APPDIR/" && chmod +x "$APPDIR/AppRun"
-python3 tools/recomplauncher.py --platform linux --program "$(basename "$OUT")" --output "$APPDIR/recomplauncher.json"
+cp recomplauncher.json "$APPDIR/recomplauncher.json"  # (the launcher reads it from the image)
 cp tools/linux/primerecomp.desktop "$APPDIR/"
 cp docs/icon/icon_1024.png "$APPDIR/primerecomp.png" && ln -sf primerecomp.png "$APPDIR/.DirIcon"
 

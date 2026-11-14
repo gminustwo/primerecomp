@@ -1,5 +1,7 @@
 # PrimeRecomp
 
+<a href="https://recomplauncher.com/game/primerecomp"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 **PrimeRecomp** runs *Metroid Prime Remastered* (Nintendo Switch, 2023) natively on Windows, macOS (Apple Silicon) and
 Linux, including the Steam Deck. The game's code is statically recompiled.
 
@@ -88,8 +90,8 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 - On Windows and Linux, a CPU with SSE4.2 (2008 or newer; AVX2 - Intel Haswell / 2013, AMD Zen - runs the game faster:
   without it the game code is built for older CPUs) and a GPU with a Vulkan 1.3 driver (any current NVIDIA, AMD or Intel driver; on Linux, Mesa's RADV / ANV or NVIDIA's)
 - Your own Metroid Prime Remastered v1.0.0 game files, **extracted**: a folder holding `exefs` and `romfs` (extract
-  both from your own dump with your usual Switch tools). PrimeRecomp doesn't read game packages (NSP, XCI) and
-  never asks for keys.
+  both from your own dump with your usual Switch tools). PrimeRecomp never asks for
+  keys.
 
 ## Getting started
 
@@ -170,8 +172,8 @@ Choose one to play on from it. For a save backed up from a Switch (JKSV, Checkpo
 
 ### RecompLauncher
 
-Release builds include a setup/settings/save profile for RecompLauncher. See
-[RecompLauncher integration](docs/recomplauncher.md) for the required launcher features, game inputs
+Release builds include a setup/settings/save profile for RecompLauncher: [`recomplauncher.json`](recomplauncher.json), a
+plain file at the root of this repository. See [RecompLauncher integration](docs/recomplauncher.md) for the required launcher features, game inputs
 and headless setup options. Linux keeps its standalone AppImage.
 
 ### Starting from a launcher (Playnite, Steam, ...)
