@@ -85,11 +85,28 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 - **Windows:** Windows 10 or 11, 64-bit
 - **Linux:** a 64-bit x86 distribution with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, Arch, SteamOS
   on the Steam Deck, ...)
-- On Windows and Linux, a CPU with SSE4.2 (2008 or newer; AVX2 - Intel Haswell / 2013, AMD Zen - runs the game faster:
-  without it the game code is built for older CPUs) and a GPU with a Vulkan 1.3 driver (any current NVIDIA, AMD or Intel driver; on Linux, Mesa's RADV / ANV or NVIDIA's)
+- **macOS:** a Mac with Apple Silicon (M1 or newer) and macOS 15 or newer
 - Your own Metroid Prime Remastered v1.0.0 game files, **extracted**: a folder holding `exefs` and `romfs` (extract
   both from your own dump with your usual Switch tools). PrimeRecomp never asks for
   keys.
+
+### Hardware
+
+|  | Minimum | Recommended |
+| --- | --- | --- |
+| **CPU** (Windows, Linux) | 64-bit x86 with SSE4.2 (2008 or newer), 4 cores / 8 threads | AVX2 (Intel Haswell / 2013, AMD Zen or newer): the game code is built for it and runs faster (without it, for older CPUs) |
+| **GPU** (Windows, Linux) | A Vulkan 1.3 driver (any current NVIDIA, AMD or Intel driver; on Linux, Mesa's RADV / ANV or NVIDIA's), 2 GB of video memory. Integrated graphics work | 4 GB of video memory or more, for 1440p, 4K and texture packs |
+| **RAM** | 8 GB | 16 GB |
+| **Mac** | Apple Silicon, 8 GB of memory | 16 GB of memory |
+| **Disk** | About 8 GB once set up (the game files and the recompiled game), plus about 2 GB while the setup builds the game's code | |
+
+What these are based on: in the first area, at 1440p and at 4K, the game uses 3.5-3.7 GB in all: about 1.7 GB of
+game memory, 1.2-1.4 GB of textures and render targets on the GPU (video memory on a graphics card, shared memory on
+integrated graphics and Macs) and about 0.6 GB for the rest. Later areas and texture packs use more. Players run it
+on a Steam Deck (30 fps at 1280 x 720, 60 fps at 960 x 540 with AMD FSR 1), an AMD Ryzen 5 3400G with its integrated
+graphics and 16 GB (60 fps with FSR 1), GeForce GTX 1080 Ti, RTX 4060 Ti and RTX 5070, Radeon RX 6700 XT, and an
+8 GB MacBook Neo. On an 8 GB Mac macOS gives the GPU about 5.4 GB: if the game stops with "Insufficient Memory" or
+"device lost", set Resolution to 75% and please report it with the log.
 
 ## Getting started
 
