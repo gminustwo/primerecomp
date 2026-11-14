@@ -6,7 +6,7 @@ on:
   pull_request:
     paths:
       - "runtime/**"
-      - "tools/recomplauncher.py"
+      - "recomplauncher.json"
       - "tools/test_*launcher*"
       - "tools/linux/**"
       - "Makefile"
@@ -25,9 +25,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install jsonschema
-      - name: Validate against the PR 22 interface
+      - name: Validate against the published schema
         run: |
-          curl -fL https://raw.githubusercontent.com/Xarishark/RecompLauncher/4898a5909f94ab316016fc29783386dc0a696cfa/docs/recomplauncher.schema.json -o /tmp/recomplauncher.schema.json
+          curl -fL https://recomplauncher.com/schema/recomplauncher.json -o /tmp/recomplauncher.schema.json
           python tools/test_recomplauncher.py --schema /tmp/recomplauncher.schema.json -v
 
   windows:
@@ -63,7 +63,7 @@ jobs:
         run: |
           mkdir -p build/launcher-review
           cp build/primerecomp.exe build/launcher-review/
-          python tools/recomplauncher.py --platform windows --program primerecomp.exe --output build/launcher-review/recomplauncher.json
+          cp recomplauncher.json build/launcher-review/
           ldd build/primerecomp.exe | awk '/ucrt64/ && !/vulkan-1/ {print $3}' | sort -u | xargs -I{} cp -u {} build/launcher-review/
       - uses: actions/upload-artifact@v4
         with:

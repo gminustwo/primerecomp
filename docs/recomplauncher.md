@@ -1,6 +1,7 @@
 # RecompLauncher
 
-PrimeRecomp supplies its own setup and settings profile. All implementation changes are in
+PrimeRecomp supplies its own setup and settings profile: [`recomplauncher.json`](../recomplauncher.json) at the
+root of the repository, a plain file to edit by hand. All implementation changes are in
 PrimeRecomp: no additional RecompLauncher changes or Linux download-format changes are required.
 The integration targets these RecompLauncher interfaces:
 
@@ -25,8 +26,9 @@ several minutes; the manifest allows up to one hour. Cancelling preserves saves,
 reuse validated staged files. An interrupted code build restarts compilation from those files.
 
 Windows uses its installation folder for settings, saves and prepared game files. Linux uses
-`$XDG_DATA_HOME/primerecomp` (normally `~/.local/share/primerecomp`). The manifest passes these
-paths explicitly to both preparation and launch so the working directory cannot change them.
+`$XDG_DATA_HOME/primerecomp` (normally `~/.local/share/primerecomp`). The profile doesn't pass these
+paths: the game picks the same folders itself (`runtime/paths.c`), and the profile lists both places, using
+the Windows one when `primerecomp.exe` is next to it.
 Preparation creates a full default INI only when none exists, including the Steam Deck's first-run
 preset. Existing settings are retained. RecompLauncher edits the same INI that F1 edits.
 
@@ -61,14 +63,14 @@ selected folder's path and file metadata are recorded locally to identify repeat
 
 ## Packaging and validation
 
-`tools/recomplauncher.py` generates both profiles from one definition. `make dist` places the
-Windows profile beside `primerecomp.exe`. Linux packaging places a regular `/recomplauncher.json`
-at the AppDir root and disables extended attributes in SquashFS for compatibility with the reader
+`recomplauncher.json` at the repository root is the one profile for Windows and Linux: edit it directly,
+there is no generator. `make dist` copies it beside `primerecomp.exe`. Linux packaging copies it as a regular
+`/recomplauncher.json` at the AppDir root and disables extended attributes in SquashFS for compatibility with the reader
 in PR #12. AppImage program entries name the release image; that reader rebinds them when renamed.
 The Linux download remains a standalone AppImage and its updater format is unchanged.
 
 Run `python tools/test_recomplauncher.py` for manifest contracts, optionally passing `--schema`
-with PR #22's JSON schema. Compile `tools/test_launcher_cli.c` together with
+with the published schema (https://recomplauncher.com/schema/recomplauncher.json). Compile `tools/test_launcher_cli.c` together with
 `runtime/launcher_cli.c` and pass the result with `--parser`; pass the runtime or AppImage with
 `--exe` for headless smoke tests using only synthetic files and an isolated data/save folder.
 The RecompLauncher integration workflow builds Windows and Linux in GitHub Actions and uploads
@@ -78,3 +80,16 @@ or compiler; it is not a replacement for the complete `make dist` release.
 Tests without real game content do not prove successful import, live game launch,
 controller behavior or save synchronization. Those require a user's own game and supported
 hardware. No verified-dump badge or clean-content claim is supplied.
+
+## What the profile gives players
+
+- Easy Setup: pick the extracted game folder, the launcher runs `--prepare` and then Play starts `--play`.
+- The settings of the in-game F1 menu on the game's page and in Big Picture, grouped (Video, Audio, Controls,
+  Gameplay, Cheats, Mods, Updates). The Cheats group stays under Show Advanced Options.
+- Save backups and cloud saves for the `save` folder only, on Windows and Linux.
+- The log folder, so a crash report carries the newest `primerecomp.log`, and buttons to open the save and log
+  folders and to clear the shader cache (`cache/`; it is built again on the next start).
+- Looks (ReShade filters) are told the game draws with Vulkan.
+
+To change something, edit `recomplauncher.json` and run `python tools/test_recomplauncher.py --schema <schema>`. A
+new setting needs the same key the game writes to `primerecomp.ini` (`runtime/settings.c`); the test checks that.
