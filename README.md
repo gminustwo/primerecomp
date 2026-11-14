@@ -36,7 +36,8 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 - Any resolution up to 8K, AMD FSR 1 upscaling, SMAA anti-aliasing, anisotropic texture filtering
 - HDR on HDR displays (scRGB or HDR10): the sun on the snow, lights, beam shots and explosions go past the
   brightness of white, up to your display's peak, while the rest of the picture looks as it always has (F1 menu,
-  Video tab: HDR, peak brightness, paper white)
+  Video tab: HDR, peak brightness, paper white); Wide color takes the world's colors out past what an SDR screen can
+  show, up to BT.2020 (off by default: the game's own colors)
 - Ultrawide and any aspect ratio, the HUD out at the screen's sides (or a 21:9 frame's, or the 16:9 middle);
   adjustable field of view, and the arm cannon's apart from it (it keeps its size at a wide view)
 - 30, 60, 90 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
@@ -112,7 +113,7 @@ graphics and 16 GB (60 fps with FSR 1), GeForce GTX 1080 Ti, RTX 4060 Ti and RTX
 
 ### Windows
 
-1. Download `PrimeRecomp-v0.0.11-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
+1. Download `PrimeRecomp-v0.1.0-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
    extract it somewhere you can write to (e.g. Documents or a games folder - not Program Files).
 2. Run `primerecomp.exe`. The start screen asks for your game files: choose the folder that holds `exefs` and
    `romfs`, then **Set up**. It copies what it needs and recompiles the game on your PC. This happens once and takes
@@ -125,7 +126,7 @@ from a short note of where that folder is (`%LOCALAPPDATA%\PrimeRecomp\copies.tx
 
 ### macOS (Apple Silicon)
 
-1. Download `PrimeRecomp-v0.0.11-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
+1. Download `PrimeRecomp-v0.1.0-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
    it and drag **PrimeRecomp** onto **Applications**.
 2. PrimeRecomp isn't notarized by Apple, so macOS won't open it as downloaded. Open Terminal once and run:
 
@@ -144,7 +145,7 @@ appears, MoltenVK compiles its shader for Metal, which can show as a brief hitch
 
 ### Linux
 
-1. Download `PrimeRecomp-v0.0.11-linux-x86_64.AppImage` from
+1. Download `PrimeRecomp-v0.1.0-linux-x86_64.AppImage` from
    [Releases](https://github.com/gminustwo/primerecomp/releases) and make it executable (`chmod +x`, or in your file
    manager: Properties -> Permissions -> executable).
 2. Run it. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs`, **Set up**,
