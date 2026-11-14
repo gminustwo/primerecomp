@@ -654,6 +654,7 @@ static int g_refocus = MAIN;  // back on the main page: select the item of the p
 // A big menu line: cyan + a marker when focused / hovered (keyboard, gamepad or mouse), grey when disabled
 static bool g_menu_small;  // sub pages: buttons in the small font
 void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, void (*prelaunch)(float));  // menu.mm
+bool menu_window_header(float scale, ImFont *title_font);  // menu.mm
 void menu_tabs_focus(bool first_tab);
 extern int g_tab_request_ext;
 extern "C" void menu_apply_window_requests(void *sdl_window);
@@ -1374,6 +1375,35 @@ extern "C" void launcher_run(const char *root) {
             // controller presses launcher_pad_event fed in and turns gamepad navigation off: set it again while a
             // controller is connected
             if (SDL_HasGamepad()) io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+            {   // (test) LARECOMP_LAUNCHER_KEYS=<frame>:<key>[,...]: a controller press at that start-screen frame,
+                // let go the frame after (key: up, down, left, right, a, b, l1, r1)
+                static struct { long at; ImGuiKey k; } tk[32];
+                static int ntk = -1;
+                static long tframe;
+                static ImGuiKey held = ImGuiKey_None;
+                if (ntk < 0) {
+                    ntk = 0;
+                    for (const char *e = getenv("LARECOMP_LAUNCHER_KEYS"); e && *e && ntk < 32;) {
+                        char name[16] = "";
+                        long at = 0;
+                        if (sscanf(e, "%ld:%15[a-z0-9]", &at, name) == 2) {
+                            static const struct { const char *n; ImGuiKey k; } map[] = {
+                                {"up", ImGuiKey_GamepadDpadUp}, {"down", ImGuiKey_GamepadDpadDown},
+                                {"left", ImGuiKey_GamepadDpadLeft}, {"right", ImGuiKey_GamepadDpadRight},
+                                {"a", ImGuiKey_GamepadFaceDown}, {"b", ImGuiKey_GamepadFaceRight},
+                                {"l1", ImGuiKey_GamepadL1}, {"r1", ImGuiKey_GamepadR1}};
+                            for (auto &m : map) if (!strcmp(name, m.n)) tk[ntk].at = at, tk[ntk++].k = m.k;
+                        }
+                        e = strchr(e, ',');
+                        e = e ? e + 1 : NULL;
+                    }
+                }
+                tframe++;
+                if (held != ImGuiKey_None) io.AddKeyEvent(held, false), held = ImGuiKey_None;
+                for (int i = 0; i < ntk; i++)
+                    if (tk[i].at == tframe) io.AddKeyEvent(tk[i].k, true), held = tk[i].k;
+                if (ntk > 0) io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+            }
             ImGui::NewFrame();
 
             ImVec2 ds = io.DisplaySize;
@@ -1522,32 +1552,14 @@ extern "C" void launcher_run(const char *root) {
                                                           ImGui::GetWindowPos().y + ds.y), IM_COL32(0, 0, 0, 110));
                 ImVec2 wp = ImGui::GetWindowPos();
                 ImGui::SetCursorScreenPos(ImVec2(wp.x + (ds.x - w) * 0.5f, wp.y + (ds.y - h) * 0.5f));
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::panel);
-                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * sc);
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));  // (menu_window_header draws the panel)
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28 * sc, 24 * sc));
                 ImGui::BeginChild("##settings", ImVec2(w, h), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NavFlattened);
-                ImGui::PopStyleVar(2);
+                ImGui::PopStyleVar();
                 ImGui::PopStyleColor();
                 ImGui::PushFont(g_font_small);
-                ImGui::PushFont(g_font_menu);
-                ImGui::TextColored(theme::heading, "Settings");
-                ImGui::PopFont();
-                bool back;
-                {  // close: a drawn X in the corner (B / Esc too)
-                    float bx = 44 * sc;
-                    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - bx);
-                    ImVec2 p = ImGui::GetCursorScreenPos();
-                    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
-                    back = ImGui::InvisibleButton("##close", ImVec2(bx, bx), ImGuiButtonFlags_EnableNav);
-                    ImGui::PopStyleColor();
-                    bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-                    ImU32 col = hot ? theme::u32(theme::accent) : theme::u32(theme::text);
-                    float m = bx * 0.3f, t = (hot ? 3.0f : 2.4f) * sc * 1.5f;
-                    ImDrawList *dl = ImGui::GetWindowDrawList();
-                    if (hot) dl->AddRectFilled(p, ImVec2(p.x + bx, p.y + bx), IM_COL32(255, 255, 255, 20), 8 * sc);
-                    dl->AddLine(ImVec2(p.x + m, p.y + m), ImVec2(p.x + bx - m, p.y + bx - m), col, t);
-                    dl->AddLine(ImVec2(p.x + bx - m, p.y + m), ImVec2(p.x + m, p.y + bx - m), col, t);
-                }
+                // the in-game menu's look: the frame, the title and a close X in the corner (B / Esc too)
+                bool back = menu_window_header(sc, g_font_menu);
                 bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);  // (before the pages run, like the menu)
                 menu_tabs_draw(sc, g_font_small, g_font_menu, false, prelaunch_tab);
                 int cap_dev;

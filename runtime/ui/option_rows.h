@@ -26,6 +26,9 @@ bool opt_radio(const char *label, bool selected, const char *desc);
 // an action / item row with a value on the right (upper: the label in capitals, as option rows; false: as written,
 // e.g. a file name); true when activated
 bool opt_action(const char *label, const char *value, const char *desc, bool upper = true);
+// an on / off item (a mod, a cheat file's entry): a check box on the right, the value (if any) before it; true when
+// activated (the caller flips it)
+bool opt_check(const char *label, bool on, const char *value, const char *desc, bool upper = true);
 // text: the value shown on the right (hint when empty); A / click turns the row into a text field (the on-screen
 // keyboard with a controller). True when Enter / the keyboard confirmed a change.
 #include <stddef.h>
