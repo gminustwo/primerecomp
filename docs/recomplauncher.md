@@ -85,7 +85,8 @@ hardware. No verified-dump badge or clean-content claim is supplied.
 
 - Easy Setup: pick the extracted game folder, the launcher runs `--prepare` and then Play starts `--play`.
 - The settings of the in-game F1 menu on the game's page and in Big Picture, grouped (Video, Audio, Controls,
-  Gameplay, Cheats, Mods, Updates). The Cheats group stays under Show Advanced Options.
+  Gameplay, Suit, Cheats, Mods, Updates), including the crosshair, the left stick's straight-ahead snap and
+  the suit colors. The Cheats group stays under Show Advanced Options.
 - Save backups and cloud saves for the `save` folder only, on Windows and Linux.
 - The log folder, so a crash report carries the newest `primerecomp.log`, and buttons to open the save and log
   folders and to clear the shader cache (`cache/`; it is built again on the next start).
