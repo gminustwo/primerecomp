@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Manifest contracts and optional runtime smoke tests; never require game content."""
 import argparse
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,65 +10,67 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("recomplauncher", ROOT / "tools/recomplauncher.py")
-generator = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(generator)
+MANIFEST = ROOT / "recomplauncher.json"
 SCHEMA = EXE = PARSER = None
 
 
+def load_manifest():
+    return json.loads(MANIFEST.read_text(encoding="utf-8"))
+
+
 class ManifestTests(unittest.TestCase):
-    def test_both_platform_manifests(self):
-        for platform, program in [("windows", "primerecomp.exe"), ("linux", "Renamed game.AppImage")]:
-            with self.subTest(platform=platform):
-                m = generator.manifest(platform, program)
-                self.assertEqual(m["repo"], "gminustwo/primerecomp")
-                self.assertEqual(m["start"]["program"], [program])
-                self.assertEqual(m["prepare"]["program"], [program])
-                self.assertFalse(any("keys" in a for a in m["prepare"]["args"]))
-                self.assertGreaterEqual(m["prepare"]["timeout"], 1800)
-                if SCHEMA:
-                    import jsonschema
-                    jsonschema.Draft7Validator(json.loads(SCHEMA.read_text())).validate(m)
+    def test_one_file_starts_windows_and_linux(self):
+        m = load_manifest()
+        self.assertEqual(m["repo"], "gminustwo/primerecomp")
+        # The exe is tried first; the AppImage name is rebound by the launcher to the downloaded file.
+        self.assertEqual(m["start"]["program"], ["primerecomp.exe", "PrimeRecomp.AppImage"])
+        self.assertEqual(m["prepare"]["program"], m["start"]["program"])
+        self.assertGreaterEqual(m["prepare"]["timeout"], 1800)
+
+    def test_matches_the_schema(self):
+        if not SCHEMA: self.skipTest("pass --schema to validate against the published schema")
+        import jsonschema
+        jsonschema.Draft7Validator(json.loads(SCHEMA.read_text())).validate(load_manifest())
 
     def test_only_an_extracted_folder_no_keys(self):
-        m = generator.manifest("windows", "primerecomp.exe")
+        m = load_manifest()
         self.assertEqual(len(m["inputs"]), 1)
         self.assertEqual(m["inputs"][0]["formats"], [{"type": "folder"}])
         self.assertFalse(any(i.get("role") == "key" for i in m["inputs"]))
         text = json.dumps(m).lower()
-        for word in ("prod.keys", "title.keys", "prod-keys", "nsp", "xci"):
+        for word in ("prod.keys", "title.keys", "prod-keys", "--keys"):
             self.assertNotIn(word, text)
 
-    def test_saves_and_data_root(self):
-        for platform in ("windows", "linux"):
-            m = generator.manifest(platform, "game.AppImage")
-            root = "{install}" if platform == "windows" else "{local}/primerecomp"
-            self.assertEqual(m["saves"], [root + "/save"])
-            self.assertEqual(m["config"][0]["file"][0]["path"], root + "/primerecomp.ini")
-            self.assertIn("--data-root=" + root, m["prepare"]["args"])
-            self.assertIn("--data-root=" + root, m["start"]["args"])
+    def test_data_roots_match_the_game(self):
+        # runtime/paths.c: next to the exe on Windows, ~/.local/share/primerecomp on Linux. No --data-root is passed,
+        # so the game picks the same folder the launcher reads.
+        m = load_manifest()
+        self.assertFalse(any("--data-root" in a for a in m["start"]["args"] + m["prepare"]["args"]))
+        self.assertEqual(m["saves"], ["{install}/save", "{local}/primerecomp/save"])
+        files = m["config"][0]["file"]
+        self.assertEqual(files[0], {"path": "{install}/primerecomp.ini", "if": "{install}/primerecomp.exe"})
+        self.assertEqual(files[-1], {"path": "{local}/primerecomp/primerecomp.ini"})
+        for name in ("saves", "logs", "data"):
+            places = m["folders"][name]
+            self.assertEqual(places[0]["if"], "{install}/primerecomp.exe")
+            self.assertNotIn("if", places[-1])
 
     def test_options_match_real_ini_keys(self):
         text = (ROOT / "runtime/settings.c").read_text()
         runtime_keys = set(re.findall(r'put\(o, "([a-z_][a-z_0-9]*) = ', text))
         # Some are written in the same format string after a newline.
         runtime_keys.update(re.findall(r'\\n([a-z_][a-z_0-9]*) = ', text))
-        m = generator.manifest("windows", "primerecomp.exe")
+        m = load_manifest()
         ids = [s["id"] for s in m["settings"]]
         self.assertEqual(len(ids), len(set(ids)))
+        groups = {g["id"] for g in m["groups"]}
         for s in m["settings"]:
             if s.get("in") == "args": continue
             self.assertIn(s["id"], runtime_keys)
             if "slider" in s:
                 self.assertLess(s["slider"]["min"], s["slider"]["max"])
                 self.assertGreater(s["slider"]["step"], 0)
-
-    def test_generator_writes_utf8_json(self):
-        with tempfile.TemporaryDirectory(prefix="prime manifest ") as d:
-            output = Path(d) / "recomplauncher.json"
-            subprocess.run([os.sys.executable, str(ROOT / "tools/recomplauncher.py"), "--platform", "linux",
-                            "--program", "PrimeRecomp-test.AppImage", "--output", str(output)], check=True)
-            self.assertEqual(json.loads(output.read_text())["format"], 1)
+        self.assertTrue(groups <= {s.get("group") for s in m["settings"]})
 
 
 @unittest.skipUnless(EXE, "pass --exe to run native headless smoke tests")

@@ -316,7 +316,7 @@ dist:
 	    "$(DIST)/gamelib-src/"
 	cp third_party/fonts/Baloo2/Baloo2-SemiBold.ttf "$(DIST)/"  # (start screen font, OFL)
 	cp third_party/fonts/Baloo2/OFL.txt "$(DIST)/Baloo2-OFL.txt"
-	$(GEN_PY) tools/recomplauncher.py --platform windows --program primerecomp.exe --output "$(DIST)/recomplauncher.json"
+	cp recomplauncher.json "$(DIST)/"  # (the launcher's profile: setup, settings, saves)
 	cp README.md LICENSE "$(DIST)/"  # (licenses and source links of the bundled components: README "License")
 	PATH="$(CURDIR)/build/deps-win/bin:$$PATH" ldd $(WIN_B)/primerecomp.exe | awk '(/ucrt64/ || /deps-win/) && !/vulkan-1/ {print $$3}' | sort -u | \
 	    xargs -I{} cp -u {} "$(DIST)/"

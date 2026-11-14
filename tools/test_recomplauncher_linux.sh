@@ -9,7 +9,8 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 image=$(find build/dist -maxdepth 1 -name '*.AppImage' -print -quit)
 [ -n "$image" ]
 python3 tools/test_recomplauncher.py --exe "$image" --parser build/test_launcher_cli -v
-# Extract into build/, never the checkout root. This verifies delivery, not just the generator.
+# Extract into build/, never the checkout root. This verifies delivery: the image carries the repo's file as is.
+cp recomplauncher.json build/recomplauncher.expected.json
 cd build
 image=$(find dist -maxdepth 1 -name '*.AppImage' -print -quit)
 "$image" --appimage-extract recomplauncher.json >/dev/null
@@ -19,8 +20,7 @@ from pathlib import Path
 p = Path("squashfs-root/recomplauncher.json")
 assert p.is_file() and not p.is_symlink()
 m = json.loads(p.read_text())
+assert m == json.loads(Path("recomplauncher.expected.json").read_text())
 assert m["format"] == 1 and m["repo"] == "gminustwo/primerecomp"
-assert m["start"]["program"][0].endswith(".AppImage")
-assert m["prepare"]["program"] == m["start"]["program"]
-assert m["saves"] == ["{local}/primerecomp/save"]
+assert any(name.endswith(".AppImage") for name in m["start"]["program"])
 PY

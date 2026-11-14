@@ -1,0 +1,581 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "PrimeRecomp",
+  "repo": "gminustwo/primerecomp",
+  "inputs": [
+    {
+      "id": "base",
+      "label": "Metroid Prime Remastered v1.0.0 (no updates), extracted exefs + romfs",
+      "role": "game",
+      "formats": [{ "type": "folder" }]
+    }
+  ],
+  "prepare": {
+    "program": ["primerecomp.exe", "PrimeRecomp.AppImage"],
+    "args": ["--prepare", "--game={input:base}"],
+    "label": "Preparing Metroid Prime Remastered",
+    "timeout": 3600
+  },
+  "start": {
+    "program": ["primerecomp.exe", "PrimeRecomp.AppImage"],
+    "args": ["--play"]
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [
+        { "path": "{install}/primerecomp.ini", "if": "{install}/primerecomp.exe" },
+        { "path": "{local}/primerecomp/primerecomp.ini" }
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "id": "fullscreen",
+      "label": "Full screen",
+      "group": "Video",
+      "choices": [
+        {"label": "Off", "set": {"fullscreen": "0"}},
+        {"label": "On", "set": {"fullscreen": "1"}}
+      ],
+      "defaults": {"fullscreen": "0"}
+    },
+    {
+      "id": "resolution",
+      "label": "Resolution",
+      "group": "Video",
+      "choices": [
+        {"label": "Match display", "set": {"resolution": "match"}},
+        {"label": "Dynamic", "set": {"resolution": "dynamic"}},
+        {"label": "25%", "set": {"resolution": "25%"}},
+        {"label": "50%", "set": {"resolution": "50%"}},
+        {"label": "75%", "set": {"resolution": "75%"}},
+        {"label": "900p (Switch)", "set": {"resolution": "900p"}},
+        {"label": "1080p", "set": {"resolution": "1080p"}},
+        {"label": "1440p", "set": {"resolution": "1440p"}},
+        {"label": "4K", "set": {"resolution": "2160p"}},
+        {"label": "8K", "set": {"resolution": "4320p"}}
+      ],
+      "defaults": {"resolution": "match"}
+    },
+    {
+      "id": "frame_rate",
+      "label": "Frame rate",
+      "group": "Video",
+      "choices": [
+        {"label": "30 fps", "set": {"frame_rate": "30"}},
+        {"label": "60 fps (original)", "set": {"frame_rate": "60"}},
+        {"label": "90 fps", "set": {"frame_rate": "90"}},
+        {"label": "120 fps", "set": {"frame_rate": "120"}}
+      ],
+      "defaults": {"frame_rate": "60"}
+    },
+    {
+      "id": "vsync",
+      "label": "V-Sync",
+      "group": "Video",
+      "choices": [
+        {"label": "Off", "set": {"vsync": "0"}},
+        {"label": "On", "set": {"vsync": "1"}}
+      ],
+      "defaults": {"vsync": "1"}
+    },
+    {
+      "id": "aspect",
+      "label": "Screen shape",
+      "group": "Video",
+      "choices": [
+        {"label": "Fill window", "set": {"aspect": "unlocked"}},
+        {"label": "Original (16:9)", "set": {"aspect": "original"}}
+      ],
+      "defaults": {"aspect": "unlocked"}
+    },
+    {
+      "id": "upscaler",
+      "label": "Upscaling",
+      "group": "Video",
+      "choices": [
+        {"label": "Bilinear", "set": {"upscaler": "bilinear"}},
+        {"label": "AMD FSR 1", "set": {"upscaler": "fsr1"}}
+      ],
+      "defaults": {"upscaler": "fsr1"}
+    },
+    {
+      "id": "antialias",
+      "label": "Anti-aliasing",
+      "group": "Video",
+      "choices": [
+        {"label": "Off", "set": {"antialias": "off"}},
+        {"label": "SMAA", "set": {"antialias": "smaa"}}
+      ],
+      "defaults": {"antialias": "off"}
+    },
+    {
+      "id": "aniso",
+      "label": "Texture filtering",
+      "group": "Video",
+      "choices": [
+        {"label": "Game's own", "set": {"aniso": "0"}},
+        {"label": "2x", "set": {"aniso": "2"}},
+        {"label": "4x", "set": {"aniso": "4"}},
+        {"label": "8x", "set": {"aniso": "8"}},
+        {"label": "16x", "set": {"aniso": "16"}}
+      ],
+      "defaults": {"aniso": "16"}
+    },
+    {
+      "id": "preload_shaders",
+      "label": "Preload shaders",
+      "group": "Video",
+      "help": "Build shaders before playing when starting from PrimeRecomp's start screen.",
+      "choices": [
+        {"label": "Off", "set": {"preload_shaders": "0"}},
+        {"label": "On", "set": {"preload_shaders": "1"}}
+      ],
+      "defaults": {"preload_shaders": "1"}
+    },
+    {
+      "id": "show_fps",
+      "label": "Show FPS",
+      "group": "Video",
+      "choices": [
+        {"label": "Off", "set": {"show_fps": "0"}},
+        {"label": "On", "set": {"show_fps": "1"}}
+      ],
+      "defaults": {"show_fps": "0"}
+    },
+    {
+      "id": "hud",
+      "label": "HUD placement",
+      "group": "Video",
+      "choices": [
+        {"label": "Window edges", "set": {"hud": "edges"}},
+        {"label": "21:9", "set": {"hud": "21:9"}},
+        {"label": "Middle 16:9", "set": {"hud": "middle"}}
+      ],
+      "defaults": {"hud": "edges"}
+    },
+    {
+      "id": "pause",
+      "label": "Pause screen",
+      "group": "Video",
+      "choices": [
+        {"label": "Fill window", "set": {"pause": "fill"}},
+        {"label": "Middle 16:9", "set": {"pause": "middle"}}
+      ],
+      "defaults": {"pause": "fill"}
+    },
+    {
+      "id": "hdr",
+      "label": "HDR",
+      "group": "Video",
+      "choices": [
+        {"label": "Off", "set": {"hdr": "0"}},
+        {"label": "On", "set": {"hdr": "1"}}
+      ],
+      "defaults": {"hdr": "0"}
+    },
+    {
+      "id": "hdr_peak_nits",
+      "label": "HDR peak brightness",
+      "group": "Video",
+      "advanced": true,
+      "slider": {"key": "hdr_peak_nits", "min": 400, "max": 4000, "step": 50, "format": "%g"},
+      "defaults": {"hdr_peak_nits": "1000"}
+    },
+    {
+      "id": "hdr_paper_white_nits",
+      "label": "HDR paper white",
+      "group": "Video",
+      "advanced": true,
+      "slider": {"key": "hdr_paper_white_nits", "min": 80, "max": 500, "step": 10, "format": "%g"},
+      "defaults": {"hdr_paper_white_nits": "200"}
+    },
+    {
+      "id": "fov",
+      "label": "Field of view",
+      "group": "Video",
+      "slider": {"key": "fov", "min": 45, "max": 90, "step": 1, "format": "%g"},
+      "defaults": {"fov": "55"}
+    },
+    {
+      "id": "weapon_fov",
+      "label": "Weapon field of view",
+      "group": "Video",
+      "slider": {"key": "weapon_fov", "min": 45, "max": 90, "step": 1, "format": "%g"},
+      "defaults": {"weapon_fov": "55"}
+    },
+    {
+      "id": "volume",
+      "label": "Volume",
+      "group": "Audio",
+      "slider": {"key": "volume", "min": 0, "max": 2, "step": 0.05, "format": "%.2f"},
+      "defaults": {"volume": "1"}
+    },
+    {
+      "id": "speakers",
+      "label": "Speakers",
+      "group": "Audio",
+      "choices": [
+        {"label": "Auto", "set": {"speakers": "auto"}},
+        {"label": "Stereo", "set": {"speakers": "stereo"}},
+        {"label": "5.1", "set": {"speakers": "5.1"}},
+        {"label": "7.1", "set": {"speakers": "7.1"}}
+      ],
+      "defaults": {"speakers": "auto"}
+    },
+    {
+      "id": "reverb",
+      "label": "Room reverb",
+      "group": "Audio",
+      "choices": [
+        {"label": "Off", "set": {"reverb": "0"}},
+        {"label": "On", "set": {"reverb": "1"}}
+      ],
+      "defaults": {"reverb": "1"}
+    },
+    {
+      "id": "movie_audio",
+      "label": "Movie audio",
+      "group": "Audio",
+      "choices": [
+        {"label": "Off", "set": {"movie_audio": "0"}},
+        {"label": "On", "set": {"movie_audio": "1"}}
+      ],
+      "defaults": {"movie_audio": "1"}
+    },
+    {
+      "id": "rumble",
+      "label": "Rumble",
+      "group": "Controls",
+      "choices": [
+        {"label": "Off", "set": {"rumble": "0"}},
+        {"label": "On", "set": {"rumble": "1"}}
+      ],
+      "defaults": {"rumble": "1"}
+    },
+    {
+      "id": "rumble_strength",
+      "label": "Rumble strength",
+      "group": "Controls",
+      "slider": {"key": "rumble_strength", "min": 0, "max": 2, "step": 0.05, "format": "%.2f"},
+      "defaults": {"rumble_strength": "1"}
+    },
+    {
+      "id": "hd_rumble",
+      "label": "HD rumble",
+      "group": "Controls",
+      "choices": [
+        {"label": "Off", "set": {"hd_rumble": "0"}},
+        {"label": "On", "set": {"hd_rumble": "1"}}
+      ],
+      "defaults": {"hd_rumble": "1"}
+    },
+    {
+      "id": "deadzone_left",
+      "label": "Left stick dead zone",
+      "group": "Controls",
+      "slider": {"key": "deadzone_left", "min": 0, "max": 0.3, "step": 0.01, "format": "%.2f"},
+      "defaults": {"deadzone_left": "0.05"}
+    },
+    {
+      "id": "deadzone_right",
+      "label": "Right stick dead zone",
+      "group": "Controls",
+      "slider": {"key": "deadzone_right", "min": 0, "max": 0.3, "step": 0.01, "format": "%.2f"},
+      "defaults": {"deadzone_right": "0.05"}
+    },
+    {
+      "id": "gyro",
+      "label": "Gyro",
+      "group": "Controls",
+      "choices": [
+        {"label": "Off", "set": {"gyro": "0"}},
+        {"label": "On", "set": {"gyro": "1"}}
+      ],
+      "defaults": {"gyro": "1"}
+    },
+    {
+      "id": "mouse_aim",
+      "label": "Mouse aim",
+      "group": "Controls",
+      "choices": [
+        {"label": "Off", "set": {"mouse_aim": "0"}},
+        {"label": "On", "set": {"mouse_aim": "1"}}
+      ],
+      "defaults": {"mouse_aim": "1"}
+    },
+    {
+      "id": "mouse_sens",
+      "label": "Mouse sensitivity",
+      "group": "Controls",
+      "slider": {"key": "mouse_sens", "min": 0.1, "max": 10, "step": 0.05, "format": "%.2f"},
+      "defaults": {"mouse_sens": "1"}
+    },
+    {
+      "id": "mouse_invert",
+      "label": "Invert mouse",
+      "group": "Controls",
+      "choices": [
+        {"label": "Off", "set": {"mouse_invert": "0"}},
+        {"label": "On", "set": {"mouse_invert": "1"}}
+      ],
+      "defaults": {"mouse_invert": "0"}
+    },
+    {
+      "id": "flick_stick",
+      "label": "Flick stick",
+      "group": "Controls",
+      "choices": [
+        {"label": "Off", "set": {"flick_stick": "0"}},
+        {"label": "On", "set": {"flick_stick": "1"}}
+      ],
+      "defaults": {"flick_stick": "0"}
+    },
+    {
+      "id": "face_buttons",
+      "label": "Face buttons",
+      "group": "Controls",
+      "choices": [
+        {"label": "Labels", "set": {"face_buttons": "labels"}},
+        {"label": "Nintendo", "set": {"face_buttons": "nintendo"}},
+        {"label": "Xbox", "set": {"face_buttons": "xbox"}}
+      ],
+      "defaults": {"face_buttons": "labels"}
+    },
+    {
+      "id": "button_icons",
+      "label": "Button icons",
+      "group": "Controls",
+      "choices": [
+        {"label": "Auto", "set": {"button_icons": "auto"}},
+        {"label": "Switch", "set": {"button_icons": "switch"}},
+        {"label": "Xbox", "set": {"button_icons": "xbox"}},
+        {"label": "PlayStation", "set": {"button_icons": "playstation"}},
+        {"label": "Keyboard", "set": {"button_icons": "keyboard"}},
+        {"label": "Wii", "set": {"button_icons": "wii"}}
+      ],
+      "defaults": {"button_icons": "auto"}
+    },
+    {
+      "id": "wiimote",
+      "label": "Wii Remote",
+      "group": "Controls",
+      "advanced": true,
+      "choices": [
+        {"label": "Off", "set": {"wiimote": "0"}},
+        {"label": "On", "set": {"wiimote": "1"}}
+      ],
+      "defaults": {"wiimote": "1"}
+    },
+    {
+      "id": "wiimote_area",
+      "label": "Wii pointer area",
+      "group": "Controls",
+      "advanced": true,
+      "slider": {"key": "wiimote_area", "min": 0.2, "max": 1, "step": 0.05, "format": "%.2f"},
+      "defaults": {"wiimote_area": "0.5"}
+    },
+    {
+      "id": "wiimote_smooth",
+      "label": "Wii pointer smoothing",
+      "group": "Controls",
+      "advanced": true,
+      "slider": {"key": "wiimote_smooth", "min": 0, "max": 0.9, "step": 0.05, "format": "%.2f"},
+      "defaults": {"wiimote_smooth": "0.3"}
+    },
+    {
+      "id": "steam_controller_direct",
+      "label": "Direct Steam Controller input",
+      "group": "Controls",
+      "advanced": true,
+      "choices": [
+        {"label": "Off", "set": {"steam_controller_direct": "0"}},
+        {"label": "On", "set": {"steam_controller_direct": "1"}}
+      ],
+      "defaults": {"steam_controller_direct": "0"}
+    },
+    {
+      "id": "language",
+      "label": "Language",
+      "group": "Gameplay",
+      "choices": [
+        {"label": "Auto", "set": {"language": "auto"}},
+        {"label": "Japanese", "set": {"language": "ja"}},
+        {"label": "English", "set": {"language": "en-US"}},
+        {"label": "Spanish", "set": {"language": "es"}},
+        {"label": "French", "set": {"language": "fr"}},
+        {"label": "German", "set": {"language": "de"}},
+        {"label": "Italian", "set": {"language": "it"}},
+        {"label": "Dutch", "set": {"language": "nl"}},
+        {"label": "Korean", "set": {"language": "ko"}},
+        {"label": "Chinese (Simplified)", "set": {"language": "zh-CN"}},
+        {"label": "Chinese (Traditional)", "set": {"language": "zh-Hant"}}
+      ],
+      "defaults": {"language": "auto"}
+    },
+    {
+      "id": "skippable_cutscenes",
+      "label": "Skip any cutscene",
+      "group": "Gameplay",
+      "choices": [
+        {"label": "Off", "set": {"skippable_cutscenes": "0"}},
+        {"label": "On", "set": {"skippable_cutscenes": "1"}}
+      ],
+      "defaults": {"skippable_cutscenes": "0"}
+    },
+    {
+      "id": "hint_seconds",
+      "label": "Hint timer",
+      "group": "Gameplay",
+      "choices": [
+        {"label": "Game's own", "set": {"hint_seconds": "0"}},
+        {"label": "1 second", "set": {"hint_seconds": "1"}},
+        {"label": "30 seconds", "set": {"hint_seconds": "30"}},
+        {"label": "1 minutes", "set": {"hint_seconds": "60"}},
+        {"label": "2 minutes", "set": {"hint_seconds": "120"}},
+        {"label": "3 minutes", "set": {"hint_seconds": "180"}},
+        {"label": "4 minutes", "set": {"hint_seconds": "240"}},
+        {"label": "5 minutes", "set": {"hint_seconds": "300"}},
+        {"label": "6 minutes", "set": {"hint_seconds": "360"}},
+        {"label": "7 minutes", "set": {"hint_seconds": "420"}},
+        {"label": "8 minutes", "set": {"hint_seconds": "480"}},
+        {"label": "9 minutes", "set": {"hint_seconds": "540"}},
+        {"label": "10 minutes", "set": {"hint_seconds": "600"}},
+        {"label": "11 minutes", "set": {"hint_seconds": "660"}},
+        {"label": "12 minutes", "set": {"hint_seconds": "720"}},
+        {"label": "13 minutes", "set": {"hint_seconds": "780"}},
+        {"label": "14 minutes", "set": {"hint_seconds": "840"}},
+        {"label": "15 minutes", "set": {"hint_seconds": "900"}},
+        {"label": "16 minutes", "set": {"hint_seconds": "960"}},
+        {"label": "17 minutes", "set": {"hint_seconds": "1020"}},
+        {"label": "18 minutes", "set": {"hint_seconds": "1080"}},
+        {"label": "19 minutes", "set": {"hint_seconds": "1140"}},
+        {"label": "20 minutes", "set": {"hint_seconds": "1200"}},
+        {"label": "21 minutes", "set": {"hint_seconds": "1260"}},
+        {"label": "22 minutes", "set": {"hint_seconds": "1320"}},
+        {"label": "23 minutes", "set": {"hint_seconds": "1380"}},
+        {"label": "24 minutes", "set": {"hint_seconds": "1440"}},
+        {"label": "25 minutes", "set": {"hint_seconds": "1500"}},
+        {"label": "26 minutes", "set": {"hint_seconds": "1560"}},
+        {"label": "27 minutes", "set": {"hint_seconds": "1620"}},
+        {"label": "28 minutes", "set": {"hint_seconds": "1680"}},
+        {"label": "29 minutes", "set": {"hint_seconds": "1740"}},
+        {"label": "30 minutes", "set": {"hint_seconds": "1800"}}
+      ],
+      "defaults": {"hint_seconds": "0"}
+    },
+    {
+      "id": "hint_on_l3",
+      "label": "Show hint with left stick",
+      "group": "Gameplay",
+      "choices": [
+        {"label": "Off", "set": {"hint_on_l3": "0"}},
+        {"label": "On", "set": {"hint_on_l3": "1"}}
+      ],
+      "defaults": {"hint_on_l3": "1"}
+    },
+    {
+      "id": "infinite_energy",
+      "label": "Infinite energy",
+      "group": "Cheats",
+      "advanced": true,
+      "choices": [
+        {"label": "Off", "set": {"infinite_energy": "0"}},
+        {"label": "On", "set": {"infinite_energy": "1"}}
+      ],
+      "defaults": {"infinite_energy": "0"}
+    },
+    {
+      "id": "infinite_missiles",
+      "label": "Infinite missiles",
+      "group": "Cheats",
+      "advanced": true,
+      "choices": [
+        {"label": "Off", "set": {"infinite_missiles": "0"}},
+        {"label": "On", "set": {"infinite_missiles": "1"}}
+      ],
+      "defaults": {"infinite_missiles": "0"}
+    },
+    {
+      "id": "infinite_power_bombs",
+      "label": "Infinite power bombs",
+      "group": "Cheats",
+      "advanced": true,
+      "choices": [
+        {"label": "Off", "set": {"infinite_power_bombs": "0"}},
+        {"label": "On", "set": {"infinite_power_bombs": "1"}}
+      ],
+      "defaults": {"infinite_power_bombs": "0"}
+    },
+    {
+      "id": "texture_mods",
+      "label": "Texture mods",
+      "group": "Mods",
+      "choices": [
+        {"label": "Off", "set": {"texture_mods": "0"}},
+        {"label": "On", "set": {"texture_mods": "1"}}
+      ],
+      "defaults": {"texture_mods": "1"}
+    },
+    {
+      "id": "dump_textures",
+      "label": "Dump textures",
+      "group": "Mods",
+      "advanced": true,
+      "choices": [
+        {"label": "Off", "set": {"dump_textures": "0"}},
+        {"label": "On", "set": {"dump_textures": "1"}}
+      ],
+      "defaults": {"dump_textures": "0"}
+    },
+    {
+      "id": "check_updates",
+      "label": "Check for PrimeRecomp updates",
+      "group": "Updates",
+      "help": "Applies to PrimeRecomp's own start screen; RecompLauncher manages its updates independently.",
+      "choices": [
+        {"label": "Off", "set": {"check_updates": "0"}},
+        {"label": "On", "set": {"check_updates": "1"}}
+      ],
+      "defaults": {"check_updates": "1"}
+    },
+    {
+      "id": "launch_preload",
+      "label": "Preload before launch",
+      "group": "Video",
+      "in": "args",
+      "help": "Show shader preparation before playing instead of loading alongside the game.",
+      "choices": [
+        {"label": "Off", "args": []},
+        {"label": "On", "args": ["--preload-shaders"]}
+      ]
+    }
+  ],
+  "groups": [
+    { "id": "Cheats", "advanced": true }
+  ],
+  "saves": ["{install}/save", "{local}/primerecomp/save"],
+  "folders": {
+    "saves": [
+      { "path": "{install}/save", "if": "{install}/primerecomp.exe" },
+      { "path": "{local}/primerecomp/save" }
+    ],
+    "logs": [
+      { "path": "{install}", "if": "{install}/primerecomp.exe" },
+      { "path": "{local}/primerecomp" }
+    ],
+    "data": [
+      { "path": "{install}", "if": "{install}/primerecomp.exe" },
+      { "path": "{local}/primerecomp" }
+    ]
+  },
+  "actions": [
+    { "id": "saves", "label": "Save folder", "open": "saves" },
+    { "id": "logs", "label": "Log folder", "help": "primerecomp.log holds the latest run, primerecomp.previous.log the one before.", "open": "logs" },
+    { "id": "cache", "label": "Shader cache", "help": "Shaders and pipelines the game has built. Clearing it only helps if graphics look wrong after an update; they are built again on the next start.", "clear": "data/cache" }
+  ],
+  "looks": { "graphics": "vulkan" }
+}
