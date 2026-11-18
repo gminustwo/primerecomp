@@ -956,10 +956,15 @@ static void fill_state(Cpu *c) {
     if (!menu && sampling >= menu_b_from && sampling < menu_b_to) b |= 1ull << BTN_B;  // (Left Alt let go: back)
     if (!menu && sampling >= flick_from && sampling < flick_to) b |= 1ull << flick_button;  // (a mouse flick: Spring Ball)
     bool legacy = legacy_swap && game_in_play();  // (Legacy sticks: in play only - menus get the sticks as they are)
-    int32_t plx = legacy ? pad_rx : pad_lx;
+    // (Swap map sticks, issue #91: on the map screen the controller's sticks trade places - the left one pans the map,
+    // the right one turns it; the game has it the other way round)
+    extern bool game_map_screen(void);  // runtime/hle/game.c
+    bool map_swap = g_settings.swap_map_sticks && game_map_screen();
+    int32_t plx = legacy || map_swap ? pad_rx : pad_lx, ply = map_swap ? pad_ry : pad_ly;
     int32_t lx = clamp_axis((menu ? 0 : key_lx + plx + wm_lx) + script_lx);
-    int32_t ly = clamp_axis((menu ? 0 : key_ly + pad_ly + wm_ly) + script_ly);
-    int32_t prx = legacy ? pad_lx : flick_takes_stick ? 0 : pad_rx, pry = flick_takes_stick ? 0 : pad_ry;
+    int32_t ly = clamp_axis((menu ? 0 : key_ly + ply + wm_ly) + script_ly);
+    int32_t prx = legacy || map_swap ? pad_lx : flick_takes_stick ? 0 : pad_rx;
+    int32_t pry = map_swap ? pad_ly : flick_takes_stick ? 0 : pad_ry;
     int32_t rx = clamp_axis((menu ? 0 : key_rx + prx + mouse_rx + wm_rx) + script_rx);
     int32_t ry = clamp_axis((menu ? 0 : key_ry + pry + mouse_ry + wm_ry) + script_ry);
     static long stick_log = -2;  // (debug) LARECOMP_LOG_STICKS=<n>: the sticks the game gets, every n-th read

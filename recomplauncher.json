@@ -394,6 +394,16 @@
       "defaults": {"legacy_sticks": "0"}
     },
     {
+      "id": "swap_map_sticks",
+      "label": "Swap map sticks",
+      "group": "Controls",
+      "choices": [
+        {"label": "Off", "set": {"swap_map_sticks": "0"}},
+        {"label": "On", "set": {"swap_map_sticks": "1"}}
+      ],
+      "defaults": {"swap_map_sticks": "0"}
+    },
+    {
       "id": "face_buttons",
       "label": "Face buttons",
       "group": "Controls",

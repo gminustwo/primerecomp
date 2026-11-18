@@ -61,8 +61,8 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 - Rumble with a strength setting, and HD rumble: the game's own two-tone vibration, as a Switch plays it, on a
   Switch Pro Controller or a single Joy-Con, and on a DualSense's haptics over USB (F1 menu, Audio tab)
 - Stick dead zones, with a picture of where each stick rests, flick stick (push the right stick out to face that
-  way, turn it round to turn with it) and Legacy sticks (the left stick turns, the right one strafes) (F1 menu,
-  Controls tab)
+  way, turn it round to turn with it), Legacy sticks (the left stick turns, the right one strafes) and Swap map sticks
+  (the left stick moves the map, the right one turns it) (F1 menu, Controls tab)
 - The game's button prompts drawn for your controller - Xbox, PlayStation, Switch, GameCube, keyboard and mouse or Wii Remote,
   following your bindings - in the game's own style (F1 menu, Controls tab: Button icons; Auto follows what you used
   last)

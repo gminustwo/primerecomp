@@ -132,6 +132,8 @@ typedef struct {
                          // (looking up and down: gyro or mouse): runtime/hle/game.c flick_frame
     bool legacy_sticks;  // the controller's left stick turns and the right one strafes, in play on foot (issue #68):
                          // runtime/hle/game.c legacy_frame
+    bool swap_map_sticks;  // on the map screen the controller's sticks trade places: the left pans, the right turns
+                           // (issue #91): runtime/hle/input.c fill_state
     bool steam_controller_direct;  // (settings file only) SDL's own Steam Controller driver, for its gyro without
                                    // Steam Input (the window code sets SDL_HINT_JOYSTICK_HIDAPI_STEAM)
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language

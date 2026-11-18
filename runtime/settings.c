@@ -260,6 +260,7 @@ void settings_load(void) {
         else if (!strcmp(key, "mouse_flick_jump")) g_settings.mouse_flick_jump = atoi(val) != 0;
         else if (!strcmp(key, "flick_stick")) g_settings.flick_stick = atoi(val) != 0;
         else if (!strcmp(key, "legacy_sticks")) g_settings.legacy_sticks = atoi(val) != 0;
+        else if (!strcmp(key, "swap_map_sticks")) g_settings.swap_map_sticks = atoi(val) != 0;
         else if (!strcmp(key, "steam_controller_direct")) g_settings.steam_controller_direct = atoi(val) != 0;
         else if (!strcmp(key, "resolution")) {  // match / dynamic / 75% / 50% / 25% / <lines>p / 4k / 8k (LAS: 1x-8x)
             int n = atoi(val);
@@ -391,7 +392,8 @@ static void write_settings(void *o) {
     put(o, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
             g_settings.mouse_invert);
     put(o, "mouse_flick_jump = %d\n", g_settings.mouse_flick_jump);
-    put(o, "flick_stick = %d\nlegacy_sticks = %d\n", g_settings.flick_stick, g_settings.legacy_sticks);
+    put(o, "flick_stick = %d\nlegacy_sticks = %d\nswap_map_sticks = %d\n", g_settings.flick_stick,
+            g_settings.legacy_sticks, g_settings.swap_map_sticks);
     put(o, "hint_seconds = %d\nhint_on_l3 = %d\ninfinite_energy = %d\ninfinite_missiles = %d\ninfinite_power_bombs = %d\n",
             g_settings.hint_seconds, g_settings.hint_on_l3, g_settings.inf_energy, g_settings.inf_missiles,
             g_settings.inf_power_bombs);

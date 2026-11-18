@@ -1379,6 +1379,13 @@ static void tab_about(void) {
              "Controls -> Control Scheme); the other schemes keep the sticks as they are. In the Morph Ball, and while locked on (circling the target), the "
              "left stick works as before. Not together with Flick stick.");
     }
+    {   // (runtime/hle/input.c fill_state; issue #91)
+        bool ms = g_settings.swap_map_sticks;
+        if (ImGui::Checkbox("Swap map sticks", &ms)) { g_settings.swap_map_sticks = ms; settings_save(); }
+        hint("On the map screen the left stick moves the map around and the right stick turns it, as the sticks "
+             "move and look in play. The game has them the other way round, and the map's prompts still show its "
+             "own sticks.");
+    }
     ImGui::Spacing();
     header("Wii Remote");
     wiimote_section();

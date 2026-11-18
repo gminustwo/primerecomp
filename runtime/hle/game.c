@@ -581,6 +581,13 @@ bool game_message_screen(void) {
     return now == 6 || (now == 1 && before == 6);
 }
 
+// The map screen is up (screen 2: CInGameGuiManagerMP1's MapScreen; runtime/hle/input.c's Swap map sticks, issue #91)
+bool game_map_screen(void) {
+    int now, before;
+    game_gui_screen(&now, &before);
+    return now == 2;
+}
+
 // The first-person camera when it's the current camera (not a cutscene's, the morph ball's...), else 0. Only in play
 // (at boot the state manager has no cameras yet, and looking one up crashed), found as the game does: the camera
 // manager, its current camera's id (the top of its two override stacks, else its own),
