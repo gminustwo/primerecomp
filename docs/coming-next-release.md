@@ -16,11 +16,12 @@ cover the Charge Beam's "Press ZR / A to charge". If the Plated Beetle fight's l
 shows Switch buttons, a save right before the Plated Beetle, run once with `LARECOMP_LOG_GLYPHS=1`, plus
 `primerecomp.log` and a screenshot of the hint, would help.
 
-### Artifacts at the sides of the map screen ([#53](https://github.com/gminustwo/primerecomp/issues/53))
+### Dark blocks around the map on AMD RX 7000 cards on Linux ([#53](https://github.com/gminustwo/primerecomp/issues/53))
 
-The screenshot attached so far looks clean, apart from a 2-pixel strip at the left edge that seems to be the window
-border. A circled screenshot or a short video, plus whether it was windowed or fullscreen and the Video tab's Aspect
-ratio and Pause screen settings, would help.
+On an RX 7600 XT with Linux's RADV driver, the map screen shows dark 8 x 8-pixel blocks along the map's edges. It
+doesn't happen on NVIDIA, on the Steam Deck or on an AMD integrated GPU under Windows. The driver's color compression
+and its pixel grouping are ruled out; two more tests are waiting on the reporter. If you see this on an RX 7000 card,
+the issue has the tests to run.
 
 ### Rising lava in Magmoor Caverns doesn't stop or burn ([#54](https://github.com/gminustwo/primerecomp/issues/54))
 
