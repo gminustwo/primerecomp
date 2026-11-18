@@ -1,9 +1,14 @@
 # PrimeRecomp
 
+[![release](https://img.shields.io/github/v/release/gminustwo/primerecomp?filter=v%2A&sort=semver&display_name=tag&label=release&color=orange)](https://github.com/gminustwo/primerecomp/releases/latest)
+[![downloads](https://img.shields.io/github/downloads/gminustwo/primerecomp/total?label=downloads&color=brightgreen)](https://github.com/gminustwo/primerecomp/releases)
+[![Discord](https://img.shields.io/discord/1563998517536760009?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/CdwFjGCEGf)
+
 **PrimeRecomp** runs *Metroid Prime Remastered* (Nintendo Switch, 2023) natively on Windows, macOS (Apple Silicon) and
 Linux, including the Steam Deck. The game's code is statically recompiled.
 
-[discord]: https://discord.gg/TmWPy28wf
+Chat and news: the project's Discord server, https://discord.gg/CdwFjGCEGf (bug reports and feature requests go on
+[Issues](https://github.com/gminustwo/primerecomp/issues), below).
 
 > [!NOTE]
 > **No game files are included.** You need your own copy of Metroid Prime Remastered for Nintendo Switch,
