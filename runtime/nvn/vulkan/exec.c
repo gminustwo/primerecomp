@@ -2183,8 +2183,16 @@ static void prog_init(Prog *p, const uint64_t code[3], const uint64_t cmax[3], c
     }
 }
 
-#define PROG_TAB 4096
+// Translated programs by their stages' code (addresses and contents: get_program) and keys. Never more than 3/4 full:
+// past that it starts over (the programs stay alive - draws and pipelines hold them - and are found again by their
+// code: the pre-loaded ones at once, the others translated again).
+#define PROG_TAB 16384
 static struct { uint64_t key; Prog *prog; } prog_tab[PROG_TAB];
+static int prog_n;
+// The code hash last translated for each program's addresses and keys (its key without the contents): a program
+// whose code differs is logged - a translation that was drawn for it before the fix (issue #26). Starts over with
+// prog_tab.
+static struct { uint64_t akey, code; } prog_code[PROG_TAB];
 
 // Geometry shaders aren't translated. MPR's cube map passes (one draw renders all six faces) use a passthrough
 // geometry shader that only sets the layer from a vertex output:
@@ -2267,10 +2275,34 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey, int g
     const uint8_t *vb = (const uint8_t *)vkey;
     for (size_t i = 0; i < sizeof *vkey; i++) { h ^= vb[i]; h *= 0x100000001B3ull; }
     for (int i = 0; i < 8; i++) { h ^= fkey->rt_kind[i]; h *= 0x100000001B3ull; }
+    // The code's contents too (NvnShaderStage.code_hash): the game loads other shaders at addresses earlier ones had,
+    // and by address alone this found the earlier shader's translation (likely issue #26: the visor's frame and parts
+    // of the world in wrong, flickering colors after an elevator ride or a death, until a restart).
+    uint64_t ah = h ? h : 1, contents = 0;
+    for (int i = 0; i < (gs || emul ? 3 : 2); i++) {
+        h ^= np->stages[i].code_hash, h *= 0x100000001B3ull, h ^= h >> 29;
+        contents = (contents ^ np->stages[i].code_hash) * 0x100000001B3ull;
+    }
     if (!h) h = 1;
+    if (prog_n >= PROG_TAB * 3 / 4) {
+        LOG("[shader] %d programs: the program table starts over\n", prog_n);
+        memset(prog_tab, 0, sizeof prog_tab);
+        memset(prog_code, 0, sizeof prog_code);
+        prog_n = 0;
+    }
     uint32_t slot = (uint32_t)(h ^ (h >> 31)) & (PROG_TAB - 1);
     while (prog_tab[slot].key && prog_tab[slot].key != h) slot = (slot + 1) & (PROG_TAB - 1);
     if (prog_tab[slot].key) return prog_tab[slot].prog;
+    {   // (a new one: other code at addresses translated before?)
+        uint32_t s = (uint32_t)(ah ^ (ah >> 31)) & (PROG_TAB - 1);
+        while (prog_code[s].akey && prog_code[s].akey != ah) s = (s + 1) & (PROG_TAB - 1);
+        static int nlog, nchanged;
+        if (prog_code[s].akey && prog_code[s].code != contents && (++nchanged <= 10 || (nchanged & (nchanged - 1)) == 0) && nlog++ < 30)
+            LOG("[shader] frame %llu: program vs %llx fs %llx is other code than these addresses held before (%d so "
+                "far): translated anew\n", (unsigned long long)renderer_present_count(),
+                (unsigned long long)np->stages[0].code_addr, (unsigned long long)np->stages[1].code_addr, nchanged);
+        prog_code[s].akey = ah, prog_code[s].code = contents;
+    }
     uint64_t code[3], cmax[3];
     for (int i = 0; i < 3; i++) {
         code[i] = i < 2 || gs || emul ? np->stages[i].code_addr : 0;
@@ -2285,12 +2317,14 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey, int g
     if (pre) {  // (the same code and keys as a pre-loaded one: that one, built, with its pipelines)
         prog_tab[slot].key = h;
         prog_tab[slot].prog = pre;
+        prog_n++;
         preload_adopt(pre);
         return pre;
     }
     Prog *p = calloc(1, sizeof *p);
     prog_tab[slot].key = h;
     prog_tab[slot].prog = p;
+    prog_n++;
     prog_init(p, code, cmax, vkey, fkey, gs, emul, gs_in);
     p->ckey = in.r.ckey;
     if (record_wants(in.r.ckey)) p->in = prog_inputs_copy(&in);
@@ -4336,6 +4370,8 @@ static int g_cs_n;  // (compute program table below)
 void vk_exec_reset(void) {
     rb_complete(~0ull);
     memset(prog_tab, 0, sizeof prog_tab);
+    memset(prog_code, 0, sizeof prog_code);
+    prog_n = 0;
     memset(pipe_tab, 0, sizeof pipe_tab);
     pipe_n = 0;
     for (int i = 0; atomic_load(&pre_published) && i < pre_n; i++) pre_all[i]->adopted = false;  // (kept: by content)
@@ -4554,16 +4590,20 @@ static void build_compute(void *arg) {
     if (r != VK_SUCCESS) LOG("[compute] pipeline failed: %d\n", r);
 }
 
-static struct CsEnt { uint64_t addr; CsProg *cp; } g_cs_tab[256];  // compute programs by code address
+// compute programs by their code's address and contents (as get_program's: issue #26); full, the oldest goes
+static struct CsEnt { uint64_t addr, hash; CsProg *cp; } g_cs_tab[256];
+static int g_cs_next;  // (full: the entry replaced next)
 
 static CsProg *compute_program(NvnProgram *np) {
     NvnShaderStage *ss = &np->stages[5];
     if (!ss->code_addr) return NULL;
     struct CsEnt *tab = g_cs_tab;
     int n = g_cs_n;
-    for (int i = 0; i < n; i++) if (tab[i].addr == ss->code_addr) return tab[i].cp;
+    for (int i = 0; i < n; i++) if (tab[i].addr == ss->code_addr && tab[i].hash == ss->code_hash) return tab[i].cp;
     CsProg *cp = calloc(1, sizeof *cp);
-    if (n < 256) { tab[n].addr = ss->code_addr; tab[n].cp = cp; g_cs_n = n + 1; }
+    int e = n < 256 ? n : g_cs_next++ % 256;  // (a replaced one stays alive: dispatches recorded may use it)
+    tab[e].addr = ss->code_addr, tab[e].hash = ss->code_hash, tab[e].cp = cp;
+    if (n < 256) g_cs_n = n + 1;
     maxwell_gmem_base = HEAP_BASE;
     maxwell_gmem_size = HEAP_MAX;
     maxwell_gmem_window = gmem_windowed();
@@ -5281,10 +5321,10 @@ static void draw_(CmdRec *r, bool indexed) {
     }
     g_mirror_w = 0;
     {   // fragment-shader hash: skip lists, logs
-        static uint64_t last_fs, last_hash;
+        static uint64_t last_fs, last_code, last_hash;
         uint64_t fs = st.program->stages[1].code_addr;
-        if (fs != last_fs) {
-            last_fs = fs;
+        if (fs != last_fs || st.program->stages[1].code_hash != last_code) {  // (other code at that address: #26)
+            last_fs = fs, last_code = st.program->stages[1].code_hash;
             last_hash = fs ? hmix(1469598103934665603ull, (const void *)(uintptr_t)(fs + 0x30), 0x200) : 0;
         }
         static uint64_t skip[16];

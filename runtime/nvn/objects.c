@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "../kernel.h"
+#include "maxwell/shader.h"
 #include "nvn.h"
 
 void renderer_sync(void);
@@ -676,6 +677,33 @@ NVN(nvnProgramFinalize) { free(HOST(NvnProgram, A(0))); SET_HOST(A(0), 0); }
 NVN(nvnProgramSetDebugLabel) { (void)c; }
 NVN(nvnProgramSetSampleShading) { (void)c; }
 NVN(nvnProgramSetSubroutineLinkage) { RET(1); }
+
+// What a stage's code is (NvnShaderStage.code_hash): the code as far as the translator reads it (maxwell_code_size;
+// graphics stages from their SPH, as the shader record's key), then the constants after it (c1: the translator reads
+// jump tables there). The backend found its translated programs by the code's address alone, but the game loads other
+// shaders where earlier ones were (575 stages at an address that had held other code, from the boot through one death
+// and reload), and a program whose stages land where an earlier program's were drew with that one's translation and
+// this draw's constants - wrong colors that change with them. The likely cause of issue #26: after an elevator ride or
+// a death the visor's frame in colors changing every frame, rocks and trees in flat colors and noise, until a restart.
+static uint64_t code_hash(uint64_t code, uint32_t stage, uint32_t const_off, uint32_t const_size) {
+    const uint8_t *b = (const uint8_t *)(uintptr_t)code;
+    if (const_size > 0x10000) const_size = 0x10000;  // (a constant buffer's most)
+    size_t from = stage == STAGE_COMPUTE ? 0 : 0x30, n = maxwell_code_size(b, const_off ? const_off : 0x10000, (int)stage, NULL);
+    uint64_t h = 0x9E3779B97F4A7C15ull ^ n ^ ((uint64_t)const_size << 32);
+    for (int part = 0; part < 2; part++) {
+        size_t i = part ? const_off : from, end = part ? (size_t)const_off + const_size : n;
+        if (part && (!const_off || !const_size)) break;
+        for (; i + 8 <= end; i += 8) {
+            uint64_t w;
+            memcpy(&w, b + i, 8);
+            h = (h ^ w) * 0x100000001B3ull;
+            h ^= h >> 29;
+        }
+        for (; i < end; i++) h = (h ^ b[i]) * 0x100000001B3ull;
+    }
+    return h ? h : 1;
+}
+
 static void set_shaders(Cpu *c, int stride) {
     NvnProgram *p = HOST(NvnProgram, A(0));
     int n = (int)A(1);
@@ -703,6 +731,7 @@ static void set_shaders(Cpu *c, int stride) {
         p->stages[stage].control = control;
         p->stages[stage].const_offset = *(const uint32_t *)(control + 0x700);
         p->stages[stage].const_size = *(const uint32_t *)(control + 0x6FC);
+        p->stages[stage].code_hash = code_hash(code, stage, p->stages[stage].const_offset, p->stages[stage].const_size);
         p->stage_mask |= 1u << stage;
     }
     RET(1);

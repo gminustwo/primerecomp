@@ -76,6 +76,8 @@ typedef struct NvnShaderStage {
     uint64_t code_addr;       // GPU (== CPU) address of the code
     const uint8_t *control;   // control section
     uint32_t const_offset, const_size;  // compiler constants (bound as c1), within the code blob
+    uint64_t code_hash;       // the code's (and constants') contents (objects.c set_shaders): with code_addr, the
+                              // backend's program caches' key - the same address may hold another shader later
     void *backend;
 } NvnShaderStage;
 
