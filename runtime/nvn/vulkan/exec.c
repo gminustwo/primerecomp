@@ -5337,6 +5337,19 @@ static void draw_(CmdRec *r, bool indexed) {
             }
         }
         for (int i = 0; i < nskip; i++) if (last_hash == skip[i]) SKIP(SKIP_LIST);
+        // The map's FXAA pass (8f2bf3e1cf24c08e - the game's code, the same on every machine; not used in play) on RADV
+        // with an RDNA 3 GPU painted 8x8 blocks around the map's rooms opaque near-black (issue #53, an RX 7600 XT; the
+        // Steam Deck's RDNA 2 draws it right, as do NVIDIA and AMD's Windows driver). Left out there, the map's edges are
+        // only a little rougher - the reporter's test (LARECOMP_SKIP_FSHASH). The cause isn't known: the driver's color
+        // compression (RADV_DEBUG=nodcc), depth tiles (nohiz) and wave size (pswave32) made no difference.
+        // (test) LARECOMP_MAP_FXAA=0 / 1: left out / drawn on any GPU.
+        static int map_fxaa = -1;
+        if (map_fxaa < 0) {
+            const char *e = getenv("LARECOMP_MAP_FXAA");
+            map_fxaa = e ? atoi(e) != 0 : !g_vk.radv_rdna3;
+            if (!map_fxaa) LOG("[vk] the map's FXAA pass left out (%s)\n", e ? "LARECOMP_MAP_FXAA=0" : "RADV on RDNA 3, issue #53");
+        }
+        if (!map_fxaa && last_hash == 0x8f2bf3e1cf24c08eull) SKIP(SKIP_LIST);
         static uint64_t skipn[16];  // LARECOMP_SKIP_COUNT=<count>,...: draws of these vertex / index counts (test)
         static int nskipn = -1;
         if (nskipn < 0) {

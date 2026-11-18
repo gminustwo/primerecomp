@@ -184,6 +184,9 @@ static void pick_device(void) {
         VkPhysicalDeviceProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &dp};
         vkGetPhysicalDeviceProperties2(g_vk.phys, &p2);
         LOG("[vk] driver %s: %s\n", dp.driverName, dp.driverInfo);
+        // (RADV names the chip: "(RADV NAVI33)", "(RADV GFX1103_R1)"; RDNA 2 is NAVI2x / VANGOGH, RDNA 4 GFX12xx)
+        const char *n = g_vk.props.deviceName;
+        g_vk.radv_rdna3 = dp.driverID == VK_DRIVER_ID_MESA_RADV && (strstr(n, "NAVI3") || strstr(n, "GFX11"));
     }
 }
 
