@@ -718,8 +718,52 @@ static void debug_stall(void) {
     cur++;
 }
 
+// ---- The GameCube layout (Controls tab; runtime/hle/bindings.c, input.c): the game's own Classic control scheme while
+// it's on - the GameCube's controls, which its bindings put on a GameCube controller's buttons - and the scheme from
+// before when it's off. The scheme is the game's option (CGameOptionsMP1, the game state's +0x40, kept in the save file:
+// +0x11c, runtime/hle/playlog.c), set as its options screen does (SetCurrentControllerScheme). Once each time the
+// layout turns on: a scheme picked in the game's options after that stays. The one it replaced is kept in
+// primerecomp.ini (gamecube_prev_scheme), and goes back when the layout turns off - unless the scheme isn't Classic by
+// then. EControlScheme: 0 Dual Stick, 3 Classic (LARECOMP_GC_SCHEME: another, for tests).
+static int gc_classic(void) {
+    static int v = -2;
+    if (v == -2) v = getenv("LARECOMP_GC_SCHEME") ? atoi(getenv("LARECOMP_GC_SCHEME")) : 3;
+    return v;
+}
+static void gamecube_frame(Cpu *c) {
+    extern bool bind_gamecube_active(void);  // runtime/hle/bindings.c
+    static int was = -1;  // (the layout, as last seen here)
+    bool on = bind_gamecube_active();
+    uint64_t gs = LD64(guest_sym("gpGameState"));
+    if (!GUEST_PTR_OK(gs) || (int)on == was) return;
+    int32_t cur = (int32_t)LD32(gs + 0x40 + 0x11c), want = -1;
+    if (cur < 0 || cur > 15) return;  // (not the options yet)
+    was = on;
+    int classic = gc_classic();
+    if (on && cur != classic) {
+        g_settings.gc_prev_scheme = cur;
+        want = classic;
+    } else if (!on && g_settings.gc_prev_scheme >= 0) {
+        if (cur == classic) want = g_settings.gc_prev_scheme;
+        g_settings.gc_prev_scheme = -1;
+        if (want < 0) settings_save();  // (the player changed it meanwhile: nothing to put back)
+    }
+    if (want < 0) return;
+    Cpu *saved = malloc(sizeof *saved);
+    *saved = *c;
+    c->x[0] = gs + 0x40;
+    c->x[1] = (uint64_t)want;
+    guest_call(c, guest_sym("_ZN15CGameOptionsMP126SetCurrentControllerSchemeENS_14EControlSchemeE"));
+    *c = *saved;
+    free(saved);
+    LOG("[gamecube] the game's control scheme %d -> %d (%s)\n", cur, (int)LD32(gs + 0x40 + 0x11c),
+        on ? "Classic, for the GameCube layout" : "back from Classic: the GameCube layout is off");
+    settings_save();
+}
+
 void rt_debug_autosave(Cpu *c) {
     debug_stall();
+    gamecube_frame(c);
     debug_teleport(c);
     debug_message_screen(c);
     fov_frame(c);
@@ -810,6 +854,7 @@ static float *player_transform(uint64_t player) {
 static void mouse_look(Cpu *c);
 static void flick_frame(Cpu *c, uint64_t player, uint64_t sm, float dt);
 static bool can_aim_directly(Cpu *c, uint64_t player, uint64_t sm);
+static void legacy_frame(Cpu *c, uint64_t player, uint64_t sm);
 static bool g_aimed_before_camera;  // (this frame's mouse and flick stick went in before the camera's update)
 
 void rt_player_frame(Cpu *c) {
@@ -828,7 +873,8 @@ void rt_player_frame(Cpu *c) {
     }
     if (every > 0 && m && frame % every == 0 && frame != logged) {
         logged = frame;
-        LOG("[pos] frame %llu %.2f %.2f %.2f\n", (unsigned long long)frame, m[3], m[7], m[11]);
+        LOG("[pos] frame %llu %.2f %.2f %.2f facing %.1f\n", (unsigned long long)frame, m[3], m[7], m[11],
+            atan2f(m[2], m[0]) * 57.29578f);
     }
     extern volatile int g_pos_save_request;
     if (g_pos_save_request && m) {
@@ -850,6 +896,7 @@ void rt_player_frame(Cpu *c) {
         flick_frame(c, c->x[0], c->x[1], dt);
     }
     g_aimed_before_camera = false;
+    legacy_frame(c, c->x[0], c->x[1]);
 }
 
 // The first-person camera's update (CFirstPersonCameraMP1::Think, virtual): the mouse's turn and tilt and the flick
@@ -919,6 +966,29 @@ static void turn_player(Cpu *c, uint64_t player, float right) {
     free(saved);
 }
 
+// ---- Legacy sticks (Controls tab "Legacy sticks"; issue #68), as many shooters' Legacy layout: the left stick walks
+// and turns, the right one looks up and down and strafes - the controller's sticks' left-right trade places
+// (runtime/hle/input.c fill_state). Only where the right stick turns Samus: on foot, not locked on, with the
+// first-person camera (can_aim_directly), and in the game's Dual Stick controls (EControlScheme 0, the game state's
+// +0x40 +0x11c). Not the others: in 1 and 2 the game's right stick didn't turn her in test runs (the left stick would
+// do nothing), and Classic (3) turns with the left stick already. In the Morph Ball the left stick rolls her and
+// locked on it circles the target, as before. Not with Flick stick, which has the right stick. Set for
+// the controller's next read, from CPlayerMP1::UpdateCameraBob (rt_player_frame).
+static void legacy_frame(Cpu *c, uint64_t player, uint64_t sm) {
+    extern void input_legacy_sticks(bool on);
+    bool on = false;
+    if (g_settings.legacy_sticks && !g_settings.flick_stick && GUEST_PTR_OK(player)) {
+        static uint64_t gsp;
+        if (!gsp) gsp = guest_sym("gpGameState");
+        uint64_t gs = gsp ? LD64(gsp) : 0;
+        on = GUEST_PTR_OK(gs) && LD32(gs + 0x40 + 0x11c) == 0 && can_aim_directly(c, player, sm);
+    }
+    static int was = -1;
+    if (on != was && getenv("LARECOMP_LOG_STICKS")) LOG("[input] legacy sticks %s\n", on ? "on" : "off");
+    was = on;
+    input_legacy_sticks(on);
+}
+
 // ---- Flick stick (Controls tab "Flick stick"; issue #10), as JoyShockMapper's: pushed out past FLICK_ON of full tilt,
 // the controller's right stick turns Samus to face where it points - up: ahead, right: 90 degrees right, down: behind -
 // over FLICK_TIME; while it stays out, turning it round turns her as much (1:1); let back in (under FLICK_OFF), nothing.
@@ -982,6 +1052,55 @@ static void flick_frame(Cpu *c, uint64_t player, uint64_t sm, float dt) {
 #define MOUSE_DEG_PER_COUNT 0.044f  // (at sensitivity 1)
 #define PITCH_LIMIT 1.2217f         // 70 degrees up or down: the game's own free-look range (the stick stops there)
 
+// ---- Mouse flick: Spring Ball jump (Controls tab, Mouse: "Flick up: Spring Ball jump"; issue #89), as the game's
+// motion controls played on an emulator with the mouse standing in for the motion sensor (the game's Spring Ball is
+// a flick of the controller there - its "Spring Ball Sensitivity" option - "or, in Morph Ball mode, press <game
+// command 0x32>"): in the Morph Ball (+0x4d4, the morph ball state, 1 = morphed:
+// CPlayerMP1::GetMorphBallTransitionState) the mouse pushed up quickly - FLICK_UP_COUNTS at sensitivity 1 (fewer as
+// it's raised: a high-DPI mouse is played at a low one), within FLICK_UP_NS of the push's start - presses that
+// command's button for a moment: the control scheme's (the game state's +0x40 +0x11c; k_spring_button, found by
+// pressing each in the Morph Ball in test runs - B jumps on foot only, A lays a bomb; Dual Stick's is X, and in 1 and
+// 3, Pointer and Classic, none of A B X L R ZL ZR, the stick clicks or the d-pad jumped: the controller's flick only,
+// as the GameCube had no Spring Ball). Once a push: the next one counts
+// after the mouse stopped going up (FLICK_GAP_NS without upward motion) or came down. A slow push up only moves the
+// camera stick, as before. dy: this frame's motion, mouse counts, down positive (not inverted).
+static const int k_spring_button[4] = {2, -1, -1, -1};  // (nn::hid button bits, by EControlScheme: X = 2; -1 none)
+#define FLICK_UP_COUNTS 150.0f
+#define FLICK_UP_NS 120000000ull
+#define FLICK_GAP_NS 40000000ull
+static void mouse_flick(uint64_t player, float dy) {
+    extern void input_press_button(int btn);
+    static float up;               // counts pushed up in this push
+    static uint64_t start, last;   // when it began, when it last went up
+    static bool fired;
+    uint64_t now = plat_now_ns();
+    if (!g_settings.mouse_flick_jump || LD32(player + 0x4d4) != 1) {
+        up = 0, fired = false;
+        return;
+    }
+    if (dy < 0) {
+        if (up == 0) start = now, fired = false;
+        up -= dy, last = now;
+    } else if (up > 0 && (dy > 0 || now - last > FLICK_GAP_NS)) {
+        up = 0;  // (the push is over)
+        return;
+    }
+    float need = FLICK_UP_COUNTS / fmaxf(g_settings.mouse_sens, 0.1f);
+    if (!fired && up >= need && now - start <= FLICK_UP_NS) {
+        fired = true;
+        static uint64_t gsp;
+        if (!gsp) gsp = guest_sym("gpGameState");
+        uint64_t gs = gsp ? LD64(gsp) : 0;
+        uint32_t scheme = GUEST_PTR_OK(gs) ? LD32(gs + 0x40 + 0x11c) : ~0u;
+        int btn = scheme < 4 ? k_spring_button[scheme] : -1;
+        if (btn >= 0) input_press_button(btn);
+        static int n;
+        if (n++ < 20)
+            LOG("[input] mouse flicked up (%.0f counts in %.0f ms): %s\n", up, (now - start) / 1e6,
+                btn >= 0 ? "Spring Ball jump" : "no Spring Ball button in this control scheme");
+    }
+}
+
 static void mouse_look(Cpu *c) {
     extern bool input_mouse_take(float *dx, float *dy);
     extern void input_mouse_stick(int32_t rx, int32_t ry);
@@ -999,7 +1118,9 @@ static void mouse_look(Cpu *c) {
             m ? m[2] : 0, m ? m[8] : 0, m ? m[9] : 0, m ? m[10] : 0);
     }
     float dx, dy;
-    if (!input_mouse_take(&dx, &dy) || !g_settings.mouse_aim) { input_mouse_stick(0, 0); return; }
+    bool moved = input_mouse_take(&dx, &dy);
+    mouse_flick(player, moved ? dy : 0);  // (the Morph Ball's Spring Ball jump, issue #89)
+    if (!moved || !g_settings.mouse_aim) { input_mouse_stick(0, 0); return; }
     float deg = MOUSE_DEG_PER_COUNT * g_settings.mouse_sens;
     if (g_settings.mouse_invert) dy = -dy;
     if (!can_aim_directly(c, player, sm)) {

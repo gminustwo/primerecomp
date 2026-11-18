@@ -266,6 +266,11 @@ void rumble_pump(SDL_Gamepad *pad, bool off) {
     if (l == g_motor_sent[0] && r == g_motor_sent[1] && (!(l | r) || now - g_sent_ns < 100000000ull)) return;  // (refreshed every 100 ms)
     if (verbose && (l != g_motor_sent[0] || r != g_motor_sent[1])) LOG("[rumble] motors %u %u\n", l, r);
     SDL_RumbleGamepad(pad, l, r, 200);
+    uint64_t took = SDL_GetTicksNS() - now;  // (a slow one holds SDL's joystick lock meanwhile: the play log says so)
+    static int nslow;
+    if (took > 50000000ull && nslow++ < 40)
+        LOG("[slow] rumble: the controller took %llu ms to take a rumble (motors %u %u)\n",
+            (unsigned long long)(took / 1000000), l, r);
     g_motor_sent[0] = l, g_motor_sent[1] = r, g_sent_ns = now;
 }
 

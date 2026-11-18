@@ -32,9 +32,49 @@ _Static_assert(BIND_MOUSE_LEFT == SDL_SCANCODE_COUNT, "mouse buttons follow SDL'
     SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A, SDL_SCANCODE_D, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, \
     SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4, \
     SDL_SCANCODE_SPACE, SDL_SCANCODE_LALT}
-static const int16_t k_def_pad[BIND_PAD_COUNT] = DEF_PAD, k_def_key[BIND_KEY_COUNT] = DEF_KEY;
+// GameCube layout (g_settings.gamecube; issue #62): a GameCube controller's buttons where the game's Classic scheme
+// (the GameCube's controls, on a Switch controller's buttons: Remastered's manual, pp. 10-11) has them, so each does
+// what it did on the GameCube - GC_DEFAULTS:
+//   A    fire (hold: charge)        -> Switch A        B     jump            -> B
+//   Y    missile                    -> X (Classic's)   X     Morph Ball      -> Y (Classic's)
+//   L    lock on / scan / grapple, pressed all the way (its click: a half press doesn't lock on) -> ZL and L
+//   R    free look (held) / Spider Ball, from half way -> ZR and R
+//   Z    map -> Plus                Start pause menu -> Minus
+//   d-pad the visors, the C-stick the beams: Classic has them there (up Combat / Power, left Scan / Plasma, right
+//   X-Ray / Wave, down Thermal / Ice, as on the GameCube).
+// L and R are each two Switch buttons: Classic does the same with ZL and L (and ZR and R) in play, and the menus'
+// prompts ask for L and R - the pause screen's Options / Log Book, the map's zoom, as the GameCube's L and R did.
+// SDL names a GameCube controller's buttons by where they sit: A, the big one, is south; B, at its lower left, west;
+// X east, Y north; Z the right shoulder; L / R the analog triggers, their clicks at the end of their travel misc3 /
+// misc4 (on the Wii U adapter and Switch 2's GameCube controller; input.c makes them from a trigger pushed nearly all
+// the way on a controller without them); Switch 2's also has ZL (the left shoulder), Home, Capture and C (misc2).
+// (Switch input -> controller button, in BIND_* order: A B X Y LS RS L R ZL ZR + - Left Up Right Down; -1: none)
+#define GC_DEFAULTS { \
+    SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_WEST, SDL_GAMEPAD_BUTTON_NORTH, SDL_GAMEPAD_BUTTON_EAST, -1, -1, \
+    SDL_GAMEPAD_BUTTON_MISC3, PADB_RTRIGGER, SDL_GAMEPAD_BUTTON_MISC3, PADB_RTRIGGER, \
+    SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, SDL_GAMEPAD_BUTTON_START, \
+    SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_DOWN}
+static const int16_t k_def_pad[BIND_PAD_COUNT] = DEF_PAD, k_def_key[BIND_KEY_COUNT] = DEF_KEY, k_def_gc[BIND_PAD_COUNT] = GC_DEFAULTS;
 int16_t g_bind_pad[BIND_PAD_COUNT] = DEF_PAD, g_bind_key[BIND_KEY_COUNT] = DEF_KEY;
 int16_t g_bind_key_mod[BIND_KEY_COUNT][BIND_MODS];  // (the defaults: single keys)
+// The controller's bindings are two tables: the GameCube layout's and the other controllers'. g_bind_pad is the one in
+// use (everything reads and edits it), g_bind_other the one waiting; bind_gamecube_set trades them.
+static int16_t g_bind_other[BIND_PAD_COUNT] = GC_DEFAULTS;
+static bool g_gc_on;  // g_bind_pad is the GameCube layout's
+static int16_t *std_table(void) { return g_gc_on ? g_bind_other : g_bind_pad; }
+static int16_t *gc_table(void) { return g_gc_on ? g_bind_pad : g_bind_other; }
+
+bool bind_gamecube_active(void) { return g_gc_on; }
+void bind_gamecube_set(bool on) {
+    if (on == g_gc_on) return;
+    int16_t t[BIND_PAD_COUNT];
+    memcpy(t, g_bind_pad, sizeof t);
+    memcpy(g_bind_pad, g_bind_other, sizeof t);
+    memcpy(g_bind_other, t, sizeof t);
+    g_gc_on = on;
+    LOG("[input] GameCube layout %s\n", on ? "on: the controller's GameCube bindings, the game's Classic scheme"
+                                          : "off: the controller's own bindings");
+}
 
 const char *const g_face_names[FACE_COUNT] = {"labels", "nintendo", "xbox"};
 
@@ -52,19 +92,24 @@ int bind_face_label(uint32_t which, int host) {
     if (host != SDL_GAMEPAD_BUTTON_SOUTH && host != SDL_GAMEPAD_BUTTON_EAST && host != SDL_GAMEPAD_BUTTON_WEST &&
         host != SDL_GAMEPAD_BUTTON_NORTH)
         return -1;
-    if (g_settings.face_buttons == FACE_NINTENDO)  // by position on every controller, as on a Switch
+    // (the GameCube layout: by the labels, whatever the setting - its big A confirms, B goes back)
+    if (g_settings.face_buttons == FACE_NINTENDO && !g_gc_on)  // by position on every controller, as on a Switch
         return host == SDL_GAMEPAD_BUTTON_EAST ? BIND_A : host == SDL_GAMEPAD_BUTTON_SOUTH ? BIND_B :
                host == SDL_GAMEPAD_BUTTON_NORTH ? BIND_X : BIND_Y;
-    if (g_settings.face_buttons == FACE_XBOX) return xbox_place(host);
+    if (g_settings.face_buttons == FACE_XBOX && !g_gc_on) return xbox_place(host);
     // the controller's own labels (SDL knows them by its type, or its mapping's "face:" for look-alikes); a test's
     // events (no controller of their own) and LARECOMP_PAD_TYPE: the type's
     static int pretend = -1;
     if (pretend < 0) pretend = getenv("LARECOMP_PAD_TYPE") != NULL;
-    SDL_Gamepad *p = pretend ? NULL : which ? SDL_GetGamepadFromID((SDL_JoystickID)which) : input_gamepad();
+    // (the open controller's: as input.c noted them - the game's threads come here too, and mustn't wait for SDL's
+    // joystick lock; another controller's event: SDL's, on the event thread)
+    extern int input_pad_label(int host);
+    SDL_Gamepad *p = pretend ? NULL : which ? SDL_GetGamepadFromID((SDL_JoystickID)which) : NULL;
     int t = input_pad_type();
     SDL_GamepadButtonLabel l = p ? SDL_GetGamepadButtonLabel(p, (SDL_GamepadButton)host)
-                                 : SDL_GetGamepadButtonLabelForType(t < 0 ? SDL_GAMEPAD_TYPE_UNKNOWN : (SDL_GamepadType)t,
-                                                                    (SDL_GamepadButton)host);
+                               : !pretend && !which && input_gamepad() ? (SDL_GamepadButtonLabel)input_pad_label(host)
+                               : SDL_GetGamepadButtonLabelForType(t < 0 ? SDL_GAMEPAD_TYPE_UNKNOWN : (SDL_GamepadType)t,
+                                                                  (SDL_GamepadButton)host);
     switch (l) {
     case SDL_GAMEPAD_BUTTON_LABEL_A: case SDL_GAMEPAD_BUTTON_LABEL_CROSS: return BIND_A;
     case SDL_GAMEPAD_BUTTON_LABEL_B: case SDL_GAMEPAD_BUTTON_LABEL_CIRCLE: return BIND_B;
@@ -94,21 +139,25 @@ static int face_swap(int host) {
     }
 }
 
-static int16_t def_pad(int slot) {
+static int16_t def_std(int slot) {
     return (int16_t)(g_settings.face_buttons == FACE_XBOX ? face_swap(k_def_pad[slot]) : k_def_pad[slot]);
 }
+static int16_t def_pad(int slot) { return g_gc_on ? k_def_gc[slot] : def_std(slot); }  // (the table in use's)
 
+// (the face buttons setting is the other controllers': the GameCube layout's table stays as it is)
 void bind_set_face_buttons(int mode) {
     if (mode < 0 || mode >= FACE_COUNT || mode == g_settings.face_buttons) return;
+    int16_t *t = std_table();
     if ((mode == FACE_XBOX) != (g_settings.face_buttons == FACE_XBOX))
-        for (int i = 0; i < BIND_PAD_COUNT; i++) g_bind_pad[i] = (int16_t)face_swap(g_bind_pad[i]);
+        for (int i = 0; i < BIND_PAD_COUNT; i++) t[i] = (int16_t)face_swap(t[i]);
     g_settings.face_buttons = mode;
     LOG("[input] face buttons: %s\n", g_face_names[mode]);
 }
 
 void bind_load_face_buttons(int mode) {
     g_settings.face_buttons = mode >= 0 && mode < FACE_COUNT ? mode : FACE_LABELS;
-    for (int i = 0; i < BIND_PAD_COUNT; i++) g_bind_pad[i] = def_pad(i);
+    int16_t *t = std_table();
+    for (int i = 0; i < BIND_PAD_COUNT; i++) t[i] = def_std(i);
 }
 
 static const char *const k_ini[BIND_KEY_COUNT] = {
@@ -146,8 +195,24 @@ int bind_pad_from_name(const char *name) {
     return -1;
 }
 
-const char *bind_input_name(int slot) { return slot >= 0 && slot < BIND_KEY_COUNT ? k_names[slot] : "?"; }
-const char *bind_input_action(int slot) { return slot >= 0 && slot < BIND_KEY_COUNT ? k_actions[slot] : ""; }
+const char *bind_input_name(int slot) {
+    static const char *const rs[4] = {"Right stick Up", "Right stick Right", "Right stick Down", "Right stick Left"};
+    if (g_gc_on && slot >= BIND_BEAM_POWER && slot <= BIND_BEAM_PLASMA) return rs[slot - BIND_BEAM_POWER];  // (Classic's beams)
+    return slot >= 0 && slot < BIND_KEY_COUNT ? k_names[slot] : "?";
+}
+// The same in the game's Classic scheme, which the GameCube layout plays it with (Remastered's manual, pp. 10-11): the
+// d-pad's visors as on the GameCube, the right stick the beams; the keyboard's beam keys are its right stick then
+// (runtime/hle/input.c)
+static const char *const k_actions_classic[BIND_KEY_COUNT] = {
+    "Shoot beam (hold: charge)", "Jump", "Missile", "Morph Ball", "Show a hint (Cheats tab)", "", "Lock on / scan (hold)",
+    "Free look (hold)", "Lock on / scan (hold)", "Free look (hold)", "Map", "Pause menu", "Scan Visor", "Combat Visor",
+    "X-Ray Visor", "Thermal Visor",
+    "Move forward", "Move back", "Turn left", "Turn right", "Power Beam", "Ice Beam", "Plasma Beam", "Wave Beam",
+    "Power Beam", "Wave Beam", "Ice Beam", "Plasma Beam", "Confirm (A)", "Go back (B)",
+};
+const char *bind_input_action(int slot) {
+    return slot >= 0 && slot < BIND_KEY_COUNT ? (g_gc_on ? k_actions_classic : k_actions)[slot] : "";
+}
 
 // fam: 0 Nintendo (and pads SDL doesn't name), 1 Xbox, 2 PlayStation
 const char *bind_pad_label(int host, int fam) {
@@ -166,8 +231,14 @@ const char *bind_pad_label(int host, int fam) {
         "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "Mute", "Right back button", "Left back button",
         "Right Fn", "Left Fn", "Touchpad", "Misc 2", "Misc 3", "Misc 4", "Misc 5", "Misc 6", "L2", "R2",
     };
+    static const char *const gc[PADB_HOST_COUNT] = {  // (a GameCube controller: SDL's positions, its own labels)
+        "A", "X", "B", "Y", "Back", "Home", "Start", "Left stick press", "Right stick press", "ZL", "Z",
+        "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "Capture", "Right paddle 1", "Left paddle 1",
+        "Right paddle 2", "Left paddle 2", "Touchpad", "C", "L (full press)", "R (full press)", "Misc 5", "Misc 6",
+        "L (half press)", "R (half press)",
+    };
     if (host < 0 || host >= PADB_HOST_COUNT) return "(none)";
-    return fam == 1 ? xb[host] : fam == 2 ? ps[host] : nin[host];
+    return fam == 3 ? gc[host] : fam == 1 ? xb[host] : fam == 2 ? ps[host] : nin[host];
 }
 
 static const char *const k_mouse_names[BIND_KEY_HOST_COUNT - BIND_MOUSE_LEFT] = {
@@ -223,6 +294,7 @@ int bind_key_from_name(const char *name) {
 
 int bind_label_family(void) {
     extern int input_pad_family(void);  // runtime/hle/input.c (the game's open pad, or LARECOMP_PAD_TYPE)
+    if (g_gc_on) return 3;  // (the GameCube layout, whatever the controller: its names)
     int f = input_pad_family();
     if (f) return f;
     int n = 0, t = 0;  // start screen: input.c hasn't opened a pad yet
@@ -473,6 +545,11 @@ bool bind_settings_load(const char *key, const char *val) {
         if (i >= 0) g_bind_key_mod[i][mod - 1] = (int16_t)(strcmp(val, "none") ? bind_key_from_name(val) : 0);
         return true;
     }
+    if (!strncmp(key, "bind_gc_", 8)) {  // (the GameCube layout's table)
+        int i = bind_slot_from_name(key + 8), h = bind_pad_from_name(val);
+        if (i >= 0 && i < BIND_PAD_COUNT && h >= 0) gc_table()[i] = (int16_t)h;
+        return true;
+    }
     bool pad = !strncmp(key, "bind_pad_", 9), kb = !strncmp(key, "bind_key_", 9);
     if (!pad && !kb) return false;
     if (kb && !keys_fps) {
@@ -484,7 +561,7 @@ bool bind_settings_load(const char *key, const char *val) {
         if (strcmp(key + 9, k_ini[i])) continue;
         if (pad) {
             for (int h = 0; h < PADB_HOST_COUNT; h++)
-                if (!strcmp(val, k_pad_ini[h])) g_bind_pad[i] = (int16_t)h;
+                if (!strcmp(val, k_pad_ini[h])) std_table()[i] = (int16_t)h;
         } else {
             int sc = strcmp(val, "none") ? bind_key_from_name(val) : 0;
             if (sc || !strcmp(val, "none")) g_bind_key[i] = (int16_t)sc;
@@ -494,9 +571,13 @@ bool bind_settings_load(const char *key, const char *val) {
 }
 
 void bind_settings_save(void (*put)(void *ctx, const char *fmt, ...), void *ctx) {
+    const int16_t *s = std_table(), *g = gc_table();
     for (int i = 0; i < BIND_PAD_COUNT; i++)
-        if (g_bind_pad[i] != def_pad(i) && g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT)
-            put(ctx, "bind_pad_%s = %s\n", k_ini[i], k_pad_ini[g_bind_pad[i]]);
+        if (s[i] != def_std(i) && s[i] >= 0 && s[i] < PADB_HOST_COUNT)
+            put(ctx, "bind_pad_%s = %s\n", k_ini[i], k_pad_ini[s[i]]);
+    for (int i = 0; i < BIND_PAD_COUNT; i++)
+        if (g[i] != k_def_gc[i] && g[i] >= 0 && g[i] < PADB_HOST_COUNT)
+            put(ctx, "bind_gc_%s = %s\n", k_ini[i], k_pad_ini[g[i]]);
     put(ctx, "bind_keys = fps\n");
     for (int i = 0; i < BIND_KEY_COUNT; i++) {
         if (bind_is_default_slot(BIND_DEV_KEY, i)) continue;

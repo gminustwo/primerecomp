@@ -20,6 +20,7 @@ extern "C" {
 #include "../hle.h"
 #include "../settings.h"
 #include "../nvn/dlss.h"
+#include "../nvn/fsr.h"
 #include "../hle/wiimote.h"
 #include "menu.h"
 void input_reset(void);
@@ -184,7 +185,7 @@ static void overlay_key(ImGuiKey k, bool down, void *) {
 }
 
 bool menu_handle_event(const SDL_Event *e) {
-    static bool back_down, start_down, ls_down, rs_down;
+    static bool back_down, start_down, ls_down, rs_down, z_down;
     if (g_open.load() && bind_capture_event(e)) return true;  // Controls tab waiting for a new binding: it takes the press
     if (e->type == SDL_EVENT_KEY_DOWN) g_last_pad = false;
     if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) g_last_pad = true;
@@ -248,11 +249,14 @@ bool menu_handle_event(const SDL_Event *e) {
         if (e->gbutton.button == SDL_GAMEPAD_BUTTON_START) start_down = down;
         if (e->gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_STICK) ls_down = down;
         if (e->gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) rs_down = down;
-        // (Steam keeps the Guide button for its own overlay: both stick presses together are the chord players try)
-        bool chord = (back_down && start_down) || (ls_down && rs_down);
+        if (e->gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) z_down = down;
+        // (Steam keeps the Guide button for its own overlay: both stick presses together are the chord players try; a
+        // GameCube controller has neither those nor Back: Start + Z with the GameCube layout on)
+        bool chord = (back_down && start_down) || (ls_down && rs_down) || (bind_gamecube_active() && start_down && z_down);
         if (down && !typing && (chord || e->gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE)) {
             LOG("[menu] %s by controller %s\n", g_open.load() ? "closed" : "opened",
-                e->gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE ? "Guide" : ls_down && rs_down ? "L3+R3" : "Minus+Plus");
+                e->gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE ? "Guide" : ls_down && rs_down ? "L3+R3" :
+                back_down && start_down ? "Minus+Plus" : "Start+Z");
             set_open(!g_open.load());
             return true;
         }
@@ -477,6 +481,7 @@ extern "C" void vk_shader_record_counts(int *programs, int *pipelines);  // runt
 extern "C" int texmods_count(void);                                      // runtime/nvn/vulkan/texmods.c
 extern "C" const char *texmods_folder(void);
 extern "C" int vk_hdr_status(void);  // runtime/nvn/vulkan/hdr.c: 0 no HDR display, 1 available, 2 on now
+extern "C" float vk_hdr_ui_nits(void);  // (the same: HUD brightness in nits)
 extern "C" void renderer_frame_times(float out[3]);  // runtime/nvn/vulkan/exec.c (Vulkan only)
 extern "C" void output_scale_render_size(double *w, double *h);
 
@@ -568,6 +573,16 @@ static void tab_display(void) {
                 "white. 200 suits most rooms; more in a bright room, less in a dark one. The highlights go above it "
                 "up to the peak brightness.");
         if (!g_settings.hdr) opt_disable_next();
+        {   // (issue #92; hdr.c vk_hdr_ui_nits)
+            char f[40];
+            snprintf(f, sizeof f, "%%d%%%% (%d nits)", (int)lroundf(vk_hdr_ui_nits()));
+            opt_int("HUD brightness", &g_settings.hdr_hud, HDR_HUD_MIN, HDR_HUD_MAX, 5, 100, f,
+                    "How bright the HUD is next to the world, as a part of paper white: the visor's readouts, scan "
+                    "text and the helmet, and the game's menus, map and this menu with them. Lower it when the HUD "
+                    "looks too bright over a darker world (in a dark room especially), raise it to make it stand out. "
+                    "The world keeps its brightness; at 100% the HUD is as bright as paper white.");
+        }
+        if (!g_settings.hdr) opt_disable_next();
         opt_int("Wide color", &g_settings.hdr_wide, 0, HDR_WIDE_MAX, 5, 0, "%d%%",
                 "Makes the world's colors richer - lava, energy, plants, water, Phazon, the sky - out into the wider "
                 "color range HDR displays have, past what an ordinary (SDR) screen can show (up to BT.2020 at 100%: "
@@ -617,35 +632,69 @@ static void tab_display(void) {
                  "NVIDIA's AI upscaling and anti-aliasing, on GeForce RTX graphics cards. It builds each frame from "
                  "several rendered ones, so a lower internal resolution still looks sharp, and edges are smooth. "
                  "While it's on it replaces the upscaler and anti-aliasing below. At Match display it only "
-                 "anti-aliases (DLAA).\n\nThe game doesn't tell DLSS how things move, so fast motion can leave "
-                 "trails.\n\nDLSS: %s", dlss_status());
+                 "anti-aliases (DLAA).\n\nTurning and walking stay sharp; things that move on their own (enemies, "
+                 "shots) can leave faint trails.\n\nDLSS: %s", dlss_status());
         if (!avail && !g_settings.dlss) opt_disable_next();
         opt_toggle("NVIDIA DLSS", &g_settings.dlss, false, d);
         dl_on = g_settings.dlss && avail;
     }
-    {   // AMD FSR 1 next to bilinear
-        static const char *ups[] = {"Bilinear", "AMD FSR 1"};
-        char udm[768];
-        snprintf(udm, sizeof udm, "How the image is scaled up to the window when it renders at a lower resolution. AMD FSR 1: "
+    // AMD FSR 1 next to bilinear, and FSR 3 / FSR 4 where AMD's runtime runs them on this GPU (runtime/nvn/fsr.h): those
+    // take over from the anti-aliasing below too, and work at Match display (anti-aliasing only, like DLAA)
+    bool fsr_t = false;  // (FSR 3 / 4 takes the frames)
+    {
+        const char *ups[4];
+        int upv[4], nu = 0;
+        bool f3 = fsr_available(3), f4 = fsr_available(4);
+        ups[nu] = "Bilinear", upv[nu++] = UPSCALE_BILINEAR;
+        ups[nu] = "AMD FSR 1", upv[nu++] = UPSCALE_FSR1;
+        if (f3) ups[nu] = "AMD FSR 3", upv[nu++] = UPSCALE_FSR3;
+        if (f4) ups[nu] = "AMD FSR 4", upv[nu++] = UPSCALE_FSR4;
+        int eff = g_settings.upscaler;  // (what runs: FSR 4 -> FSR 3 -> FSR 1 where one isn't there, as exec.c tu_kind)
+        if (eff == UPSCALE_FSR4 && !f4) eff = UPSCALE_FSR3;
+        if (eff == UPSCALE_FSR3 && !f3) eff = UPSCALE_FSR1;
+        int ui = 1;
+        for (int i = 0; i < nu; i++) if (upv[i] == eff) ui = i;
+        fsr_t = !dl_on && (eff == UPSCALE_FSR3 || eff == UPSCALE_FSR4);
+        char udm[1800];
+        size_t n = (size_t)snprintf(udm, sizeof udm,
+                 "How the image is scaled up to the window when it renders at a lower resolution. AMD FSR 1: "
                  "edge-aware upscaling and sharpening, sharper. Bilinear: plain and soft.");
-        int ui = g_settings.upscaler == UPSCALE_BILINEAR ? 0 : 1;
+        if (f3 && n < sizeof udm)
+            n += (size_t)snprintf(udm + n, sizeof udm - n,
+                 "\n\nAMD FSR 3: builds each frame from several rendered ones, so a lower internal resolution still "
+                 "looks sharp and edges are smooth. It replaces the anti-aliasing below, and at Match display it only "
+                 "anti-aliases. Runs on any graphics card.");
+        if (f4 && n < sizeof udm)
+            n += (size_t)snprintf(udm + n, sizeof udm - n,
+                 "\n\nAMD FSR 4: the same with AMD's AI model - sharper and steadier, for a little more GPU time. On "
+                 "AMD Radeon graphics.");
+        if ((f3 || f4) && n < sizeof udm)
+            n += (size_t)snprintf(udm + n, sizeof udm - n,
+                 "\n\nTurning and walking stay sharp; things that move on their own (enemies, shots) can leave faint "
+                 "trails. Menus and movies use FSR 1.");
+#ifdef _WIN32
+        if (n < sizeof udm) n += (size_t)snprintf(udm + n, sizeof udm - n, "\n\nAMD FSR 3 / 4: %s.", fsr_status());
+#endif
         if (dl_on) {
-            size_t n = strlen(udm);
-            snprintf(udm + n, sizeof udm - n, "\n\nNot used while NVIDIA DLSS is on.");
+            if (n < sizeof udm) snprintf(udm + n, sizeof udm - n, "\n\nNot used while NVIDIA DLSS is on.");
             opt_disable_next();
-        } else if (g_settings.res_mode == RES_MATCH) {  // (renders at the window's size: nothing to scale up)
-            size_t n = strlen(udm);
-            snprintf(udm + n, sizeof udm - n, "\n\nNot used at Match display: the game already renders at your display's resolution.");
+        } else if (g_settings.res_mode == RES_MATCH && !f3 && !f4) {  // (renders at the window's size: nothing to scale up)
+            if (n < sizeof udm)
+                snprintf(udm + n, sizeof udm - n, "\n\nNot used at Match display: the game already renders at your display's resolution.");
             opt_disable_next();
+        } else if (g_settings.res_mode == RES_MATCH && n < sizeof udm) {
+            snprintf(udm + n, sizeof udm - n, "\n\nAt Match display only FSR 3 / 4 do something: they anti-alias.");
         }
-        if (opt_choice("Upscaler", &ui, ups, 2, 1, udm)) g_settings.upscaler = ui ? UPSCALE_FSR1 : UPSCALE_BILINEAR;
+        if (opt_choice("Upscaler", &ui, ups, nu, 1, udm)) g_settings.upscaler = upv[ui];
     }
-    if (dl_on) opt_disable_next();
+    if (dl_on || fsr_t) opt_disable_next();
     {   // (SMAA or nothing: a check box)
         bool aa = g_settings.antialias == AA_SMAA;
-        if (opt_toggle("Anti-aliasing (SMAA)", &aa, false,
-                       "Smooths jagged edges of the game image before it is scaled to the window. SMAA finds the edges "
-                       "and blends only along them, so textures stay sharp. Most useful at a lower internal resolution."))
+        char ad[400];
+        snprintf(ad, sizeof ad, "Smooths jagged edges of the game image before it is scaled to the window. SMAA finds the edges "
+                 "and blends only along them, so textures stay sharp. Most useful at a lower internal resolution.%s",
+                 dl_on ? "\n\nNot used while NVIDIA DLSS is on." : fsr_t ? "\n\nNot used while AMD FSR 3 / 4 is on: it anti-aliases." : "");
+        if (opt_toggle("Anti-aliasing (SMAA)", &aa, false, ad))
             g_settings.antialias = aa ? AA_SMAA : AA_OFF;
     }
     {
@@ -1261,7 +1310,8 @@ static void sticks_section(void) {
             g_settings.straight_deg = (int)lroundf(deg);
         if (ImGui::IsItemDeactivatedAfterEdit()) settings_save();
         hint("The left stick pushed within this angle of straight forward or back counts as dead straight (the wedges "
-             "in its picture). For the game's Classic controls, where pushing the stick sideways turns Samus: a stick "
+             "in its picture). For the game's Classic controls and Legacy sticks, where pushing the stick sideways turns "
+             "Samus: a stick "
              "in a round gate is rarely pushed exactly straight, so she walks in curves - a GameCube controller's "
              "stick clicks into place there. 8 to 10 degrees is about a GameCube stick's notch. Off: the stick as it is.");
     }
@@ -1301,6 +1351,14 @@ static void tab_about(void) {
     hint("The mouse turns Samus and aims up and down directly, as in a PC shooter (the game's Dual Stick control "
          "scheme). It's captured while you play and let go in menus. In the Morph Ball and while locked on it works "
          "the camera stick instead. Sensitivity 1: 0.044 degrees per mouse count.");
+    {   // (runtime/hle/game.c mouse_flick; issue #89)
+        bool fj = g_settings.mouse_flick_jump;
+        if (ImGui::Checkbox("Flick up: Spring Ball jump", &fj)) { g_settings.mouse_flick_jump = fj; settings_save(); }
+        hint("In the Morph Ball, push the mouse up quickly and Samus does a Spring Ball jump, as flicking the "
+             "controller up does in the game's motion controls (and as an emulator played it with the mouse standing "
+             "in for the motion sensor). It presses the game's Spring Ball button, X, in the Dual Stick controls (the "
+             "other control schemes have no Spring Ball button). A slow push up only moves the camera.");
+    }
     ImGui::Spacing();
     header("Controller sticks");
     sticks_section();
@@ -1313,6 +1371,14 @@ static void tab_about(void) {
              "the mouse; the right stick no longer does. In the Morph Ball and while locked on the stick works as "
              "before.");
     }
+    {   // (runtime/hle/game.c legacy_frame; issue #68)
+        bool legacy = g_settings.legacy_sticks;
+        if (ImGui::Checkbox("Legacy sticks", &legacy)) { g_settings.legacy_sticks = legacy; settings_save(); }
+        hint("The left stick walks forward and back and turns Samus; the right stick looks up and down and strafes, as "
+             "the Legacy stick layout of many shooters. For the game's Dual Stick controls (pause, Options -> "
+             "Controls -> Control Scheme); the other schemes keep the sticks as they are. In the Morph Ball, and while locked on (circling the target), the "
+             "left stick works as before. Not together with Flick stick.");
+    }
     ImGui::Spacing();
     header("Wii Remote");
     wiimote_section();
@@ -1321,7 +1387,8 @@ static void tab_about(void) {
     controls_bindings_draw(ImGui::GetFontSize() / 34);
     ImGui::Spacing();
     header("Menu");
-    ImGui::TextUnformatted("Open / close this menu:  F1, both sticks pressed in, Back + Start, or the controller's Home button");
+    ImGui::TextUnformatted("Open / close this menu:  F1, both sticks pressed in, Back + Start (Start + Z on a GameCube "
+                           "controller), or the controller's Home button");
     {   // (the keyboard's menu keys as bound: Controls, Menus: accept / back)
         const char *acc = bind_key_label(g_bind_key[BIND_MENU_ACCEPT]), *back = bind_key_label(g_bind_key[BIND_MENU_BACK]);
         ImGui::Text("Switch tabs:  L / R  (Q / E)        Accept:  A  (%s)        Back:  B  (%s)", acc, back);

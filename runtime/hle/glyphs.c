@@ -149,8 +149,8 @@ static const WideIcon k_wide[] = {
 };
 #define N_WIDE ((int)(sizeof k_wide / sizeof *k_wide))
 
-const char *const g_icons_names[ICONS_COUNT] = {"auto", "switch", "xbox", "playstation", "keyboard", "wii"};
-static const char *const k_set_names[ICONS_COUNT] = {"", "Switch", "Xbox", "PlayStation", "keyboard", "Wii Remote"};
+const char *const g_icons_names[ICONS_COUNT] = {"auto", "switch", "xbox", "playstation", "keyboard", "wii", "gamecube"};
+static const char *const k_set_names[ICONS_COUNT] = {"", "Switch", "Xbox", "PlayStation", "keyboard", "Wii Remote", "GameCube"};
 
 static int log_on(void) {  // LARECOMP_LOG_GLYPHS=1: the icons found and what they became
     static int on = -1;
@@ -170,6 +170,7 @@ int glyphs_last_device(void) { return g_dev; }
 // game's own, and an unnamed one (most PC pads) is shown as an Xbox controller
 static int pad_set(void) {
     extern int input_pad_family(void), input_pad_type(void);  // runtime/hle/input.c
+    if (bind_gamecube_active()) return ICONS_GAMECUBE;  // (the GameCube layout: bindings.c)
     int f = input_pad_family(), t = input_pad_type();
     if (f == 1) return ICONS_XBOX;
     if (f == 2) return ICONS_PLAYSTATION;
@@ -222,8 +223,8 @@ void glyphs_frame(void) {  // what the icons depend on: the set, the bindings, m
     }
     int16_t pad_now[BIND_PAD_COUNT], key_now[BIND_PAD_COUNT], mod_now[BIND_PAD_COUNT][BIND_MODS] = {{0}};
     for (int i = 0; i < BIND_PAD_COUNT; i++) {
-        pad_now[i] = menu && g_settings.face_buttons == FACE_LABELS && i <= BIND_Y ? (int16_t)bind_label_host(i)
-                                                                                    : g_bind_pad[i];
+        pad_now[i] = menu && (g_settings.face_buttons == FACE_LABELS || bind_gamecube_active()) && i <= BIND_Y
+                         ? (int16_t)bind_label_host(i) : g_bind_pad[i];
         int k = g_bind_key[i];
         if (menu && menu_for[i]) k = menu_for[i];
         else if (menu && input_menu_key(k) >= 0) k = 0;  // (none: the game's own icon)
@@ -260,6 +261,22 @@ static void text(GaSpec *s, const char *t) { s->sym = GS_TEXT; snprintf(s->text,
 
 // a controller button (an SDL_GamepadButton or a trigger) in a set's own marks
 static void pad_symbol(GaSpec *s, int host, int set) {
+    if (set == ICONS_GAMECUBE) switch (host) {  // (SDL's positions on a GameCube controller: bindings.c; its L / R
+                                                 // as triggers or their clicks alike; Switch 2's ZL, Home, Capture, C)
+    case SDL_GAMEPAD_BUTTON_SOUTH: text(s, "A"); return;
+    case SDL_GAMEPAD_BUTTON_EAST: text(s, "X"); return;
+    case SDL_GAMEPAD_BUTTON_WEST: text(s, "B"); return;
+    case SDL_GAMEPAD_BUTTON_NORTH: text(s, "Y"); return;
+    case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: text(s, "Z"); return;
+    case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: text(s, "ZL"); return;
+    case SDL_GAMEPAD_BUTTON_START: text(s, "Start"); return;
+    case SDL_GAMEPAD_BUTTON_MISC3: case PADB_LTRIGGER: text(s, "L"); return;
+    case SDL_GAMEPAD_BUTTON_MISC4: case PADB_RTRIGGER: text(s, "R"); return;
+    case SDL_GAMEPAD_BUTTON_MISC2: text(s, "C"); return;
+    case SDL_GAMEPAD_BUTTON_MISC1: text(s, "Cap"); return;
+    case SDL_GAMEPAD_BUTTON_GUIDE: text(s, "Home"); return;
+    default: break;  // (the d-pad: as any controller's)
+    }
     switch (host) {
     case SDL_GAMEPAD_BUTTON_SOUTH: if (set == ICONS_PLAYSTATION) s->sym = GS_CROSS; else text(s, set == ICONS_XBOX ? "A" : "B"); return;
     case SDL_GAMEPAD_BUTTON_EAST: if (set == ICONS_PLAYSTATION) s->sym = GS_RING; else text(s, set == ICONS_XBOX ? "B" : "A"); return;

@@ -39,7 +39,10 @@ Settings g_settings = {
     .texture_mods = true,
     .hdr_peak = 1000,
     .hdr_paper = 200,
+    .hdr_hud = 100,
     .upscaler = UPSCALE_FSR1,
+    .gamecube = GC_LAYOUT_AUTO,
+    .gc_prev_scheme = -1,
     .res_lines = 2160,
     .fov = FOV_GAME,
     .weapon_fov = FOV_GAME,
@@ -233,6 +236,7 @@ void settings_load(void) {
         else if (!strcmp(key, "hdr_peak_nits")) g_settings.hdr_peak = atoi(val);
         else if (!strcmp(key, "hdr_paper_white_nits")) g_settings.hdr_paper = atoi(val);
         else if (!strcmp(key, "hdr_wide_color")) g_settings.hdr_wide = atoi(val);
+        else if (!strcmp(key, "hdr_hud_brightness")) g_settings.hdr_hud = atoi(val);
         else if (!strcmp(key, "fov")) g_settings.fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
         else if (!strcmp(key, "weapon_fov"))
             g_settings.weapon_fov = atoi(val) < FOV_MIN ? FOV_MIN : atoi(val) > FOV_MAX ? FOV_MAX : atoi(val);
@@ -253,7 +257,9 @@ void settings_load(void) {
         else if (!strcmp(key, "mouse_aim")) g_settings.mouse_aim = atoi(val) != 0;
         else if (!strcmp(key, "mouse_sens")) g_settings.mouse_sens = (float)atof(val);
         else if (!strcmp(key, "mouse_invert")) g_settings.mouse_invert = atoi(val) != 0;
+        else if (!strcmp(key, "mouse_flick_jump")) g_settings.mouse_flick_jump = atoi(val) != 0;
         else if (!strcmp(key, "flick_stick")) g_settings.flick_stick = atoi(val) != 0;
+        else if (!strcmp(key, "legacy_sticks")) g_settings.legacy_sticks = atoi(val) != 0;
         else if (!strcmp(key, "steam_controller_direct")) g_settings.steam_controller_direct = atoi(val) != 0;
         else if (!strcmp(key, "resolution")) {  // match / dynamic / 75% / 50% / 25% / <lines>p / 4k / 8k (LAS: 1x-8x)
             int n = atoi(val);
@@ -266,7 +272,8 @@ void settings_load(void) {
                 g_settings.res_lines = res_snap(unit == 'p' ? n : unit == 'k' ? n * 540 : n * 1080);
         }
         else if (!strcmp(key, "upscaler")) {  // (fsr1, LAS's metalfx; "dlss": an early DLSS build's, the checkbox now)
-            g_settings.upscaler = !strcmp(val, "bilinear") ? UPSCALE_BILINEAR : UPSCALE_FSR1;
+            g_settings.upscaler = !strcmp(val, "bilinear") ? UPSCALE_BILINEAR : !strcmp(val, "fsr3") ? UPSCALE_FSR3
+                                : !strcmp(val, "fsr4") ? UPSCALE_FSR4 : UPSCALE_FSR1;
             if (!strcmp(val, "dlss")) g_settings.dlss = true;
         }
         else if (!strcmp(key, "dlss")) g_settings.dlss = atoi(val) != 0;
@@ -282,6 +289,9 @@ void settings_load(void) {
         // (v0.0.6 and older: "face_layout = nintendo" was its default, written by every save - the labels now; its
         // "xbox", chosen, stays)
         else if (!strcmp(key, "face_layout")) { if (!strcmp(val, "xbox")) bind_load_face_buttons(FACE_XBOX); }
+        else if (!strcmp(key, "gamecube_layout"))  // (anything else: auto)
+            g_settings.gamecube = !strcmp(val, "off") ? GC_LAYOUT_OFF : !strcmp(val, "on") ? GC_LAYOUT_ON : GC_LAYOUT_AUTO;
+        else if (!strcmp(key, "gamecube_prev_scheme")) g_settings.gc_prev_scheme = atoi(val) >= 0 && atoi(val) < 16 ? atoi(val) : -1;
         else if (!strcmp(key, "button_icons")) {  // (anything else: auto)
             g_settings.button_icons = ICONS_AUTO;
             for (int i = 0; i < ICONS_COUNT; i++)
@@ -329,6 +339,8 @@ void settings_load(void) {
     if (g_settings.hdr_paper > HDR_PAPER_MAX) g_settings.hdr_paper = HDR_PAPER_MAX;
     if (g_settings.hdr_wide < 0) g_settings.hdr_wide = 0;
     if (g_settings.hdr_wide > HDR_WIDE_MAX) g_settings.hdr_wide = HDR_WIDE_MAX;
+    if (g_settings.hdr_hud < HDR_HUD_MIN) g_settings.hdr_hud = HDR_HUD_MIN;
+    if (g_settings.hdr_hud > HDR_HUD_MAX) g_settings.hdr_hud = HDR_HUD_MAX;
     LOG("[settings] loaded %s\n", SETTINGS_FILE);
     log_settings(true);
     if (migrated) settings_save();
@@ -371,21 +383,23 @@ static void write_settings(void *o) {
     if (g_settings.mods_order[0]) put(o, "mods_order = %s\n", g_settings.mods_order);
     if (g_settings.mods_disabled[0]) put(o, "mods_disabled = %s\n", g_settings.mods_disabled);
     if (g_settings.cheats_on[0]) put(o, "cheats_on = %s\n", g_settings.cheats_on);
-    put(o, "hdr = %d\nhdr_peak_nits = %d\nhdr_paper_white_nits = %d\nhdr_wide_color = %d\n", g_settings.hdr,
-        g_settings.hdr_peak, g_settings.hdr_paper, g_settings.hdr_wide);
+    put(o, "hdr = %d\nhdr_peak_nits = %d\nhdr_paper_white_nits = %d\nhdr_wide_color = %d\nhdr_hud_brightness = %d\n",
+        g_settings.hdr, g_settings.hdr_peak, g_settings.hdr_paper, g_settings.hdr_wide, g_settings.hdr_hud);
     put(o, "fov = %d\nweapon_fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.weapon_fov,
             g_settings.skippable_cutscenes, g_settings.gyro);
     put(o, "crosshair = %d\n", g_settings.crosshair);
     put(o, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
             g_settings.mouse_invert);
-    put(o, "flick_stick = %d\n", g_settings.flick_stick);
+    put(o, "mouse_flick_jump = %d\n", g_settings.mouse_flick_jump);
+    put(o, "flick_stick = %d\nlegacy_sticks = %d\n", g_settings.flick_stick, g_settings.legacy_sticks);
     put(o, "hint_seconds = %d\nhint_on_l3 = %d\ninfinite_energy = %d\ninfinite_missiles = %d\ninfinite_power_bombs = %d\n",
             g_settings.hint_seconds, g_settings.hint_on_l3, g_settings.inf_energy, g_settings.inf_missiles,
             g_settings.inf_power_bombs);
     put(o, "wiimote = %d\nwiimote_mid = %.4f %.4f\nwiimote_area = %.2f\nwiimote_smooth = %.2f\n", g_settings.wiimote,
             g_settings.wiimote_mid[0], g_settings.wiimote_mid[1], g_settings.wiimote_area, g_settings.wiimote_smooth);
     if (g_settings.steam_controller_direct) put(o, "steam_controller_direct = 1\n");  // (written only when set)
-    put(o, "upscaler = %s\n", g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
+    put(o, "upscaler = %s\n", g_settings.upscaler == UPSCALE_BILINEAR ? "bilinear" : g_settings.upscaler == UPSCALE_FSR3 ? "fsr3"
+                             : g_settings.upscaler == UPSCALE_FSR4 ? "fsr4" : "fsr1");
     put(o, "dlss = %d\n", g_settings.dlss);
     put(o, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");
     put(o, "aniso = %d\n", g_settings.aniso);
@@ -399,6 +413,8 @@ static void write_settings(void *o) {
                                                          ? g_settings.face_buttons : FACE_LABELS]);
     put(o, "button_icons = %s\n", g_icons_names[g_settings.button_icons >= 0 && g_settings.button_icons < ICONS_COUNT
                                                          ? g_settings.button_icons : ICONS_AUTO]);
+    put(o, "gamecube_layout = %s\n", g_settings.gamecube == GC_LAYOUT_OFF ? "off" : g_settings.gamecube == GC_LAYOUT_ON ? "on" : "auto");
+    if (g_settings.gc_prev_scheme >= 0) put(o, "gamecube_prev_scheme = %d\n", g_settings.gc_prev_scheme);
     put(o, "language = %s\n", g_language_codes[g_settings.language > LANG_AUTO && g_settings.language < N_LANGUAGES
                                                      ? g_settings.language : LANG_AUTO]);
     {

@@ -121,8 +121,14 @@ static void recompute_keyboard(void) {
     for (int i = 0; i < BIND_PAD_COUNT; i++)
         if (key_on[i]) b |= 1ull << i;
     static const uint8_t beam_dir[4] = {BTN_UP, BTN_RIGHT, BTN_DOWN, BTN_LEFT};  // Power, Wave, Ice, Plasma
+    // (the GameCube layout's Classic scheme picks beams with the right stick - X fires a missile there: the same
+    // directions on the stick, below)
+    int beam = -1;
     for (int i = 0; i < 4; i++)
-        if (key_on[BIND_BEAM_POWER + i]) b |= 1ull << BTN_X | 1ull << beam_dir[i];
+        if (key_on[BIND_BEAM_POWER + i]) {
+            if (bind_gamecube_active()) beam = i;
+            else b |= 1ull << BTN_X | 1ull << beam_dir[i];
+        }
     for (int sc = 1; sc < BIND_KEY_HOST_COUNT; sc++)
         if (key_menu[sc] && held_key(sc) && menu_key(sc) >= 0 && !back_on_release(sc)) b |= 1ull << menu_key(sc);
     key_buttons = b;
@@ -130,6 +136,7 @@ static void recompute_keyboard(void) {
     key_ly = (key_on[BIND_LS_UP] - key_on[BIND_LS_DOWN]) * 32767;
     key_rx = (key_on[BIND_RS_RIGHT] - key_on[BIND_RS_LEFT]) * 32767;
     key_ry = (key_on[BIND_RS_UP] - key_on[BIND_RS_DOWN]) * 32767;
+    if (beam >= 0) key_rx = beam == 1 ? 32767 : beam == 3 ? -32767 : 0, key_ry = beam == 0 ? 32767 : beam == 2 ? -32767 : 0;
 }
 
 // ---- Mouse (runtime/hle/game.c mouse aim)
@@ -185,6 +192,10 @@ static _Atomic uint32_t menu_px_bits, menu_py_bits, menu_moves, menu_clicks;
 static _Atomic int64_t menu_a_from, menu_a_to;
 // (and B, the same way: a modifier bound to Menus: back let go by itself - back_on_release)
 static _Atomic int64_t menu_b_from, menu_b_to;
+// (and a button in play - the Spring Ball's, for a quick push up of the mouse: runtime/hle/game.c mouse_flick)
+static _Atomic int64_t flick_from, flick_to;
+static _Atomic int flick_button;  // (a Switch button: BTN_*)
+void input_press_button(int btn) { flick_button = btn, flick_from = sampling + 1, flick_to = sampling + 6; }
 static bool back_pending;  // (it's held, and nothing else was pressed since)
 
 static void menu_pointer_at(SDL_WindowID wid, float x, float y) {
@@ -261,6 +272,10 @@ static void straight_snap(_Atomic int32_t *xa, _Atomic int32_t *ya) {
 static _Atomic int32_t raw_rx, raw_ry;
 static _Atomic bool flick_takes_stick;
 void input_flick_take(bool on) { flick_takes_stick = on; }
+// Legacy sticks (runtime/hle/game.c legacy_frame): the controller's sticks' left-right trade places while it's on - the
+// left stick turns Samus, the right one strafes
+static _Atomic bool legacy_swap;
+void input_legacy_sticks(bool on) { legacy_swap = on; }
 bool input_flick_stick(float *x, float *y) {
     *x = raw_rx / 32767.0f, *y = raw_ry / 32767.0f;
     return pad || host_test;
@@ -297,8 +312,13 @@ static void recompute_pad(void) {
     if (pad && !host_test) {
         for (int i = 0; i < SDL_GAMEPAD_BUTTON_COUNT; i++)
             if (SDL_GetGamepadButton(pad, (SDL_GamepadButton)i)) host |= 1u << i;
-        if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 16000) host |= 1u << PADB_LTRIGGER;
-        if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 16000) host |= 1u << PADB_RTRIGGER;
+        int lt = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER), rt = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+        if (lt > 16000) host |= 1u << PADB_LTRIGGER;
+        if (rt > 16000) host |= 1u << PADB_RTRIGGER;
+        // a GameCube trigger's click at the end of its travel (misc3 / misc4: the GameCube layout's L / R), made
+        // from a trigger pushed nearly all the way on a controller that doesn't report one
+        if (lt > 29000 && !SDL_GamepadHasButton(pad, SDL_GAMEPAD_BUTTON_MISC3)) host |= 1u << SDL_GAMEPAD_BUTTON_MISC3;
+        if (rt > 29000 && !SDL_GamepadHasButton(pad, SDL_GAMEPAD_BUTTON_MISC4)) host |= 1u << SDL_GAMEPAD_BUTTON_MISC4;
     }
     uint32_t pressed = host & ~pad_was, menu_held = 0;
     pad_was = host;
@@ -306,7 +326,8 @@ static void recompute_pad(void) {
     bool message = pressed & 15 ? game_message_screen() : false;
     for (int f = 0; f < 4; f++) {
         if (pressed >> f & 1)
-            pad_menu[f] = g_settings.face_buttons == FACE_LABELS && !game_in_play() && (!message || bind_face_label(0, f) == BIND_A);
+            pad_menu[f] = (g_settings.face_buttons == FACE_LABELS || bind_gamecube_active()) && !game_in_play() &&
+                          (!message || bind_face_label(0, f) == BIND_A);
         if ((host >> f & 1) && pad_menu[f]) menu_held |= 1u << f;
     }
     uint64_t b = 0;
@@ -339,11 +360,13 @@ void input_reset(void) {
 // Rumble: runtime/hle/rumble.c plays the game's vibration on the controller; the event loop, which owns it, pumps
 // it (here, after each event, and when it's idle). LARECOMP_NO_RUMBLE=1: none; scripted runs don't rumble.
 static bool scripted_run(void);
+static void gamecube_update(void);
 void rumble_pump(SDL_Gamepad *pad, bool off);
 void input_rumble_pump(void) {
     static int off = -1;
     if (off < 0) off = (getenv("LARECOMP_NO_RUMBLE") && atoi(getenv("LARECOMP_NO_RUMBLE"))) || scripted_run();
     rumble_pump(pad, off);
+    gamecube_update();  // (the Controls tab's GameCube layout changed: at once, not at the next event)
     static float dz_was[2] = {-1, -1};  // (a dead zone changed in the menu: the sticks again, resting or not)
     if (g_settings.deadzone[0] != dz_was[0] || g_settings.deadzone[1] != dz_was[1]) {
         dz_was[0] = g_settings.deadzone[0], dz_was[1] = g_settings.deadzone[1];
@@ -400,19 +423,51 @@ bool input_user_blocked(const SDL_Event *e) {
 
 _Atomic uint64_t g_input_buttons;  // the Switch buttons the game was last given (runtime/hle/cheats.c: L3 for a hint)
 
-// Controller family for the Controls tab's button names (bindings.c): 0 Nintendo / other / none, 1 Xbox, 2 PlayStation.
-// LARECOMP_PAD_TYPE=xbox|playstation|nintendo pretends one is attached (tests).
+// Controller family for the Controls tab's button names (bindings.c): 0 Nintendo / other / none, 1 Xbox, 2 PlayStation,
+// 3 GameCube (with the GameCube layout on). LARECOMP_PAD_TYPE=xbox|playstation|nintendo|gamecube pretends one is
+// attached (tests).
 static _Atomic int pad_family;
+// The open controller's SDL_GamepadType (-1: none) and its face buttons' SDL_GamepadButtonLabel (south, east, west,
+// north), noted here on the event thread as it's opened or closed: the game's threads read these, never SDL - an SDL
+// call there waits for SDL's joystick lock, and while the event thread held it the game stood still for up to a
+// second at a time in its controller read (fill_state -> glyphs_frame -> SDL_GetGamepadType, 2026-11-17).
+static _Atomic int pad_type_now = -1, pad_label_now[4];
+int input_pad_label(int host) { return host >= 0 && host < 4 ? pad_label_now[host] : SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN; }
+int input_pad_type(void);
 static void note_family(void) {
+    pad_type_now = pad ? (int)SDL_GetGamepadType(pad) : -1;
+    for (int h = 0; h < 4; h++)
+        pad_label_now[h] = pad ? (int)SDL_GetGamepadButtonLabel(pad, (SDL_GamepadButton)h) : SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN;
     int f = 0;
-    if (pad) switch (SDL_GetGamepadType(pad)) {
+    switch (pad_type_now) {
         case SDL_GAMEPAD_TYPE_XBOX360: case SDL_GAMEPAD_TYPE_XBOXONE: f = 1; break;
         case SDL_GAMEPAD_TYPE_PS3: case SDL_GAMEPAD_TYPE_PS4: case SDL_GAMEPAD_TYPE_PS5: f = 2; break;
         default: break;
     }
-    if (f != pad_family) LOG("[input] controller family: %s\n", f == 1 ? "Xbox" : f == 2 ? "PlayStation" : "Nintendo / other");
+    if (bind_gamecube_active()) f = 3;
+    if (f != pad_family)
+        LOG("[input] controller family: %s\n", f == 1 ? "Xbox" : f == 2 ? "PlayStation" : f == 3 ? "GameCube" : "Nintendo / other");
     pad_family = f;
 }
+
+// The GameCube layout (Controls tab; runtime/hle/bindings.c): on with a GameCube controller (Auto) or always (On) -
+// checked on each event, so the setting and a controller plugged in or out apply at once. Before the game has a
+// controller open (the start screen: input_gamecube_update each frame), the first one connected.
+static void gamecube_update(void) {
+    int t = input_pad_type();
+    if (t < 0 && g_settings.gamecube == GC_LAYOUT_AUTO && !host_test) {
+        int n = 0;
+        SDL_JoystickID *ids = SDL_GetGamepads(&n);
+        if (ids && n > 0) t = (int)SDL_GetGamepadTypeForID(ids[0]);
+        SDL_free(ids);
+    }
+    bool on = g_settings.gamecube == GC_LAYOUT_ON ||
+              (g_settings.gamecube == GC_LAYOUT_AUTO && t == SDL_GAMEPAD_TYPE_GAMECUBE);
+    if (on == bind_gamecube_active()) return;
+    bind_gamecube_set(on);
+    note_family();
+}
+void input_gamecube_update(void) { gamecube_update(); }  // (runtime/ui/launcher.mm: the start screen's frames)
 #ifdef __ANDROID__
 // SDL's own mapping for a controller it has no entry for (SDL_CreateMappingForAndroidGamepad) gives it trigger axes only
 // when it reports six axes or more. One with digital triggers - KEYCODE_BUTTON_L2 / R2, SDL's buttons 15 and 16 there
@@ -465,14 +520,16 @@ static void log_pad(void) {
 int input_pad_type(void) {
     const char *e = getenv("LARECOMP_PAD_TYPE");
     if (e) return !strcmp(e, "xbox") ? SDL_GAMEPAD_TYPE_XBOXONE : !strcmp(e, "playstation") || !strcmp(e, "ps") ? SDL_GAMEPAD_TYPE_PS5 :
-                  !strcmp(e, "nintendo") ? SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO : SDL_GAMEPAD_TYPE_STANDARD;
-    return pad ? (int)SDL_GetGamepadType(pad) : -1;
+                  !strcmp(e, "nintendo") ? SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO :
+                  !strcmp(e, "gamecube") ? SDL_GAMEPAD_TYPE_GAMECUBE : SDL_GAMEPAD_TYPE_STANDARD;
+    return pad ? pad_type_now : -1;  // (as noted: note_family)
 }
 int input_pad_family(void) {
     static int env = -2;
     if (env == -2) {
         const char *e = getenv("LARECOMP_PAD_TYPE");
-        env = !e ? -1 : !strcmp(e, "xbox") ? 1 : !strcmp(e, "playstation") || !strcmp(e, "ps") ? 2 : 0;
+        env = !e ? -1 : !strcmp(e, "xbox") ? 1 : !strcmp(e, "playstation") || !strcmp(e, "ps") ? 2 :
+              !strcmp(e, "gamecube") ? 3 : 0;
     }
     return env >= 0 ? env : pad_family;
 }
@@ -486,6 +543,7 @@ void input_handle_event(const SDL_Event *e) {
         if (n > 0 && !pad) { pad = SDL_OpenGamepad(ids[0]); log_pad(); note_family(); motion_pad(pad); }
         SDL_free(ids);
     }
+    gamecube_update();
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP:
         if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_F9 && !e->key.repeat) g_debug_frame_request = 1;
@@ -537,9 +595,11 @@ void input_handle_event(const SDL_Event *e) {
         break;
     case SDL_EVENT_GAMEPAD_ADDED:
         if (!pad) { pad = SDL_OpenGamepad(e->gdevice.which); log_pad(); note_family(); motion_pad(pad); }
+        gamecube_update();
         break;
     case SDL_EVENT_GAMEPAD_REMOVED:
         if (pad && SDL_GetGamepadID(pad) == e->gdevice.which) { motion_pad(NULL); SDL_CloseGamepad(pad); pad = NULL; note_family(); }
+        gamecube_update();
         recompute_pad();
         break;
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP:
@@ -869,6 +929,7 @@ static uint64_t wiimote_buttons(int32_t *lx, int32_t *ly, int32_t *rx, int32_t *
 // NpadFullKeyState / NpadHandheldState / NpadJoy*State share this layout (0x28 bytes):
 // {int64 sampling, u64 buttons, AnalogStick L {x,y}, AnalogStick R {x,y}, u32 attributes}
 static void fill_state(Cpu *c) {
+    uint64_t t_start = SDL_GetTicksNS();
     uint8_t *s = (uint8_t *)(uintptr_t)c->x[0];
     uint32_t id = *(uint32_t *)(uintptr_t)c->x[1];
     memset(s, 0, 0x28);
@@ -893,9 +954,12 @@ static void fill_state(Cpu *c) {
     uint64_t b = menu ? script_buttons : key_buttons | pad_buttons | wm_b | script_buttons;
     if (!menu && sampling >= menu_a_from && sampling < menu_a_to) b |= 1ull << BTN_A;  // (a click on a menu item)
     if (!menu && sampling >= menu_b_from && sampling < menu_b_to) b |= 1ull << BTN_B;  // (Left Alt let go: back)
-    int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx + wm_lx) + script_lx);
+    if (!menu && sampling >= flick_from && sampling < flick_to) b |= 1ull << flick_button;  // (a mouse flick: Spring Ball)
+    bool legacy = legacy_swap && game_in_play();  // (Legacy sticks: in play only - menus get the sticks as they are)
+    int32_t plx = legacy ? pad_rx : pad_lx;
+    int32_t lx = clamp_axis((menu ? 0 : key_lx + plx + wm_lx) + script_lx);
     int32_t ly = clamp_axis((menu ? 0 : key_ly + pad_ly + wm_ly) + script_ly);
-    int32_t prx = flick_takes_stick ? 0 : pad_rx, pry = flick_takes_stick ? 0 : pad_ry;
+    int32_t prx = legacy ? pad_lx : flick_takes_stick ? 0 : pad_rx, pry = flick_takes_stick ? 0 : pad_ry;
     int32_t rx = clamp_axis((menu ? 0 : key_rx + prx + mouse_rx + wm_rx) + script_rx);
     int32_t ry = clamp_axis((menu ? 0 : key_ry + pry + mouse_ry + wm_ry) + script_ry);
     static long stick_log = -2;  // (debug) LARECOMP_LOG_STICKS=<n>: the sticks the game gets, every n-th read
@@ -921,6 +985,10 @@ static void fill_state(Cpu *c) {
     *(int32_t *)(s + 24) = rx;
     *(int32_t *)(s + 28) = ry;
     *(uint32_t *)(s + 32) = 1;  // IsConnected
+    uint64_t took = SDL_GetTicksNS() - t_start;  // (the game waits for this read: it stood still up to a second here)
+    static int nslow;
+    if (took > 50000000ull && nslow++ < 40)
+        LOG("[slow] the game's controller read took %llu ms\n", (unsigned long long)(took / 1000000));
 }
 
 HLE_FUNC("_ZN2nn3hid12GetNpadStateEPNS0_16NpadFullKeyStateERKj", hid_state_fullkey) { fill_state(c); }

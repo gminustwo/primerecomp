@@ -16,12 +16,18 @@ enum { RES_MATCH = 0, /* 1..8: LAS's 1x..8x, now RES_FIXED */ RES_DYNAMIC = 9, R
 enum { N_RES_LINES = 5 };
 extern const int g_res_lines[N_RES_LINES];
 extern const char *const g_res_names[N_RES_LINES];
-enum { UPSCALE_BILINEAR = 0, UPSCALE_FSR1 = 2 /* AMD FSR 1 */ };  // (1: LAS Recomp's MetalFX)
+// (1: LAS Recomp's MetalFX.) AMD FSR 3 / FSR 4 (runtime/nvn/fsr.h): temporal, where AMD's runtime runs them (else FSR 4
+// -> FSR 3 -> FSR 1); FSR 1 also scales the frames they can't take (menus, movies)
+enum { UPSCALE_BILINEAR = 0, UPSCALE_FSR1 = 2 /* AMD FSR 1 */, UPSCALE_FSR3 = 3, UPSCALE_FSR4 = 4 };
 enum { AA_OFF = 0, AA_SMAA = 1 };
 // Face buttons (runtime/input_bind.h): Labels = menus by the controller's labels (A confirms on any controller), play
 // by the bindings (by position); Nintendo = by position everywhere, as on a Switch; Xbox = A at the bottom everywhere
 // (the bindings swapped: runtime/hle/bindings.c)
 enum { FACE_LABELS = 0, FACE_NINTENDO = 1, FACE_XBOX = 2, FACE_COUNT };
+// GameCube layout (Controls tab; runtime/hle/bindings.c, game.c): a GameCube controller plays as Metroid Prime did on
+// the GameCube - bindings of its own, the game's Classic scheme, GameCube button icons. Auto: when the controller is one
+// (SDL's GameCube type: the Wii U adapter, Switch 2's GameCube controller); On: whatever the controller
+enum { GC_LAYOUT_OFF = 0, GC_LAYOUT_AUTO = 1, GC_LAYOUT_ON = 2, GC_LAYOUT_COUNT };
 enum { FOV_GAME = 55, FOV_MIN = 45, FOV_MAX = 90 };
 // Audio tab "Speakers" (runtime/services/audio.c out_channels): the game's 5.1 mix as the output device takes it
 // (Auto), folded to stereo, as it is, or spread over 7.1
@@ -32,6 +38,7 @@ extern const int g_hint_waits[N_HINT_WAITS];
 int settings_hint_wait_index(int seconds);  // the offered wait nearest to it
 enum { HDR_PEAK_MIN = 400, HDR_PEAK_MAX = 4000, HDR_PAPER_MIN = 80, HDR_PAPER_MAX = 500 };  // (nits: Video tab "HDR")
 enum { HDR_WIDE_MAX = 100 };  // (percent: Video tab "Wide color")
+enum { HDR_HUD_MIN = 10, HDR_HUD_MAX = 200 };  // (percent of paper white: Video tab "HUD brightness")
 // Gameplay tab "Suit colors" (runtime/nvn/vulkan/suitmods.c): Samus' suit as the game made it or in the player's own
 // colors, from a palette
 enum { SUIT_ORIGINAL = 0, SUIT_CUSTOM = 1, SUIT_STYLES };
@@ -61,7 +68,7 @@ typedef struct {
     bool fullscreen;
     int res_mode;        // RES_MATCH, RES_FIXED (res_lines), RES_DYNAMIC, RES_Q75/50/25 (share of the display)
     int res_lines;       // RES_FIXED: render height in lines, one of g_res_lines (2160 = 4K)
-    int upscaler;        // UPSCALE_*: how a lower internal resolution reaches the window (FSR 1: AMD's)
+    int upscaler;        // UPSCALE_*: how a lower internal resolution reaches the window (AMD FSR 1, 3 or 4)
     bool dlss;           // NVIDIA DLSS in place of the upscaler and anti-aliasing where it runs (runtime/nvn/dlss.h);
                          // elsewhere, or when it can't, the upscaler and anti-aliasing above
     int antialias;       // AA_*: anti-aliasing of the game image before it is scaled to the window
@@ -96,6 +103,8 @@ typedef struct {
     int hdr_paper;       // HDR: paper white - the menus, the HUD, a white wall in daylight - nits (HDR_PAPER_MIN..MAX)
     int hdr_wide;        // HDR: Wide color, percent (0..HDR_WIDE_MAX; 0 = the game's colors): the scene's colors pushed
                          // past BT.709, up to BT.2020 (runtime/nvn/vulkan/hdr.c pr_widen)
+    int hdr_hud;         // HDR: HUD brightness, percent of paper white (HDR_HUD_MIN..MAX; 100 = paper white): the HUD,
+                         // visor and menus next to the world, which keeps its brightness (hdr.c vk_hdr_ui_nits, #92)
     int fov;             // first-person vertical field of view in degrees, FOV_MIN..FOV_MAX (55: the game's): game.c
     int weapon_fov;      // the arm cannon's, drawn as at this field of view whatever the view's (FOV_MIN..FOV_MAX;
                          // 55: as the game draws it; = fov: as before 2026-11, wider with the view): game.c, exec.c
@@ -117,8 +126,12 @@ typedef struct {
     bool mouse_aim;      // the mouse turns and tilts the view itself (runtime/hle/game.c), captured while playing
     float mouse_sens;    // mouse aim: 1 = 0.044 degrees per mouse count (MOUSE_SENS_MIN..MAX)
     bool mouse_invert;   // mouse aim: moving the mouse forward looks down
+    bool mouse_flick_jump;  // in the Morph Ball a quick push up of the mouse presses jump (the Spring Ball; issue #89):
+                            // runtime/hle/game.c mouse_flick
     bool flick_stick;    // the controller's right stick turns Samus to face where it points, then 1:1 as it goes round
                          // (looking up and down: gyro or mouse): runtime/hle/game.c flick_frame
+    bool legacy_sticks;  // the controller's left stick turns and the right one strafes, in play on foot (issue #68):
+                         // runtime/hle/game.c legacy_frame
     bool steam_controller_direct;  // (settings file only) SDL's own Steam Controller driver, for its gyro without
                                    // Steam Input (the window code sets SDL_HINT_JOYSTICK_HIDAPI_STEAM)
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language
@@ -126,6 +139,8 @@ typedef struct {
                          // swaps the bindings going to or from Xbox)
     int button_icons;    // ICONS_* (runtime/glyphs.h): the game's button prompts drawn as this controller's, or Auto:
                          // whichever was used last (runtime/hle/glyphs.c)
+    int gamecube;        // GC_LAYOUT_*: the GameCube layout's on (runtime/hle/bindings.c bind_gamecube_active)
+    int gc_prev_scheme;  // the game's control scheme before the GameCube layout made it Classic (-1: none to restore)
     bool menu_tip_seen;  // the start screen's one-time "how to open the menu" note was shown (first PLAY ever)
     bool check_updates;  // the start screen asks GitHub for a newer release (runtime/update.c; Settings > Prelaunch)
 } Settings;

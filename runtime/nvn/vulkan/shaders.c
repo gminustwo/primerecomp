@@ -478,9 +478,61 @@ static const char *builtin_src(const char *name, int *stage) {
     "  vec3 p = pow(clamp(e, 0.0, 1.0), vec3(1.0 / 78.84375));\n"                                               \
     "  return 10000.0 * pow(max(p - 0.8359375, 0.0) / (18.8515625 - 18.6875 * p), vec3(1.0 / 0.1593017578125));\n" \
     "}\n"
+    // AMD FSR 3 / 4 (exec.c): the scene's depth (a depth-aspect view, any depth format) as an R32_SFLOAT image
+    if (!strcmp(name, "depth_r32.frag")) {
+        *stage = STAGE_FRAGMENT;
+        return "#version 450\n"
+               "layout(set = 0, binding = 0) uniform sampler2D t;\n"
+               "layout(location = 0) out vec4 o;\n"
+               "void main() { o = vec4(texelFetch(t, ivec2(gl_FragCoord.xy), 0).r, 0.0, 0.0, 1.0); }\n";
+    }
+    // DLSS / FSR 3 / 4 (exec.c dlss_mv): the camera's motion vectors, in pixels - where each pixel was the last frame
+    // minus where it is now, without this frame's jitter. t: the scene's depth (OpenGL clip space through the depth
+    // range [a.z, 1]; under a.z: the gun, the helmet, the HUD, which move with the camera: zero); m: this frame's clip
+    // space -> the last frame's; a.xy: the image's size, a.w: 1 = its rows go bottom-up (lower-left origin); b.xy: this
+    // frame's jitter in pixels (as the viewport was shifted); b.z: 1 = h (the game image before the HUD) and g (as it
+    // is) are bound: where they differ, the HUD drew - zero
+    if (!strcmp(name, "motion.frag")) {
+        *stage = STAGE_FRAGMENT;
+        return "#version 450\n"
+               "layout(set = 0, binding = 0) uniform sampler2D t;\n"
+               "layout(set = 0, binding = 1) uniform sampler2D h;\n"
+               "layout(set = 0, binding = 2) uniform sampler2D g;\n"
+               "layout(push_constant) uniform P { mat4 m; vec4 a; vec4 b; } pc;\n"
+               "layout(location = 0) out vec4 o;\n"
+               "void main() {\n"
+               "  float d = texelFetch(t, ivec2(gl_FragCoord.xy), 0).r;\n"
+               "  if (d < pc.a.z - 0.0001) { o = vec4(0.0); return; }\n"
+               "  if (pc.b.z > 0.5) {\n"
+               "    vec3 e = abs(texelFetch(g, ivec2(gl_FragCoord.xy), 0).rgb - texelFetch(h, ivec2(gl_FragCoord.xy), 0).rgb);\n"
+               "    if (max(e.r, max(e.g, e.b)) > 1.5 / 255.0) { o = vec4(0.0); return; }\n"
+               "  }\n"
+               "  vec2 uv = (gl_FragCoord.xy - pc.b.xy) / pc.a.xy;\n"
+               "  float z = (d - pc.a.z) / (1.0 - pc.a.z) * 2.0 - 1.0;\n"
+               "  vec2 n = vec2(uv.x * 2.0 - 1.0, pc.a.w > 0.5 ? uv.y * 2.0 - 1.0 : 1.0 - uv.y * 2.0);\n"
+               "  vec4 q = pc.m * vec4(n, z, 1.0);\n"
+               "  if (q.w <= 0.0) { o = vec4(0.0); return; }\n"
+               "  vec2 n2 = q.xy / q.w;\n"
+               "  vec2 uv2 = vec2(n2.x * 0.5 + 0.5, pc.a.w > 0.5 ? n2.y * 0.5 + 0.5 : 0.5 - n2.y * 0.5);\n"
+               "  o = vec4((uv2 - uv) * pc.a.xy, 0.0, 1.0);\n"
+               "}\n";
+    }
+    // FSR 3 / 4's reactive mask (exec.c fsr_reactive): how much the HUD changed each pixel - h: the game image before
+    // the HUD, g: as it is - 0 where it didn't, up to 0.9 (AMD's advice: never quite 1) where it drew outright
+    if (!strcmp(name, "hud_reactive.frag")) {
+        *stage = STAGE_FRAGMENT;
+        return "#version 450\n"
+               "layout(set = 0, binding = 0) uniform sampler2D h;\n"
+               "layout(set = 0, binding = 1) uniform sampler2D g;\n"
+               "layout(location = 0) out vec4 o;\n"
+               "void main() {\n"
+               "  vec3 e = abs(texelFetch(g, ivec2(gl_FragCoord.xy), 0).rgb - texelFetch(h, ivec2(gl_FragCoord.xy), 0).rgb);\n"
+               "  o = vec4(0.9 * smoothstep(1.5 / 255.0, 24.0 / 255.0, max(e.r, max(e.g, e.b))), 0.0, 0.0, 1.0);\n"
+               "}\n";
+    }
     // The game's image (post pass, before SMAA / FSR / DLSS) as PQ, in BT.2020 (Wide color's colors past BT.709 are
     // linear BT.709 with a channel below 0: inside BT.2020 they're all positive). a.x: 1 = its texels are sRGB-encoded
-    // bytes (else linear); a.y: paper white, nits
+    // bytes (else linear); a.y: the image's 1.0 in nits (the HUD's white: hdr.c vk_hdr_ui_nits)
     if (!strcmp(name, "hdr_encode.frag")) {
         *stage = STAGE_FRAGMENT;
         return "#version 450\n"
@@ -493,8 +545,8 @@ static const char *builtin_src(const char *name, int *stage) {
                "  o = vec4(pq_enc(max(to2020 * c, 0.0) * pc.a.y), 1.0);\n"
                "}\n";
     }
-    // The game's image into the frame's composite (linear, 1.0 = paper white), with present.vert. m.x: what its
-    // texels are - 0 linear, 1 sRGB-encoded bytes, 2 PQ (hdr_encode, SMAA / FSR); m.y: paper white, nits; m.z: 1 =
+    // The game's image into the frame's composite (linear, 1.0 = the HUD's white), with present.vert. m.x: what its
+    // texels are - 0 linear, 1 sRGB-encoded bytes, 2 PQ (hdr_encode, SMAA / FSR); m.y: the HUD's white, nits; m.z: 1 =
     // into an SDR window image instead, sRGB-encoded (a frame of linear texels that goes out as SDR after all).
     // Kept inside BT.2020, so Wide color's colors (hdr.c) stay as they are: linear BT.709 with a channel below 0.
     if (!strcmp(name, "present_hdr.frag")) {
@@ -525,7 +577,8 @@ static const char *builtin_src(const char *name, int *stage) {
                "}\n";
     }
     // The composite into the HDR swapchain. m.x: 1 scRGB (linear BT.709, 1.0 = 80 nits), 2 HDR10 (BT.2020, PQ),
-    // 3 (LARECOMP_HDR_TEST) sRGB-encoded, paper white = 1; m.y: paper white, m.z: peak, nits. A channel below 0: a
+    // 3 (LARECOMP_HDR_TEST) sRGB-encoded, paper white = 1; m.y: the composite's 1.0 (the HUD's white), m.z: peak,
+    // m.w: paper white, nits. A channel below 0: a
     // color past BT.709 (Wide color) - scRGB as it is, HDR10 inside BT.2020 then.
     if (!strcmp(name, "hdr_out.frag")) {
         *stage = STAGE_FRAGMENT;
@@ -535,7 +588,7 @@ static const char *builtin_src(const char *name, int *stage) {
                "layout(location = 0) out vec4 o;\n" HDR_FUNCS
                "void main() {\n"
                "  vec3 nits = texelFetch(t, ivec2(gl_FragCoord.xy), 0).rgb * pc.m.y;\n"
-               "  if (pc.m.x > 2.5) { vec3 c = clamp(nits / pc.m.y, 0.0, 1.0);\n"
+               "  if (pc.m.x > 2.5) { vec3 c = clamp(nits / pc.m.w, 0.0, 1.0);\n"
                "    o = vec4(mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)), 1.0); }\n"
                "  else if (pc.m.x > 1.5) o = vec4(pq_enc(clamp(to2020 * nits, 0.0, pc.m.z)), 1.0);\n"
                "  else o = vec4(clamp(nits, -pc.m.z, pc.m.z) / 80.0, 1.0);\n"

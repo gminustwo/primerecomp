@@ -38,11 +38,13 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 ## Features
 
 - Mouse aim that turns and aims directly, as in a PC shooter; full keyboard, mouse and controller rebinding
-- Any resolution up to 8K, AMD FSR 1 upscaling, SMAA anti-aliasing, anisotropic texture filtering
+- Any resolution up to 8K, AMD FSR 1 upscaling, SMAA anti-aliasing, anisotropic texture filtering; on Windows also
+  AMD FSR 3 (any graphics card) and AMD FSR 4 (AMD Radeon RX 6000 and newer), which build each frame from several
+  rendered ones (F1 menu, Video tab: Upscaler)
 - HDR on HDR displays (scRGB or HDR10): the sun on the snow, lights, beam shots and explosions go past the
   brightness of white, up to your display's peak, while the rest of the picture looks as it always has (F1 menu,
-  Video tab: HDR, peak brightness, paper white); Wide color takes the world's colors out past what an SDR screen can
-  show, up to BT.2020 (off by default: the game's own colors)
+  Video tab: HDR, peak brightness, paper white, HUD brightness); Wide color takes the world's colors out past what an
+  SDR screen can show, up to BT.2020 (off by default: the game's own colors)
 - Ultrawide and any aspect ratio, the HUD out at the screen's sides (or a 21:9 frame's, or the 16:9 middle);
   adjustable field of view, and the arm cannon's apart from it (it keeps its size at a wide view)
 - 30, 60, 90 or 120 frames per second, at full game speed even when the frame rate drops; V-Sync on or off
@@ -52,11 +54,16 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 - Gyro aiming with controllers that have one
 - Wii Remote + Nunchuk: point at the screen to aim, with the buttons laid out like Metroid Prime: Trilogy (a Mayflash
   DolphinBar or the PC's Bluetooth; F1 menu, Controls tab: Wii Remote)
+- GameCube controllers (through an adapter, or Switch 2's GameCube controller) play as Metroid Prime did on the
+  GameCube: the stick walks and turns, R looks around, L locks on, the C-stick picks beams, the d-pad visors, Z the
+  map - the game's Classic controls with the GameCube's buttons and button icons (F1 menu, Controls tab: GameCube
+  layout; on by itself for a controller SDL knows as a GameCube controller, or set it On; Start + Z opens the menu)
 - Rumble with a strength setting, and HD rumble: the game's own two-tone vibration, as a Switch plays it, on a
   Switch Pro Controller or a single Joy-Con, and on a DualSense's haptics over USB (F1 menu, Audio tab)
-- Stick dead zones, with a picture of where each stick rests, and flick stick: push the right stick out to face that
-  way, turn it round to turn with it (F1 menu, Controls tab)
-- The game's button prompts drawn for your controller - Xbox, PlayStation, Switch, keyboard and mouse or Wii Remote,
+- Stick dead zones, with a picture of where each stick rests, flick stick (push the right stick out to face that
+  way, turn it round to turn with it) and Legacy sticks (the left stick turns, the right one strafes) (F1 menu,
+  Controls tab)
+- The game's button prompts drawn for your controller - Xbox, PlayStation, Switch, GameCube, keyboard and mouse or Wii Remote,
   following your bindings - in the game's own style (F1 menu, Controls tab: Button icons; Auto follows what you used
   last)
 - Any cutscene skippable
@@ -211,7 +218,7 @@ Actions; Steam: Properties -> Launch Options; the AppImage takes them too):
 Until the game files are set up, both open the start screen as usual.
 
 **PrimeRecomp's own menu** (graphics, controls, audio, quitting): **F1**, or on a controller both sticks pressed in
-(or Back + Start). Fullscreen: F11 or Alt+Enter.
+(or Back + Start; Start + Z on a GameCube controller). Fullscreen: F11 or Alt+Enter.
 
 ## Credits
 
@@ -231,6 +238,8 @@ not in this repository and not in release builds. You must provide your own lega
 PrimeRecomp's code - LAS Recomp's code and the changes made for Metroid Prime Remastered - is open source under the
 [MIT License](LICENSE) (copyright Peiikai, and the PrimeRecomp contributors for their changes). Third-party
 components keep their own licenses: Dear ImGui (MIT), Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT),
+AMD's FSR API headers (MIT), AMD's FSR 3 / 4 runtime in the Windows release (AMD's license, binary form only:
+`AMD-FSR-LICENSE.md` next to the executable),
 bcdec (MIT), miniz (MIT), code ported from Ryujinx (MIT), the Baloo 2 font (SIL OFL 1.1), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked
 dynamically), shaderc (Apache 2.0), the Zig compiler (MIT; its LLVM / Clang / LLD: Apache 2.0 with LLVM exceptions;
 its C library headers keep their own licenses) and the game code generator helper's bundled libraries listed above
@@ -259,6 +268,7 @@ The Windows release includes these components; their source code for the exact v
 | Baloo 2 font (SemiBold) | 1.640 | SIL OFL 1.1 | https://github.com/EkType/Baloo2 |
 | SMAA (shader and lookup textures, built in) | 2013 (repository master) | MIT | https://github.com/iryoku/smaa |
 | miniz (its inflater, built in) | 3.1.2 | MIT | https://github.com/richgel999/miniz |
+| AMD FSR SDK runtime: `amd_fidelityfx_loader_vk.dll`, `amd_fidelityfx_upscaler_vk.dll` (AMD's signed binaries; FSR 3 / 4) | 2.4.0 | AMD's license (binary redistribution; `AMD-FSR-LICENSE.md`) | https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/releases/tag/v2.4.0 (`tools/fetch_ffx.sh`) |
 
 The build scripts that fetch and build these (with checksums) are in this repository: `tools/build_deps_windows.sh`
 and `tools/primegen.spec`. The Windows build takes SDL 3, shaderc, libiconv and the compiler runtime from MSYS2's

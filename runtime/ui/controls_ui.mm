@@ -51,8 +51,11 @@ static void cell(int dev, int slot, int fam, int cap_dev, int cap_slot, int ms_l
     bool menu_slot = dev == BIND_DEV_KEY && slot >= BIND_PLAY_KEY_COUNT;
     int n = dev == BIND_DEV_PAD ? BIND_PAD_COUNT : menu_slot ? BIND_KEY_COUNT : BIND_PLAY_KEY_COUNT, pushed = 0;
     bool dup = false;
+    // (two defaults on one button aren't a clash: the GameCube layout's L is the Switch's ZL and L, its R ZR and R)
     for (int i = menu_slot ? BIND_PLAY_KEY_COUNT : 0; i < n; i++)
-        dup |= i != slot && (dev == BIND_DEV_PAD ? g_bind_pad[i] == g_bind_pad[slot] && g_bind_pad[slot] > -1 : same_keys(i, slot));
+        dup |= i != slot && (dev == BIND_DEV_PAD ? g_bind_pad[i] == g_bind_pad[slot] && g_bind_pad[slot] > -1 &&
+                                                       !(bind_is_default_slot(dev, i) && bind_is_default_slot(dev, slot))
+                                                 : same_keys(i, slot));
     if (waiting) { ImGui::PushStyleColor(ImGuiCol_Button, theme::frame_on); pushed++; }
     else if (dup) { ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.16f, 0.12f, 1)); pushed++; }
     if (!bind_is_default_slot(dev, slot)) { ImGui::PushStyleColor(ImGuiCol_Text, theme::heading); pushed++; }
@@ -72,13 +75,13 @@ static void cell(int dev, int slot, int fam, int cap_dev, int cap_slot, int ms_l
 extern "C" void controls_bindings_draw(float scale) {
     (void)scale;
     int fam = bind_label_family();
-    static const char *const fam_name[] = {"Nintendo", "Xbox", "PlayStation"};
+    static const char *const fam_name[] = {"Nintendo", "Xbox", "PlayStation", "GameCube"};
     int n = 0;
     SDL_JoystickID *ids = SDL_GetGamepads(&n);
     const char *pad_name = ids && n > 0 ? SDL_GetGamepadNameForID(ids[0]) : NULL;
     char line[200];
-    if (n > 0) snprintf(line, sizeof line, "Controller: %s  (%s button names)", pad_name ? pad_name : "connected", fam_name[fam % 3]);
-    else snprintf(line, sizeof line, "No controller connected  (%s button names shown)", fam_name[fam % 3]);
+    if (n > 0) snprintf(line, sizeof line, "Controller: %s  (%s button names)", pad_name ? pad_name : "connected", fam_name[fam % 4]);
+    else snprintf(line, sizeof line, "No controller connected  (%s button names shown)", fam_name[fam % 4]);
     SDL_free(ids);
     ImGui::TextUnformatted(line);
     {   // face buttons: three buttons, the current one lit (bind_set_face_buttons swaps the bindings below to or from Xbox)
@@ -98,10 +101,31 @@ extern "C" void controls_bindings_draw(float scale) {
             if (cur) ImGui::PopStyleColor();
         }
     }
+    {   // GameCube layout (runtime/hle/bindings.c, input.c gamecube_update, game.c gamecube_frame)
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("GameCube layout");
+        static const char *const gl[GC_LAYOUT_COUNT] = {"Off", "Auto: with a GameCube controller", "On: any controller"};
+        static const int order[GC_LAYOUT_COUNT] = {GC_LAYOUT_AUTO, GC_LAYOUT_OFF, GC_LAYOUT_ON};
+        for (int k = 0; k < GC_LAYOUT_COUNT; k++) {
+            int i = order[k];
+            ImGui::SameLine();
+            bool cur = g_settings.gamecube == i;
+            if (cur) ImGui::PushStyleColor(ImGuiCol_Button, theme::frame_on);
+            char lbl[64];
+            snprintf(lbl, sizeof lbl, "%s##gc%d", gl[i], i);
+            if (ImGui::Button(lbl) && !cur) {
+                bind_capture_cancel();
+                g_settings.gamecube = i;
+                settings_save();
+            }
+            if (cur) ImGui::PopStyleColor();
+        }
+    }
     {   // button icons: the game's prompts drawn as this controller's (runtime/hle/glyphs.c)
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("Button icons");
-        static const char *const set[ICONS_COUNT] = {"Auto", "Switch", "Xbox", "PlayStation", "Keyboard & mouse", "Wii Remote"};
+        static const char *const set[ICONS_COUNT] = {"Auto", "Switch", "Xbox", "PlayStation", "Keyboard & mouse", "Wii Remote",
+                                                     "GameCube"};
         for (int i = 0; i < ICONS_COUNT; i++) {
             ImGui::SameLine();
             bool cur = g_settings.button_icons == i;
@@ -117,12 +141,22 @@ extern "C" void controls_bindings_draw(float scale) {
     }
     ImGui::PushTextWrapPos(0);
     if (g_settings.button_icons == ICONS_AUTO) {
-        static const char *const now[ICONS_COUNT] = {"", "Switch", "Xbox", "PlayStation", "keyboard & mouse", "Wii Remote"};
+        static const char *const now[ICONS_COUNT] = {"", "Switch", "Xbox", "PlayStation", "keyboard & mouse", "Wii Remote",
+                                                     "GameCube"};
         ImGui::TextDisabled("Button icons: the game's prompts show the buttons of whatever you used last (now: %s), "
                             "as you've bound them.", now[glyphs_current() % ICONS_COUNT]);
     } else {
         ImGui::TextDisabled("Button icons: the game's prompts show these buttons, as you've bound them.");
     }
+    ImGui::TextDisabled("GameCube layout%s: plays as Metroid Prime did on the GameCube. The game's Classic controls "
+                        "(the stick walks and turns, R held looks around, L pressed all the way locks on, A shoots, B "
+                        "jumps, X morphs, Y fires a missile, the C-stick picks beams, the d-pad visors, Z the map, Start "
+                        "pauses; Start + Z opens this menu), the GameCube's button icons, and bindings of its own below: "
+                        "the other controllers' stay as they are. Auto: when the controller is one SDL knows as a "
+                        "GameCube controller (most GameCube controller adapters, Switch 2's GameCube controller); On: "
+                        "whatever the controller - for an adapter that shows up as an ordinary controller. The game's "
+                        "control scheme goes back to what it was when the layout turns off. Left stick straight ahead "
+                        "(below) at 8 to 10 degrees suits a GameCube stick's notches.", bind_gamecube_active() ? " (on now)" : "");
     ImGui::TextDisabled("Face buttons: Labels (the default) - in menus the button marked A (Cross) confirms and B "
                         "(Circle) goes back, on any controller; in play they're the bindings below, by position as on "
                         "a Switch controller: the bottom button jumps, the right one shoots. Nintendo - by position "

@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 // g_settings.button_icons
-enum { ICONS_AUTO, ICONS_SWITCH, ICONS_XBOX, ICONS_PLAYSTATION, ICONS_KEYBOARD, ICONS_WII, ICONS_COUNT };
-extern const char *const g_icons_names[ICONS_COUNT];  // primerecomp.ini's: "auto", "switch", ... "wii"
+enum { ICONS_AUTO, ICONS_SWITCH, ICONS_XBOX, ICONS_PLAYSTATION, ICONS_KEYBOARD, ICONS_WII, ICONS_GAMECUBE, ICONS_COUNT };
+extern const char *const g_icons_names[ICONS_COUNT];  // primerecomp.ini's: "auto", "switch", ... "wii", "gamecube"
 enum { GLYPH_DEV_PAD, GLYPH_DEV_KEYS, GLYPH_DEV_WII };
 
 // runtime/hle/input.c: what the player used last (Auto follows it)
@@ -13,7 +13,7 @@ void glyphs_note_device(int dev);
 int glyphs_last_device(void);  // GLYPH_DEV_*, -1: nothing used yet (runtime/hle/rumble.c: none while on keys)
 // Once a frame (input.c): the icons to show worked out again; a change bumps the generation
 void glyphs_frame(void);
-// The set shown now (Auto resolved: ICONS_SWITCH .. ICONS_WII), for the menu
+// The set shown now (Auto resolved: ICONS_SWITCH .. ICONS_GAMECUBE), for the menu
 int glyphs_current(void);
 
 // runtime/nvn/vulkan/textures.c, as a texture's level 0 is uploaded (lin: its texels as linear blocks):

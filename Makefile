@@ -305,6 +305,7 @@ dist:
 	@[ -f build/deps-win/lib/libavcodec.dll.a ] || { echo "make deps-windows first (LGPL FFmpeg)"; exit 1; }
 	@[ -d build/helper/primegen ] || { echo "make gen-helper first (the game code generator)"; exit 1; }
 	@[ -x build/zig/zig.exe ] || { echo "tools/fetch_zig.sh first (the compiler)"; exit 1; }
+	@[ -f build/ffx/amd_fidelityfx_upscaler_vk.dll ] || { echo "tools/fetch_ffx.sh first (AMD FSR 3 / 4)"; exit 1; }
 	$(MAKE) B=$(WIN_B) DEPS=$(CURDIR)/build/deps-win RELEASE=1 $(WIN_B)/primerecomp.exe
 	! nm $(WIN_B)/primerecomp.exe | grep ' f_70' >/dev/null  # (no game code inside)
 	rm -rf build/dist && mkdir -p "$(DIST)/gamelib-src"
@@ -318,6 +319,7 @@ dist:
 	cp third_party/fonts/Baloo2/OFL.txt "$(DIST)/Baloo2-OFL.txt"
 	cp recomplauncher.json "$(DIST)/"  # (the launcher's profile: setup, settings, saves)
 	cp README.md LICENSE "$(DIST)/"  # (licenses and source links of the bundled components: README "License")
+	cp build/ffx/amd_fidelityfx_loader_vk.dll build/ffx/amd_fidelityfx_upscaler_vk.dll build/ffx/AMD-FSR-LICENSE.md "$(DIST)/"  # (FSR 3 / 4)
 	PATH="$(CURDIR)/build/deps-win/bin:$$PATH" ldd $(WIN_B)/primerecomp.exe | awk '(/ucrt64/ || /deps-win/) && !/vulkan-1/ {print $$3}' | sort -u | \
 	    xargs -I{} cp -u {} "$(DIST)/"
 	! ls "$(DIST)" | grep -iE 'x264|x265|xvid|postproc'  # (no GPL codec libraries in the release)

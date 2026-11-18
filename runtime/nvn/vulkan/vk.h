@@ -176,6 +176,8 @@ enum { HDR_OUT_NONE, HDR_OUT_SCRGB, HDR_OUT_PQ, HDR_OUT_TEST /* (LARECOMP_HDR_TE
 int vk_hdr_choose(const VkSurfaceFormatKHR *f, uint32_t n, VkSurfaceFormatKHR *out);  // an HDR format of these (HDR_OUT_*)
 float vk_hdr_shoulder(void);   // the patched tonemapper's peak over paper white (0: not an HDR frame)
 float vk_hdr_wide(void);       // the patched tonemapper's Wide color, 0..1 (0: not an HDR frame)
+float vk_hdr_ui_nits(void);    // HDR: the nits of the game image's 1.0 - the HUD's white (HUD brightness)
+float vk_hdr_scene_gain(void); // the patched tonemapper's scale for the world (0: not an HDR frame, or 1)
 bool vk_hdr_frame(void);       // the frame being drawn is HDR (its rendering is into the composite)
 void vk_hdr_frame_begin(VkCommandBuffer cb, const float clear[4]);
 void vk_hdr_frame_resume(VkCommandBuffer cb);

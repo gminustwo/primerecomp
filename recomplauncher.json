@@ -98,7 +98,9 @@
       "group": "Video",
       "choices": [
         {"label": "Bilinear", "set": {"upscaler": "bilinear"}},
-        {"label": "AMD FSR 1", "set": {"upscaler": "fsr1"}}
+        {"label": "AMD FSR 1", "set": {"upscaler": "fsr1"}},
+        {"label": "AMD FSR 3 (Windows)", "set": {"upscaler": "fsr3"}},
+        {"label": "AMD FSR 4 (Windows, AMD Radeon; else FSR 3)", "set": {"upscaler": "fsr4"}}
       ],
       "defaults": {"upscaler": "fsr1"}
     },
@@ -203,6 +205,15 @@
       "advanced": true,
       "slider": {"key": "hdr_paper_white_nits", "min": 80, "max": 500, "step": 10, "format": "%g"},
       "defaults": {"hdr_paper_white_nits": "200"}
+    },
+    {
+      "id": "hdr_hud_brightness",
+      "label": "HDR HUD brightness",
+      "group": "Video",
+      "advanced": true,
+      "help": "Percent of paper white. How bright the HUD, the visor and the menus are next to the world, which keeps its brightness: lower it when the HUD looks too bright over a darker world. 100: as bright as paper white.",
+      "slider": {"key": "hdr_hud_brightness", "min": 10, "max": 200, "step": 5, "format": "%d"},
+      "defaults": {"hdr_hud_brightness": "100"}
     },
     {
       "id": "hdr_wide_color",
@@ -353,6 +364,16 @@
       "defaults": {"mouse_invert": "0"}
     },
     {
+      "id": "mouse_flick_jump",
+      "label": "Mouse flick up: Spring Ball jump",
+      "group": "Controls",
+      "choices": [
+        {"label": "Off", "set": {"mouse_flick_jump": "0"}},
+        {"label": "On", "set": {"mouse_flick_jump": "1"}}
+      ],
+      "defaults": {"mouse_flick_jump": "0"}
+    },
+    {
       "id": "flick_stick",
       "label": "Flick stick",
       "group": "Controls",
@@ -361,6 +382,16 @@
         {"label": "On", "set": {"flick_stick": "1"}}
       ],
       "defaults": {"flick_stick": "0"}
+    },
+    {
+      "id": "legacy_sticks",
+      "label": "Legacy sticks",
+      "group": "Controls",
+      "choices": [
+        {"label": "Off", "set": {"legacy_sticks": "0"}},
+        {"label": "On", "set": {"legacy_sticks": "1"}}
+      ],
+      "defaults": {"legacy_sticks": "0"}
     },
     {
       "id": "face_buttons",
@@ -374,6 +405,17 @@
       "defaults": {"face_buttons": "labels"}
     },
     {
+      "id": "gamecube_layout",
+      "label": "GameCube controller layout",
+      "group": "Controls",
+      "choices": [
+        {"label": "Auto (with a GameCube controller)", "set": {"gamecube_layout": "auto"}},
+        {"label": "Off", "set": {"gamecube_layout": "off"}},
+        {"label": "On (any controller)", "set": {"gamecube_layout": "on"}}
+      ],
+      "defaults": {"gamecube_layout": "auto"}
+    },
+    {
       "id": "button_icons",
       "label": "Button icons",
       "group": "Controls",
@@ -383,7 +425,8 @@
         {"label": "Xbox", "set": {"button_icons": "xbox"}},
         {"label": "PlayStation", "set": {"button_icons": "playstation"}},
         {"label": "Keyboard", "set": {"button_icons": "keyboard"}},
-        {"label": "Wii", "set": {"button_icons": "wii"}}
+        {"label": "Wii", "set": {"button_icons": "wii"}},
+        {"label": "GameCube", "set": {"button_icons": "gamecube"}}
       ],
       "defaults": {"button_icons": "auto"}
     },

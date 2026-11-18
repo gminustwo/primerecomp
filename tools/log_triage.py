@@ -26,7 +26,7 @@ import urllib.request
 
 MARKER = "<!-- primerecomp-log-triage -->"
 MAX_BYTES = 20 * 1024 * 1024  # per log
-MAX_LOGS = 3                  # newest logs summarised per comment
+MAX_LOGS = 3                  # newest logs summarized per comment
 LABELS = {"crash": ("log: crash", "b60205", "Newest attached log ends in a crash or hang"),
           "device-lost": ("log: device-lost", "d93f0b", "Newest attached log ends with the GPU device lost"),
           "ok": ("log: ok", "0e8a16", "Newest attached log ends with a clean exit")}
@@ -60,6 +60,9 @@ NOTABLE = [
     ("guest heap imported in chunks (not enough GPU memory for one import)", re.compile(r"\[vk\] guest heap: .*(ran out of memory|imported in chunks)")),
     ("no BC texture formats", re.compile(r"no BC texture formats")),
     ("GPU device fault", re.compile(r"\[vk\] device fault")),
+    # (no Resizable BAR: a 256 MB window, the transient ring then in system memory - stutter #67, GPU resets #50 before
+    # v0.1.0's ASTC decoding in video memory, runtime/nvn/vulkan/exec.c vk_gpu_scratch)
+    ("no Resizable BAR (the upload ring in system memory)", re.compile(r"\[vk\] transient ring: .*new chunks in system memory")),
     ("shaders not found or failed in preparation", re.compile(r"\[shader\] prepared \d+, not found [1-9]|\[shader\] prepared .*\(([1-9]\d*) failed")),
     ("shader translation failed", re.compile(r"translate failed|pipeline (creation )?failed|\[shader\] stale program")),
     ("MoltenVK error (macOS)", re.compile(r"\[mvk-error\]")),
@@ -85,11 +88,13 @@ def parse(text):
             r["os"] = ("Windows" if re.match(r"[A-Za-z]:\\", p) else "Android" if p.startswith("/storage/")
                        else "macOS" if p.startswith("/Users/") or "Library/Application Support" in p
                        else "Linux" if p.startswith("/") else None)
+            # (the folder's name only for a log without a [version] line: a folder unpacked for one release often
+            # runs a later one after in-app updates - issue #50's "PrimeRecomp-v0.0.6-windows" ran v0.0.8)
             m = BUILD_RE.search(p)
-            if m: r["build"] = m.group(1) + (f" ({m.group(2).lower()})" if m.group(2) else "")
+            if m and not r["build"]: r["build"] = m.group(1) + (f" ({m.group(2).lower()})" if m.group(2) else "")
         elif ln.startswith("ANDROID:"):
             r["os"] = "Android"
-        elif not r["build"] and re.match(r"^\[(version|build)\] ", ln):
+        elif re.match(r"^\[(version|build)\] ", ln):  # (the version line wins over the folder's name)
             r["build"] = ln.split("] ", 1)[1]
         elif m := re.match(r"^\[vk\] gpu \d+: (.+) \(api ([\d.]+)\)", ln):
             r["gpus"].append(m.group(1))
@@ -100,8 +105,8 @@ def parse(text):
             for g in lines[:i]:
                 mm = re.match(r"^\[vk\] gpu \d+: (.+) \(api ([\d.]+)\)", g)
                 if mm and mm.group(1) == r["gpu"]: r["api"] = mm.group(2)
-        elif m := re.match(r"^\[vk\] device: driver (\S+) \(([^)]*)\)", ln):
-            r["driver"] = f"{m.group(2)} {m.group(1)}"
+        elif m := re.match(r"^\[vk\] driver ([^:]+): (.*)", ln):  # (runtime/nvn/vulkan/device.c pick_device)
+            r["driver"] = f"{m.group(1)} {m.group(2)}".strip()
         elif ln.startswith("[settings] ") and " GPU: upscaler " in ln:
             r["settings"] = ln.split(" GPU: ", 1)[1]
             r["integrated"] = ln.startswith("[settings] integrated")
@@ -175,7 +180,7 @@ def fps_summary(fps):
     return s
 
 
-def summarise(r):
+def summarize(r):
     out = []
     out.append(f"- **Build:** {code(r['build']) if r['build'] else 'not in the log'}")
     sysl = [r["os"] or "OS not in the log"]
@@ -225,13 +230,13 @@ def render(entries, total):
            "This is an automatic summary of the PrimeRecomp log files attached to this issue. It only reads the logs, "
            "so a person will still look at the details.",
            "",
-           "For a new report, please attach `primerecomp.log` from PrimeRecomp's data folder (it always holds the latest "
-           "run; `primerecomp-backup-*.log` there are the earlier runs)."]
+           "For a new report, please attach `primerecomp.log` from the folder that holds PrimeRecomp's `save` folder (it "
+           "always holds the latest run; `primerecomp.previous.log` there is the run before)."]
     for k, (src, r) in enumerate(entries):
         out += ["", f"#### {'Newest log' if k == 0 else 'Earlier log'}: {src}"]
-        out.append(summarise(r) if isinstance(r, dict) else f"- Could not read this log: {clean(r, 120)}")
+        out.append(summarize(r) if isinstance(r, dict) else f"- Could not read this log: {clean(r, 120)}")
     if total > len(entries):
-        out += ["", f"({total - len(entries)} earlier log{'s' if total - len(entries) > 1 else ''} on this issue not summarised.)"]
+        out += ["", f"({total - len(entries)} earlier log{'s' if total - len(entries) > 1 else ''} on this issue not summarized.)"]
     return "\n".join(out) + "\n"
 
 

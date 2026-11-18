@@ -226,10 +226,17 @@ void plat_thread_perf_core(int role) {
 // Release builds are GUI-subsystem executables (no console window): stdout / stderr go to primerecomp.log next to the
 // exe, and a fatal error shows a message box (plat_fatal_notice) instead of vanishing. Processes started by this one
 // (the start screen re-executing itself for the game) append to the same log.
+// Started from RecompLauncher it writes the log too, although the launcher hands it a file for what it prints
+// (issues #93 / #94): the launcher's crash report takes the newest .log in the game's folder, which was then one of
+// the code build's (empty) logs, and its "Log folder" says primerecomp.log holds the latest run. A console, a pipe
+// or a file of anyone else's (scripts, tests: `2> file`) keeps what it prints, as before. (A process this one starts
+// again, after an update, inherits the launcher's handle, not the log's: it appends to the log by its name.)
 static char g_log_path[MAX_PATH];
 
 static void log_to_file_without_console(void) {
-    if (GetStdHandle(STD_ERROR_HANDLE) && GetStdHandle(STD_ERROR_HANDLE) != INVALID_HANDLE_VALUE) return;  // console / pipe
+    HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
+    if (err && err != INVALID_HANDLE_VALUE && (!getenv("RECOMPLAUNCHER") || GetFileType(err) == FILE_TYPE_CHAR))
+        return;  // console / pipe / redirected
     char exe[MAX_PATH];
     DWORD n = GetModuleFileNameA(NULL, exe, sizeof exe);
     if (!n || n >= sizeof exe) return;

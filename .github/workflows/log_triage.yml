@@ -47,7 +47,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: tools/log_triage.py
           sparse-checkout-cone-mode: false
-      - name: Summarise the attached logs
+      - name: Summarize the attached logs
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue }}

@@ -4,9 +4,12 @@
 // - the game's full-size sRGB render targets are RGBA16F instead (textures.c hdr_target): linear either way, so what
 //   the game draws and blends there is the same, and values past 1 survive;
 // - its tonemapper's shoulder goes on past paper white towards the display's peak (hdr_patch_tonemap);
-// - a frame is drawn into a linear FP16 composite, 1.0 = paper white (the game's image, then the overlay menu, drawn
-//   as SDR into an image of its own and laid over at paper white), and written to the HDR swapchain at the end:
+// - a frame is drawn into a linear FP16 composite, 1.0 = the HUD's white (the game's image, then the overlay menu,
+//   drawn as SDR into an image of its own and laid over at that white), and written to the HDR swapchain at the end:
 //   scRGB (FP16, linear, 1.0 = 80 nits) or HDR10 (BT.2020 primaries, PQ). device.c vk_frame_begin / vk_frame_end.
+// - HUD brightness (issue #92): the HUD's white is paper white times its percent (vk_hdr_ui_nits), and the patched
+//   tonemapper scales the world by paper white over that (vk_hdr_scene_gain), so the world stays at paper white while
+//   what the game draws after its tonemapper - the HUD, the visor, its menus, movies - and the overlay menu follow.
 // - SMAA and FSR (exec.c post_process) run on a PQ-encoded copy, in RGBA16F images.
 #include <math.h>
 #include <stdlib.h>
@@ -70,6 +73,13 @@ float vk_hdr_shoulder(void) {
 
 // Wide color (0..1) for the patched tonemapper while frames go out as HDR (rscale[64].w); 0: the game's colors
 float vk_hdr_wide(void) { return g_vk.hdr_out ? g_settings.hdr_wide / 100.0f : 0.0f; }
+
+// HUD brightness: what 1.0 in the game's image (and the composite) is, in nits - paper white for the world before
+// (100%), the HUD's white now; the world is scaled to stay at paper white (rscale[64].y, the patched tonemapper)
+float vk_hdr_ui_nits(void) { return (float)g_settings.hdr_paper * g_settings.hdr_hud / 100.0f; }
+float vk_hdr_scene_gain(void) {
+    return g_vk.hdr_out && g_settings.hdr_hud != 100 ? 100.0f / (float)g_settings.hdr_hud : 0.0f;
+}
 
 // ------------------------------------------------------------------ fullscreen passes of their own
 // One sampler (binding 0); 64 bytes of push constants for both stages (present.vert's 32, then the fragment's)
@@ -224,7 +234,8 @@ void vk_hdr_frame_finish(VkCommandBuffer cb, VkImageView sc_view) {
     begin_in(cb, sc_view, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, g_vk.sc_extent, VK_ATTACHMENT_LOAD_OP_DONT_CARE, NULL);
     VkPipeline p = vk_hdr_pipeline("post.vert", "hdr_out.frag", g_vk.sc_format, false);
     float pc[16] = {0};
-    pc[8] = (float)g_vk.hdr_out, pc[9] = (float)g_settings.hdr_paper, pc[10] = (float)g_settings.hdr_peak;
+    pc[8] = (float)g_vk.hdr_out, pc[9] = vk_hdr_ui_nits(), pc[10] = (float)g_settings.hdr_peak;
+    pc[11] = (float)g_settings.hdr_paper;
     vk_hdr_draw(cb, p, frame_view(&g_comp), pc);
     vkCmdEndRendering(cb);
     g_frame_hdr = false;
@@ -250,7 +261,8 @@ static float half_to_float(uint16_t h) {
     return r;
 }
 
-// ... then (its submission done) as an 8-bit sRGB picture of the SDR range (paper white = white; brighter clips),
+// ... then (its submission done) as an 8-bit sRGB picture of the SDR range (paper white = white; brighter clips; the
+// HUD at its HUD brightness),
 // written to rgba; the brightest pixel in nits is logged (how far the highlights went past paper white), and how much
 // of the window has colors past BT.709 and past DCI-P3 (Wide color; as the Steam Deck's HDR analysis counts them).
 // (test) LARECOMP_HDR_GAMUT_SHOT=1: the picture as a map of that instead - gray inside BT.709, green past it (inside
@@ -260,11 +272,11 @@ void vk_hdr_shot_convert(const VkSpan *s, uint8_t *rgba, uint32_t *w, uint32_t *
     const uint16_t *px = s->ptr;
     static int gamut_map = -1;
     if (gamut_map < 0) gamut_map = getenv("LARECOMP_HDR_GAMUT_SHOT") ? 1 : 0;
-    float peak = 0;
+    float peak = 0, ui = vk_hdr_ui_nits() / (float)g_settings.hdr_paper;  // (the composite's 1.0 over paper white)
     uint64_t over = 0, past709 = 0, pastp3 = 0, bad = 0, n = (uint64_t)*w * *h;
     for (uint64_t i = 0; i < n; i++) {
         float c[3], l;
-        for (int k = 0; k < 3; k++) c[k] = half_to_float(px[i * 4 + k]);
+        for (int k = 0; k < 3; k++) c[k] = half_to_float(px[i * 4 + k]) * ui;
         if (!isfinite(c[0]) || !isfinite(c[1]) || !isfinite(c[2])) bad++;
         l = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
         if (l > peak) peak = l;
@@ -289,8 +301,9 @@ void vk_hdr_shot_convert(const VkSpan *s, uint8_t *rgba, uint32_t *w, uint32_t *
         }
         rgba[i * 4 + 3] = 255;
     }
-    LOG("[hdr] shot: brightest %.0f nits (paper white %d, peak %d), %.2f%% of the window past paper white\n",
-        peak * g_settings.hdr_paper, g_settings.hdr_paper, g_settings.hdr_peak, 100.0 * over / (n ? n : 1));
+    LOG("[hdr] shot: brightest %.0f nits (paper white %d, peak %d, HUD %d%%), %.2f%% of the window past paper white\n",
+        peak * g_settings.hdr_paper, g_settings.hdr_paper, g_settings.hdr_peak, g_settings.hdr_hud,
+        100.0 * over / (n ? n : 1));
     LOG("[hdr] shot: wide color %d%% - %.2f%% of the window past BT.709, %.2f%% past DCI-P3%s\n", g_settings.hdr_wide,
         100.0 * past709 / (n ? n : 1), 100.0 * pastp3 / (n ? n : 1), bad ? " - and pixels that aren't numbers!" : "");
     if (bad) LOG("[hdr] shot: %llu pixels aren't numbers (NaN / infinite)\n", (unsigned long long)bad);
@@ -340,6 +353,7 @@ void vk_hdr_shot_check(const VkSpan *s, uint32_t w, uint32_t h) {
 // primaries at 100% were too little to notice on the user's HDR TV, 2026-11-14.) The scene only: the
 // HUD and visor draw on it afterwards with their own colors. Past BT.709 is a channel below 0 in the game's RGBA16F
 // targets; SMAA / FSR / DLSS take a BT.2020 PQ copy, and the output keeps it (shaders.c).
+// Last, HUD brightness's scale for the world (rscale[64].y; 0 = none): the image's 1.0 is the HUD's white then.
 static const char k_tm_funcs[] =
     "float pr_srgb(float y) { return y <= 0.04045f ? y / 12.92f : pow((y + 0.055f) / 1.055f, 2.4f); }\n"
     "float pr_dsrgb(float y) { return y <= 0.04045f ? 1.0f / 12.92f : 2.4f / 1.055f * pow((y + 0.055f) / 1.055f, 1.4f); }\n"
@@ -380,6 +394,7 @@ bool hdr_patch_tonemap(char **src) {
     snprintf(keep, sizeof keep, "    pr_lut = vec3(as_f(%s), as_f(%s), as_f(%s));\n", ra, rb, rc);
     snprintf(apply, sizeof apply,
              "  { float g = pr_hdr_gain(pr_lut, rscale[64][2]);  // (PrimeRecomp HDR: runtime/nvn/vulkan/hdr.c)\n"
+             "    if (rscale[64][1] > 0.0f) g *= rscale[64][1];\n"
              "    vec3 pr_c = pr_widen(vec3(as_f(r0), as_f(r1), as_f(r2)) * g, rscale[64][3]);\n"
              "    r0 = as_u(pr_c.x); r1 = as_u(pr_c.y); r2 = as_u(pr_c.z); }\n");
     static const char decl[] = "  vec3 pr_lut = vec3(0.0f);\n";

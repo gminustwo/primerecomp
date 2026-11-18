@@ -109,6 +109,11 @@ extern const char *const g_face_names[];  // primerecomp.ini's face_buttons: "la
 void bind_set_face_buttons(int mode);
 void bind_load_face_buttons(int mode);
 
+// GameCube layout (g_settings.gamecube): the controller's bindings are the GameCube layout's table while it's on
+// (runtime/hle/input.c turns it on and off as the controller and the setting have it); primerecomp.ini bind_gc_<input>
+bool bind_gamecube_active(void);
+void bind_gamecube_set(bool on);
+
 #ifdef __cplusplus
 }
 #endif

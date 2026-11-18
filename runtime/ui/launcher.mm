@@ -61,6 +61,7 @@ static const uint8_t BUILD_ID[8] = {0x67, 0xc9, 0xca, 0x14, 0x28, 0x22, 0x27, 0x
 // so nothing is asked.)
 #define LARECOMP_VERSION "v0.1.0"
 extern "C" const char *rt_version(void) { return LARECOMP_VERSION; }  // (the log's first line: runtime/main.c)
+extern "C" void input_gamecube_update(void);  // runtime/hle/input.c
 
 // "Alpha 1" / "Beta 2" / "Version 1.0.0"
 static std::string tag_label(const std::string &t) {
@@ -1343,6 +1344,7 @@ extern "C" void launcher_run(const char *root) {
             if (!status.empty()) { bg_close(); g_bg = 0; bind_capture_cancel(); settings_save(); page = SETUP; }
         }
         SDL_Event e;
+        input_gamecube_update();  // (the GameCube layout for a GameCube controller here too: its Controls page)
         while (SDL_PollEvent(&e)) {
             if (page == SETTINGS && bind_capture_event(&e)) continue;  // (waiting for a new binding: controls_ui.mm)
             // the keyboard's menu keys as bound (Space accepts, Left Alt goes back: menu.mm), not while typing

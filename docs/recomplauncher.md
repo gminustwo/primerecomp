@@ -89,7 +89,9 @@ hardware. No verified-dump badge or clean-content claim is supplied.
   the suit colors. The Cheats group stays under Show Advanced Options.
 - Save backups and cloud saves for the `save` folder only, on Windows and Linux.
 - The log folder, so a crash report carries the newest `primerecomp.log`, and buttons to open the save and log
-  folders and to clear the shader cache (`cache/`; it is built again on the next start).
+  folders and to clear the shader cache (`cache/`; it is built again on the next start). On Windows the game writes
+  `primerecomp.log` even though the launcher gives it a file for its output (`RECOMPLAUNCHER` is set): otherwise the
+  launcher's report took the newest of the code build's logs, an empty one (issues #93, #94).
 - Looks (ReShade filters) are told the game draws with Vulkan.
 
 To change something, edit `recomplauncher.json` and run `python tools/test_recomplauncher.py --schema <schema>`. A

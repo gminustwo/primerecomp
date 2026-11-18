@@ -18,6 +18,7 @@
 #include "vk.h"
 #include "../output_scale.h"
 #include "../dlss.h"
+#include "../fsr.h"
 #include "../renderer.h"
 
 VkG g_vk;
@@ -176,6 +177,12 @@ static void pick_device(void) {
     free(qp);
     if (g_vk.qfam == UINT32_MAX) FATAL("no graphics+present queue\n");
     LOG("[vk] using %s\n", g_vk.props.deviceName);
+    {   // (and its driver: Mesa's version for RADV, which differs per GPU generation - issue #53's map on RDNA3)
+        VkPhysicalDeviceDriverProperties dp = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+        VkPhysicalDeviceProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &dp};
+        vkGetPhysicalDeviceProperties2(g_vk.phys, &p2);
+        LOG("[vk] driver %s: %s\n", dp.driverName, dp.driverInfo);
+    }
 }
 
 static bool g_fault_ext;
@@ -209,7 +216,7 @@ static void create_device(void) {
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, NULL);
     VkExtensionProperties *ep = calloc(ne, sizeof *ep);
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);
-    const char *ext[24];
+    const char *ext[32];
     uint32_t n_ext = 0;
     ext[n_ext++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     g_vk.custom_border = has_ext(ep, ne, VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
@@ -229,8 +236,30 @@ static void create_device(void) {
 #endif
 
     // features the backend relies on (all present on current desktop drivers)
-    VkPhysicalDeviceVulkan12Features have12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-    VkPhysicalDeviceFeatures2 have = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &have12};
+    VkPhysicalDeviceVulkan13Features have13 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    VkPhysicalDeviceVulkan12Features have12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &have13};
+    VkPhysicalDeviceVulkan11Features have11 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, .pNext = &have12};
+    VkPhysicalDeviceFeatures2 have = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &have11};
+    // AMD FSR 3 / 4 (fsr.cpp): what the shaders of AMD's runtime use, where the GPU has it - asked for only when the
+    // runtime is next to the executable (FSR 4's shaders: 16-bit types, the Vulkan memory model, compute shader
+    // derivatives; its ML models: integer dot products, cooperative matrices, 8-bit floats on the GPUs that have them)
+    bool fsr_feat = fsr_wants_device_features();
+#ifdef VK_KHR_compute_shader_derivatives
+    VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR have_deriv = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR};
+    bool fsr_deriv = fsr_feat && has_ext(ep, ne, VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
+    if (fsr_deriv) have_deriv.pNext = have13.pNext, have13.pNext = &have_deriv;
+#endif
+#ifdef VK_KHR_cooperative_matrix
+    VkPhysicalDeviceCooperativeMatrixFeaturesKHR have_coop = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR};
+    bool fsr_coop = fsr_feat && has_ext(ep, ne, VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
+    if (fsr_coop) have_coop.pNext = have13.pNext, have13.pNext = &have_coop;
+#endif
+#ifdef VK_EXT_shader_float8
+    VkPhysicalDeviceShaderFloat8FeaturesEXT have_fp8 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT8_FEATURES_EXT};
+    bool fsr_fp8 = fsr_feat && has_ext(ep, ne, VK_EXT_SHADER_FLOAT8_EXTENSION_NAME);
+    if (fsr_fp8) have_fp8.pNext = have13.pNext, have13.pNext = &have_fp8;
+#endif
 #ifdef VK_KHR_portability_subset
     if (portability) port.pNext = have12.pNext, have12.pNext = &port;
 #endif
@@ -274,6 +303,30 @@ static void create_device(void) {
                                             .shaderDemoteToHelperInvocation = VK_TRUE, .shaderTerminateInvocation = VK_TRUE,
                                             .maintenance4 = VK_TRUE,
                                             .pNext = g_vk.custom_border ? (void *)&cbc : g_vk.divisor ? (void *)&div : NULL};
+    if (fsr_feat) {  // (AMD FSR 3 / 4, above)
+        f13.subgroupSizeControl = have13.subgroupSizeControl;
+        f13.computeFullSubgroups = have13.computeFullSubgroups;
+        f13.shaderIntegerDotProduct = have13.shaderIntegerDotProduct;
+#ifdef VK_KHR_compute_shader_derivatives
+        if (fsr_deriv && n_ext < 32 && (have_deriv.computeDerivativeGroupQuads || have_deriv.computeDerivativeGroupLinear)) {
+            ext[n_ext++] = VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME;
+            have_deriv.pNext = f13.pNext, f13.pNext = &have_deriv;  // (as offered)
+        }
+#endif
+#ifdef VK_KHR_cooperative_matrix
+        if (fsr_coop && n_ext < 32 && have_coop.cooperativeMatrix) {
+            ext[n_ext++] = VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME;
+            have_coop.cooperativeMatrixRobustBufferAccess = VK_FALSE;
+            have_coop.pNext = f13.pNext, f13.pNext = &have_coop;
+        }
+#endif
+#ifdef VK_EXT_shader_float8
+        if (fsr_fp8 && n_ext < 32 && have_fp8.shaderFloat8) {
+            ext[n_ext++] = VK_EXT_SHADER_FLOAT8_EXTENSION_NAME;
+            have_fp8.pNext = f13.pNext, f13.pNext = &have_fp8;
+        }
+#endif
+    }
     VkPhysicalDeviceVulkan12Features f12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
                                             .timelineSemaphore = VK_TRUE, .shaderInt8 = VK_TRUE, .samplerMirrorClampToEdge = VK_TRUE,
                                             .uniformAndStorageBuffer8BitAccess = VK_TRUE, .storageBuffer8BitAccess = VK_TRUE,
@@ -283,6 +336,13 @@ static void create_device(void) {
                                             .bufferDeviceAddress = dlss_exts && have12.bufferDeviceAddress, .pNext = &f13};
     VkPhysicalDeviceVulkan11Features f11 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
                                             .storageBuffer16BitAccess = VK_TRUE, .pNext = &f12};
+    if (fsr_feat) {  // (AMD FSR 3 / 4)
+        f11.uniformAndStorageBuffer16BitAccess = have11.uniformAndStorageBuffer16BitAccess;
+        f12.shaderFloat16 = have12.shaderFloat16;
+        f12.vulkanMemoryModel = have12.vulkanMemoryModel;
+        f12.vulkanMemoryModelDeviceScope = have12.vulkanMemoryModelDeviceScope;
+        f12.shaderSubgroupExtendedTypes = have12.shaderSubgroupExtendedTypes;
+    }
     VkPhysicalDeviceFaultFeaturesEXT ff = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT, .deviceFault = VK_TRUE,
                                            .pNext = &f11};
     VkPhysicalDeviceFeatures2 f = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = fault ? (void *)&ff : (void *)&f11};
@@ -313,6 +373,10 @@ static void create_device(void) {
     b->shaderClipDistance = h->shaderClipDistance;
     g_vk.clip_distance = h->shaderClipDistance;
     b->shaderStorageImageWriteWithoutFormat = h->shaderStorageImageWriteWithoutFormat;  // (SUST: images of any format)
+    if (fsr_feat) {  // (AMD FSR 3 / 4)
+        b->shaderInt16 = h->shaderInt16;
+        b->shaderStorageImageReadWithoutFormat = h->shaderStorageImageReadWithoutFormat;
+    }
     if (!h->shaderInt64) LOG("[vk] warning: no shaderInt64 (64-bit address math in shaders)\n");
     float prio = 1.0f;
     VkDeviceQueueCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = g_vk.qfam,
@@ -322,6 +386,7 @@ static void create_device(void) {
     VK_CHECK(vkCreateDevice(g_vk.phys, &di, NULL, &g_vk.dev));
     vkGetDeviceQueue(g_vk.dev, g_vk.qfam, 0, &g_vk.queue);
     if (dlss_exts) dlss_init(g_vk.inst, g_vk.phys, g_vk.dev, (void *)vkGetInstanceProcAddr, (void *)vkGetDeviceProcAddr);
+    if (fsr_feat) fsr_init(g_vk.inst, g_vk.phys, g_vk.dev, (void *)vkGetDeviceProcAddr);
 
     VmaAllocatorCreateInfo ai = {.physicalDevice = g_vk.phys, .device = g_vk.dev, .instance = g_vk.inst,
                                  .vulkanApiVersion = VK_API_VERSION_1_3};
@@ -503,9 +568,9 @@ static void create_swapchain(void) {
     if (old) vkDestroySwapchainKHR(g_vk.dev, old, NULL);
     g_vk.sc_format = sf.format;
     g_vk.sc_colorspace = sf.colorSpace;
-    if (g_vk.hdr_out) LOG("[vk] HDR swapchain: %s, paper white %d nits, peak %d\n",
+    if (g_vk.hdr_out) LOG("[vk] HDR swapchain: %s, paper white %d nits, peak %d, HUD %d%%\n",
                           g_vk.hdr_out == HDR_OUT_SCRGB ? "scRGB" : g_vk.hdr_out == HDR_OUT_PQ ? "HDR10" : "test (SDR)",
-                          g_settings.hdr_paper, g_settings.hdr_peak);
+                          g_settings.hdr_paper, g_settings.hdr_peak, g_settings.hdr_hud);
     g_vk.sc_extent = ext;
     g_vk.sc_count = 8;
     vkGetSwapchainImagesKHR(g_vk.dev, g_vk.swapchain, &g_vk.sc_count, g_vk.sc_images);
@@ -1050,11 +1115,23 @@ int ui_run(void) {
         // the events waiting, then the rest of the loop: a pad streaming events (the Steam Deck's controller) kept a
         // wait-until-quiet loop from ever ending - no reboot (Quit to Start Screen), rumble or mouse capture updates
         int nev = 0;
-        if (SDL_WaitEventTimeout(&e, 16)) do {
+        // (a step of this loop taking long - SDL's event pump, rumble, the mouse capture - holds up the controls, and
+        // with SDL's joystick lock held anything else asking SDL about a controller: the play log says which, and
+        // when the window gains or loses focus)
+        static int nslow;
+        uint64_t t0 = SDL_GetTicksNS();
+        bool got = SDL_WaitEventTimeout(&e, 16);
+        uint64_t t1 = SDL_GetTicksNS();
+        if (t1 - t0 > 100000000ull && nslow++ < 40)
+            LOG("[slow] event loop: SDL took %llu ms to give the next event\n", (unsigned long long)((t1 - t0) / 1000000));
+        if (got) do {
             if (e.type == SDL_EVENT_QUIT) {
                 LOG("window closed\n");
                 exit(0);
             }
+            if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST || e.type == SDL_EVENT_WINDOW_FOCUS_GAINED)
+                LOG("[window] focus %s (frame %llu)\n", e.type == SDL_EVENT_WINDOW_FOCUS_LOST ? "lost" : "gained",
+                    (unsigned long long)vk_frame_counter());
             extern bool input_user_blocked(const SDL_Event *e);
             if (input_user_blocked(&e)) continue;  // scripted test runs: the real keyboard / mouse / pads do nothing
             extern void input_pointer_event(const SDL_Event *e);
@@ -1062,10 +1139,17 @@ int ui_run(void) {
             if (menu_handle_event(&e)) continue;
             input_handle_event(&e);
         } while (++nev < 256 && SDL_PollEvent(&e));
+        uint64_t t2 = SDL_GetTicksNS();
         extern void input_rumble_pump(void);
         input_rumble_pump();
+        uint64_t t3 = SDL_GetTicksNS();
         menu_apply_window_requests(window);
         extern void input_mouse_frame(SDL_Window *w);
         input_mouse_frame(window);  // (runtime/hle/input.c: mouse aim captures the mouse while playing)
+        uint64_t t4 = SDL_GetTicksNS();
+        if ((t2 - t1 > 100000000ull || t3 - t2 > 100000000ull || t4 - t3 > 100000000ull) && nslow++ < 40)
+            LOG("[slow] event loop: %d events %llu ms, rumble %llu ms, window and mouse %llu ms\n", nev,
+                (unsigned long long)((t2 - t1) / 1000000), (unsigned long long)((t3 - t2) / 1000000),
+                (unsigned long long)((t4 - t3) / 1000000));
     }
 }
