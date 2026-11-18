@@ -159,6 +159,8 @@ static void pick_device(void) {
         VkPhysicalDeviceProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &m3};
         vkGetPhysicalDeviceProperties2(g_vk.phys, &p2);
         g_vk.max_alloc = m3.maxMemoryAllocationSize < m4.maxBufferSize ? m3.maxMemoryAllocationSize : m4.maxBufferSize;
+        const char *e = getenv("LARECOMP_VK_MAX_ALLOC_MB");  // (test: a smaller device's limit - AMD's Windows driver: 2048)
+        if (e && atoi(e) > 0 && ((uint64_t)atoi(e) << 20) < g_vk.max_alloc) g_vk.max_alloc = (uint64_t)atoi(e) << 20;
     }
     uint32_t nq = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(g_vk.phys, &nq, NULL);

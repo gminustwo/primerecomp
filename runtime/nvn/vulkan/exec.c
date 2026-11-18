@@ -30,6 +30,20 @@
 #define GMEM_WINDOW false
 #endif
 
+// Shaders find global memory through gbase (a window placed anywhere in the heap): on macOS (GMEM_WINDOW), and where
+// the heap doesn't fit in one allocation (AMD's Windows driver: 2 GB of the 3.25 GB) - there the window ends at the top
+// of the game's memory pools (gmem_want). (test) LARECOMP_VK_GMEM_WINDOW=0 / 1: off / on whatever the device.
+static bool gmem_windowed(void) {
+    static _Atomic int on = -1;  // (the shader translators' threads ask too; the device is made before them)
+    int v = atomic_load(&on);
+    if (v < 0) {
+        const char *e = getenv("LARECOMP_VK_GMEM_WINDOW");
+        v = e ? atoi(e) != 0 : GMEM_WINDOW || (g_vk.max_alloc && (g_vk.max_alloc & ~0xFFFFull) < HEAP_MAX);
+        atomic_store(&on, v);
+    }
+    return v;
+}
+
 static uint64_t stat_draws, stat_skipped, stat_passes, stat_dispatches, stat_wait_ns, stat_flushes, stat_feedback_copies;
 // skipped draws / dispatches by reason (the stats line): compute program not ready, no program, graphics program not
 // ready (translation failed or still compiling), topology, pipeline not ready, skip lists
@@ -1916,7 +1930,7 @@ static void translate_program(void *arg) {
     Prog *p = arg;
     maxwell_gmem_base = HEAP_BASE;
     maxwell_gmem_size = HEAP_MAX;
-    maxwell_gmem_window = GMEM_WINDOW;
+    maxwell_gmem_window = gmem_windowed();
     maxwell_clip_distances = g_vk.clip_distance && !getenv("LARECOMP_NO_CLIP_DISTANCE");  // ((test) off: as before)
     pthread_mutex_lock(&translate_lock);
     p->vi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[0], p->cmax[0], STAGE_VERTEX, &p->vkey);
@@ -3596,7 +3610,10 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
 // grows only before a command list runs, the old window freed first (gmem_grow); elsewhere a window replaced by a
 // larger one stays alive until the submissions that may use it are done (gmem_dead).
 // It stops at the device's largest allocation (g_vk.max_alloc: 2 GB on Mesa's llvmpipe, whose vertex fetches from a
-// larger import came out empty - the title screen's logo and movie): vertex / index data past that is copied.
+// larger import came out empty - the title screen's logo and movie; 2 GB on AMD's Windows driver too). There shaders
+// find it through gbase as on macOS (gmem_windowed) and it is the 2 GB ending at the top of the game's memory pools:
+// the bottom 2 GB, as before, left out every pool above it - Samus' shadow (transform feedback into a buffer ~2.9 GB
+// into the heap: xfb_layout) was missing on AMD cards (issue #40). Vertex / index data outside the window is copied.
 // LARECOMP_VK_NO_GMEM=1: no import, reads return zero.
 // Where the heap is shareable memory (Linux with udmabuf, platform.h plat_guest_shared) it is imported as dma-bufs
 // instead, 64 MB pieces bound into one sparse buffer: a host-pointer import is an amdgpu userptr buffer, whose every
@@ -3780,22 +3797,36 @@ static bool gmem_import(uint64_t base, uint64_t size) {
     return true;
 }
 
-// The window wanted now: the heap the game set up; on macOS the span of its memory pools (in GMEM_PIECE steps).
+// The window wanted now: the heap the game set up; on macOS the span of its memory pools (in GMEM_PIECE steps); on
+// another windowed device (gmem_windowed: the heap is larger than its largest allocation) as much as it allows, ending
+// a little above the pools' top - made once (no imports while loading: ~330 ms for 2 GB on an RX 9070). The game makes
+// its pools from the top of the heap down (LARECOMP_LOG_POOLS): when the window is first made they end at +3017 MB of
+// the 3328 MB heap, small ones go on up to +3027 MB over the next ~80 frames, and the rooms' pools are made lower and
+// lower, nearly back to back: down to +1276 MB after the intro, +1260 MB in Tallon Overworld (1.77 GB in all), and the
+// macOS window was 2 GB in the Chozo Ruins (issue #75: +1024 to +3072 MB in its 64 MB steps). So the top is the pools'
+// top + 16 MB rounded up to 64 MB: +3072 MB, the window +1024 to +3072 MB. Ending at the heap's top (+1280 MB up)
+// would leave pools out already after the intro.
 static bool gmem_want(uint64_t *lo, uint64_t *hi) {
     uint64_t l = 0, h = (kernel_heap_size() + 0xFFFF) & ~0xFFFFull;
     if (h > HEAP_MAX) h = HEAP_MAX;
-#if GMEM_WINDOW
-    uint64_t pl = atomic_load(&pool_lo), ph = atomic_load(&pool_hi);
-    if (pl >= ph) return false;  // (no pools yet: nothing the GPU can address)
-    l = pl & ~(GMEM_PIECE - 1);
-    if ((ph + GMEM_PIECE - 1) / GMEM_PIECE * GMEM_PIECE < h) h = (ph + GMEM_PIECE - 1) / GMEM_PIECE * GMEM_PIECE;
-#endif
+    if (gmem_windowed()) {
+        uint64_t pl = atomic_load(&pool_lo), ph = atomic_load(&pool_hi);
+        if (pl >= ph) return false;  // (no pools yet: nothing the GPU can address)
+        uint64_t top = (ph + (GMEM_WINDOW ? 0 : 16ull << 20) + GMEM_PIECE - 1) / GMEM_PIECE * GMEM_PIECE;
+        if (top < h) h = top;
+        if (GMEM_WINDOW) l = pl & ~(GMEM_PIECE - 1);
+    }
     if (h <= l) return false;  // (no heap yet, or pools past it)
-    if (g_vk.max_alloc && h - l > (g_vk.max_alloc & ~0xFFFFull)) {
-        h = l + (g_vk.max_alloc & ~0xFFFFull);
+    uint64_t cap = g_vk.max_alloc & ~0xFFFFull;
+    if (cap && h - l > cap) {
+        // (windowed, not macOS) the top: the pools; else the bottom (shaders address the heap from its start; macOS
+        // as before: a window there only grows, from the top down - gmem_grow keeps the old one past this size)
+        if (gmem_windowed() && !GMEM_WINDOW) l = h - cap;
+        else h = l + cap;
         static bool said;
-        if (!said) said = true, LOG("[vk] guest heap import limited to %llu MB (the device's largest allocation)\n",
-                                    (unsigned long long)((h - l) >> 20));
+        if (!said) said = true, LOG("[vk] guest heap import limited to %llu MB (the device's largest allocation): heap +%llu MB "
+                                    "to +%llu MB\n", (unsigned long long)((h - l) >> 20), (unsigned long long)(l >> 20),
+                                    (unsigned long long)(h >> 20));
     }
     *lo = l, *hi = h;
     return h > l;
@@ -3826,7 +3857,18 @@ static VkDescriptorBufferInfo gmem_info(void) {
             }
         }
     }
-    if (gmem_buf) return (VkDescriptorBufferInfo){gmem_buf, 0, gmem_size};
+    if (gmem_buf) {
+        // (said once) pools the window misses: shaders read zero there, transform feedback into them isn't captured
+        // (issue #40: Samus' shadow on AMD's Windows driver), vertex data there is copied. (macOS: the window catches
+        // up with new pools before the next command list - gmem_grow)
+        static bool said;
+        uint64_t pl = atomic_load(&pool_lo), ph = atomic_load(&pool_hi);
+        if (!GMEM_WINDOW && !said && pl < ph && (pl < gmem_base || ph > gmem_base + gmem_size))
+            said = true, LOG("[vk] the game's memory pools (heap +%llu MB to +%llu MB) reach outside the heap window "
+                             "(+%llu MB to +%llu MB)\n", (unsigned long long)(pl >> 20), (unsigned long long)(ph >> 20),
+                             (unsigned long long)(gmem_base >> 20), (unsigned long long)((gmem_base + gmem_size) >> 20));
+        return (VkDescriptorBufferInfo){gmem_buf, 0, gmem_size};
+    }
     static uint32_t zero[1024];
     VkSpan s = vk_transient_copy(zero, sizeof zero, 256);
     return (VkDescriptorBufferInfo){s.buf, s.off, sizeof zero};
@@ -4524,7 +4566,7 @@ static CsProg *compute_program(NvnProgram *np) {
     if (n < 256) { tab[n].addr = ss->code_addr; tab[n].cp = cp; g_cs_n = n + 1; }
     maxwell_gmem_base = HEAP_BASE;
     maxwell_gmem_size = HEAP_MAX;
-    maxwell_gmem_window = GMEM_WINDOW;
+    maxwell_gmem_window = gmem_windowed();
     ShaderKey k = {0};
     k.glsl = 1;
     pthread_mutex_lock(&translate_lock);

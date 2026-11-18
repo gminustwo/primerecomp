@@ -120,7 +120,8 @@ typedef struct {
 #define GMAP_BUFFER_INDEX 20
 #define GFAST_BUFFER_INDEX 21
 // (GLSL, maxwell_gmem_window) where the global memory buffer sits in the heap: gbase.x = its offset from
-// maxwell_gmem_base, .y = its size (exec.c gmem_info: on macOS only the part holding the game's memory pools)
+// maxwell_gmem_base, .y = its size (exec.c gmem_info: on macOS only the part holding the game's memory pools; where
+// the heap is larger than the device's largest allocation, its top - exec.c gmem_windowed)
 #define GBASE_BUFFER_INDEX 22
 // (GLSL geometry, ShaderKey.xfb) transform feedback: XfbCount { uint prims, written, bytes; } (storage: primitives
 // made, written, bytes written) and XfbMap { uvec4 xfb_hdr; uvec4 xfb_map[XFB_WORDS / 4]; } (uniform: hdr.x = the

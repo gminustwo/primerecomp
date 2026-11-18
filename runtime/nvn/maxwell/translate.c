@@ -1855,7 +1855,8 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         else sprintf(addr, "(ulong(%s) + ulong(%lld))", R(a), (long long)off);
         // (GLSL) ga: the heap offset (the compute fast-copy table's addresses); gi: the offset in gmem_ - the
         // renderer's window onto the heap with maxwell_gmem_window (exec.c gmem_info: on macOS only the part holding
-        // the game's memory pools - gbase), else the heap from maxwell_gmem_base
+        // the game's memory pools, where the heap is too large for one allocation its top - gbase), else the heap from
+        // maxwell_gmem_base
         if (c->glsl && maxwell_gmem_window)
             sp(&c->body, "    { ulong ga = %s - 0x%llxul; ulong gi = ga - ulong(gbase.x); bool ok = gi < ulong(gbase.y);\n", addr,
                (unsigned long long)maxwell_gmem_base);

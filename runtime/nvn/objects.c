@@ -202,17 +202,26 @@ NVN(nvnMemoryPoolBuilderGetFlags) { RET(G(uint32_t, A(0), 8)); }
 NVN(nvnMemoryPoolBuilderGetMemory) { RET(G(uint64_t, A(0), 0x10)); }
 NVN(nvnMemoryPoolBuilderGetSize) { RET(G(uint64_t, A(0), 0x18)); }
 
+// (test) LARECOMP_LOG_POOLS=1: each pool made / finalized (where the game's pools sit in the heap: exec.c gmem_want)
+static bool pool_log(void) {
+    static int on = -1;
+    if (on < 0) on = getenv("LARECOMP_LOG_POOLS") != NULL;
+    return on;
+}
+
 NVN(nvnMemoryPoolInitialize) {
     NvnPool *p = calloc(1, sizeof *p);
     p->storage = G(uint64_t, A(1), 0x10);
     p->size = G(uint64_t, A(1), 0x18);
     p->flags = G(uint32_t, A(1), 8);
     backend_pool_created(p->storage, p->size, p->flags);
+    if (pool_log()) LOG("[pool] init %llx +%llx flags %x\n", (unsigned long long)p->storage, (unsigned long long)p->size, p->flags);
     SET_HOST(A(0), p);
     RET(1);
 }
 NVN(nvnMemoryPoolFinalize) {
     NvnPool *p = HOST(NvnPool, A(0));
+    if (p && pool_log()) LOG("[pool] finalize %llx +%llx\n", (unsigned long long)p->storage, (unsigned long long)p->size);
     if (p) free(p->pages);
     free(p);
     SET_HOST(A(0), 0);
