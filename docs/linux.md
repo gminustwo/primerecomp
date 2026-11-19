@@ -21,6 +21,11 @@ CPU). Set it up once in Desktop Mode; play it from Game Mode afterwards:
    "All Files", pick the AppImage. It then shows up in Game Mode.
 5. In Game Mode the Deck's controls arrive as Steam's Xbox controller: A confirms in menus, and in play the bottom
    button (A) jumps, as on a Switch. The PrimeRecomp menu opens with L3+R3 (press both sticks).
+6. Gyro aiming uses the Deck's own gyro, Steam Input or not: Steam's Xbox controller has none, so PrimeRecomp reads
+   the Deck's controller directly for its motion only (read-only: Steam Input and your layout stay in charge of the
+   buttons and sticks). Pick it in the game: pause, Options -> Controls -> Control Scheme -> Hybrid (sticks, aiming
+   by motion) or Pointer. The PrimeRecomp menu's Gameplay tab says "the Steam Deck's own gyro" when it's in use; a
+   controller with a gyro of its own (DualSense, Switch Pro...) takes over while it's the one in use.
 
 To keep those 8 GB on the SD card instead, move `~/.local/share/primerecomp` there before the setup and leave a
 link in its place (`ln -s /run/media/deck/<card name>/primerecomp ~/.local/share/primerecomp`). The folder picker is a

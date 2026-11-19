@@ -51,7 +51,8 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 - Steam Deck presets
 - 5.1 and 7.1 surround sound: the game's own 5.1 mix, as a Switch plays it to a surround TV, on as many speakers as
   your output has (F1 menu, Audio tab: Speakers; Auto follows your sound settings, stereo on headphones)
-- Gyro aiming with controllers that have one
+- Gyro aiming with controllers that have one, and with the Steam Deck's own gyro in Game Mode (Steam Input's Xbox
+  controller has none: the Deck's is read directly)
 - Wii Remote + Nunchuk: point at the screen to aim, with the buttons laid out like Metroid Prime: Trilogy (a Mayflash
   DolphinBar or the PC's Bluetooth; F1 menu, Controls tab: Wii Remote)
 - GameCube controllers (through an adapter, or Switch 2's GameCube controller) play as Metroid Prime did on the
