@@ -380,6 +380,311 @@ static void rt_weapon_update(Cpu *c) {
     }
 }
 
+// ---- Impulse triggers at 90 and 120 fps (Hall of the Elders: the statue's throw falls short at 90)
+// A trigger with an impulse force (+0x24c > 0, +0x250 bit 13: the "kick" boxes that carry the Morph Ball along the
+// rooms' ball paths) gives each object inside it force * dt * 60 per tick (CScriptTriggerMP1::UpdateInhabitants) - the
+// same push per second at any rate. But the box lets go of the object a tick after it has left: that last push still
+// lands, and the object travels the whole next tick under it. At 60 that's 1/60 s of extra push past each box, at 90
+// 1/90 s, at 120 1/120 s - so at the higher rates the ball leaves every kick box a little slower. Hall of the Elders'
+// throw was made just barely high enough at 60: up its shaft (kicks of 1000 and 820), the ball tops out at 72.51 for a
+// ledge at 72.2; at 90 it peaks at 71.92 and falls back down (a player's report, 2026-11-18; 120 happened to make
+// 72.6). So as an object leaves an impulse trigger, it gets the rest of that 60 fps push: the trigger's impulse times
+// 1 - dt * 60 (a third of one at 90, half at 120) - with UpdateInhabitants' own conditions (an unmorphed Samus
+// isn't pushed unless the trigger says so; a push scaled by overlap - bit 15 - has nothing left to scale by). At 60
+// nothing changes. CScriptTriggerMP1::InhabitantExited (empty; a virtual call, vtable +0x188) is called as each object
+// leaves. LARECOMP_KICK_TOPUP=0: off (the game's own); LARECOMP_KICK_TOPUP_LOG=1 logs each top-up ("[kick]").
+static GuestFn g_inhabitant_exited;
+static void rt_inhabitant_exited(Cpu *c) {
+    static int on = -1, log = -1;
+    if (on < 0) {
+        const char *e = getenv("LARECOMP_KICK_TOPUP");
+        on = !e || atoi(e) != 0;
+        log = getenv("LARECOMP_KICK_TOPUP_LOG") != NULL;
+    }
+    uint64_t t = c->x[0], actor = c->x[1], mgr = c->x[2];
+    uint32_t sb = rt_sim_step_bits(0);
+    float step;
+    memcpy(&step, &sb, 4);
+    float k = 1.0f - step * 60.0f;
+    if (on && k > 0.01f && (LD8(t + 0x18) & 1) && ldf(t + 0x24c) > 0 && (LD32(t + 0x250) & 0x2000) &&
+        !(LD32(t + 0x250) & 0x8000) && !(LD8(t + 0x26c) & 0x80) && GUEST_PTR_OK(actor)) {
+        Cpu *saved = malloc(sizeof *saved);
+        *saved = *c;
+        bool push = true;
+        if (!(LD8(t + 0x26c) & 0x40)) {  // (an unmorphed Samus: no push, as UpdateInhabitants does)
+            c->x[0] = actor;
+            guest_call(c, guest_sym("_Z10TCastToPtrI10CPlayerMP1EPT_P10CEntityMP1"));
+            uint64_t p = c->x[0];
+            if (p && LD32(p + 0x4d4) == 0 && LD32(p + 0x3f0) == 0) push = false;
+        }
+        uint64_t pa = 0;
+        if (push) {
+            c->x[0] = actor;
+            guest_call(c, guest_sym("_Z10TCastToPtrI16CPhysicsActorMP1EPT_P10CEntityMP1"));
+            pa = c->x[0];
+        }
+        if (pa) {
+            static float *v;
+            if (!v) v = hle_alloc(32);
+            for (int i = 0; i < 3; i++) v[i] = ldf(t + 0x240 + 4 * i) * k;
+            v[4] = v[5] = v[6] = 0;  // (no turn: CAxisAngle zero)
+            c->x[0] = pa, c->x[1] = mgr, c->x[2] = (uint64_t)(uintptr_t)v, c->x[3] = (uint64_t)(uintptr_t)(v + 4);
+            guest_call(c, guest_sym("_ZN16CPhysicsActorMP114ApplyImpulseWRER13CStateManagerRK9CVector3fRK10CAxisAngle"));
+            c->x[0] = pa, c->x[1] = mgr;
+            guest_call(c, guest_sym("_ZN16CPhysicsActorMP120UseCollisionImpulsesER13CStateManager"));
+            if (log)
+                LOG("[kick] tick %llu trigger %llx: %.1f %.1f %.1f more as %llx leaves\n",
+                    (unsigned long long)game_ticks_total(), (unsigned long long)t, v[0], v[1], v[2],
+                    (unsigned long long)actor);
+        }
+        *c = *saved;
+        free(saved);
+    }
+    g_inhabitant_exited(c);
+}
+
+// (debug) LARECOMP_LOG_TRIGGERS=1: each trigger (CScriptTriggerMP1::Think, CScriptBallTriggerMP1::Think: virtual
+// calls) once, as it first thinks: its box, force field (+0x240 the vector, +0x24c its magnitude; +0x250 the flags -
+// bit 13: an impulse each tick), +0x26c - and a ball trigger's pull (+0x270 force, +0x274 angle, +0x278 reach,
+// +0x27c the direction, +0x288 flags). "[trigger]"
+static GuestFn g_trigger_think, g_ball_trigger_think;
+static void log_trigger(Cpu *c, bool ball) {
+    static int on = -1;
+    if (on < 0) on = getenv("LARECOMP_LOG_TRIGGERS") != NULL;
+    if (!on) return;
+    static uint64_t seen[256];
+    static int nseen;
+    uint64_t t = c->x[0];
+    for (int i = 0; i < nseen; i++)
+        if (seen[i] == t) return;
+    if (nseen == 256) return;
+    seen[nseen++] = t;
+    static float *box;
+    if (!box) box = hle_alloc(32);
+    Cpu *saved = malloc(sizeof *saved);
+    *saved = *c;
+    c->x[8] = (uint64_t)(uintptr_t)box;
+    guest_call(c, guest_sym("_ZNK17CScriptTriggerMP118GetTriggerBoundsWREv"));
+    *c = *saved;
+    free(saved);
+    LOG("[trigger] %llx%s active %d box %.2f %.2f %.2f .. %.2f %.2f %.2f force %.2f %.2f %.2f mag %.2f flags %x/%x\n",
+        (unsigned long long)t, ball ? " (ball)" : "", LD8(t + 0x18) & 1, box[0], box[1], box[2], box[3], box[4], box[5],
+        ldf(t + 0x240), ldf(t + 0x244), ldf(t + 0x248), ldf(t + 0x24c), LD32(t + 0x250), LD8(t + 0x26c));
+    if (ball)
+        LOG("[trigger] %llx pull %.2f angle %.1f reach %.2f dir %.2f %.2f %.2f flags %x\n", (unsigned long long)t,
+            ldf(t + 0x270), ldf(t + 0x274), ldf(t + 0x278), ldf(t + 0x27c), ldf(t + 0x280), ldf(t + 0x284), LD8(t + 0x288));
+}
+// (debug) LARECOMP_ACTIVATE_TRIGGERS=<frame>:<x0>,<y0>,<z0>,<x1>,<y1>,<z1>: from that frame on, each inactive trigger
+// whose box lies inside that box is made active as it thinks (CEntityMP1::SetActive) - a scripted sequence's force
+// fields tried without playing the sequence. "[trigger] ... activated"
+static void activate_trigger(Cpu *c) {
+    static long at = -2;
+    static float r[6];
+    if (at == -2) {
+        const char *e = getenv("LARECOMP_ACTIVATE_TRIGGERS");
+        at = e && sscanf(e, "%ld:%f,%f,%f,%f,%f,%f", &at, &r[0], &r[1], &r[2], &r[3], &r[4], &r[5]) == 7 ? at : -1;
+    }
+    extern uint64_t vk_frame_counter(void);
+    uint64_t t = c->x[0];
+    if (at < 0 || (long)vk_frame_counter() < at || (LD8(t + 0x18) & 1)) return;
+    static float *box;
+    if (!box) box = hle_alloc(32);
+    Cpu *saved = malloc(sizeof *saved);
+    *saved = *c;
+    c->x[8] = (uint64_t)(uintptr_t)box;
+    guest_call(c, guest_sym("_ZNK17CScriptTriggerMP118GetTriggerBoundsWREv"));
+    bool in = true;
+    for (int i = 0; i < 3; i++) in &= box[i] >= r[i] && box[3 + i] <= r[3 + i];
+    if (in) {
+        c->x[0] = t, c->x[1] = 1;
+        guest_call(c, guest_sym("_ZN10CEntityMP19SetActiveEb"));
+        LOG("[trigger] %llx activated (box %.2f %.2f %.2f .. %.2f %.2f %.2f)\n", (unsigned long long)t, box[0], box[1],
+            box[2], box[3], box[4], box[5]);
+    }
+    *c = *saved;
+    free(saved);
+}
+// (debug) LARECOMP_KILL_GHOSTS=<frame>: from that frame on, each active Chozo Ghost dies as it thinks (its virtual
+// Death, vtable +0x1b8, as CStateManagerGameLogicMP1::ApplyLocalDamage calls it: state 0x14) - a room's ghost fight
+// over without fighting it (Hall of the Elders' sequence in a test run). CChozoGhostMP1::Think is a virtual call.
+static GuestFn g_ghost_think;
+static void rt_ghost_think(Cpu *c) {
+    static long at = -2;
+    static uint64_t vt;
+    if (at == -2) {
+        at = getenv("LARECOMP_KILL_GHOSTS") ? atol(getenv("LARECOMP_KILL_GHOSTS")) : -1;
+        vt = guest_sym("_ZTV14CChozoGhostMP1") + 0x10;
+    }
+    extern uint64_t vk_frame_counter(void);
+    uint64_t a = c->x[0];
+    static uint64_t dead[32];
+    static int ndead;
+    bool done = false;
+    for (int i = 0; i < ndead; i++) done |= dead[i] == a;
+    if (at >= 0 && (long)vk_frame_counter() >= at && !done && ndead < 32 && LD64(a) == vt && (LD8(a + 0x18) & 1)) {
+        dead[ndead++] = a;
+        static float *dir;
+        if (!dir) dir = hle_alloc(16);
+        dir[0] = 0, dir[1] = 1, dir[2] = 0;
+        Cpu *saved = malloc(sizeof *saved);
+        *saved = *c;
+        // (Think's mgr is already in x1: Death takes it there too)
+        c->x[2] = (uint64_t)(uintptr_t)dir;
+        c->x[3] = 0x14;
+        guest_call(c, LD64(LD64(a) + 0x1b8));
+        *c = *saved;
+        free(saved);
+        LOG("[ghost] %llx killed (frame %llu)\n", (unsigned long long)a, (unsigned long long)vk_frame_counter());
+        return;
+    }
+    g_ghost_think(c);
+}
+
+static uint64_t g_player, g_player_mgr;  // (below: the latest player and its state manager)
+// (debug) LARECOMP_HIT_DT=<frame>:<weapon type>:<x>,<y>,<z>: at that frame the damageable trigger nearest that point
+// (CScriptDamageableTriggerMP1 - Hall of the Elders' beam slots) takes 1000 damage of that weapon type (0 Power,
+// 1 Ice, 2 Wave, 3 Plasma) from the player, through CStateManagerGameLogicMP1::ApplyDamage as a shot's hit does - a
+// slot "shot" without aiming. Each one is logged once as it thinks ("[dt]").
+static GuestFn g_dt_think;
+static void rt_dt_think(Cpu *c) {
+    static long at = -2;
+    static int weapon;
+    static float want[3];
+    if (at == -2) {
+        const char *e = getenv("LARECOMP_HIT_DT");
+        at = e && sscanf(e, "%ld:%d:%f,%f,%f", &at, &weapon, &want[0], &want[1], &want[2]) == 5 ? at : -1;
+    }
+    enum { MAXDT = 64 };
+    static uint64_t seen[MAXDT];
+    static float pos[MAXDT][3];
+    static int nseen;
+    uint64_t t = c->x[0];
+    int k = -1;
+    for (int i = 0; i < nseen; i++)
+        if (seen[i] == t) k = i;
+    if (k < 0 && nseen < MAXDT) {
+        Cpu *saved = malloc(sizeof *saved);
+        *saved = *c;
+        guest_call(c, guest_sym("_ZNK9CActorMP112GetTransformEv"));
+        uint64_t m = c->x[0];
+        *c = *saved;
+        free(saved);
+        k = nseen++;
+        seen[k] = t, pos[k][0] = ldf(m + 0xc), pos[k][1] = ldf(m + 0x1c), pos[k][2] = ldf(m + 0x2c);
+        LOG("[dt] %llx at %.2f %.2f %.2f active %d\n", (unsigned long long)t, pos[k][0], pos[k][1], pos[k][2],
+            LD8(t + 0x18) & 1);
+    }
+    extern uint64_t vk_frame_counter(void);
+    if (at >= 0 && (long)vk_frame_counter() >= at && g_player && g_player_mgr) {
+        int best = -1;
+        float bd = 1e30f;
+        for (int i = 0; i < nseen; i++) {
+            float dx = pos[i][0] - want[0], dy = pos[i][1] - want[1], dz = pos[i][2] - want[2], d = dx * dx + dy * dy + dz * dz;
+            if (d < bd) bd = d, best = i;
+        }
+        if (best == k && !(LD8(t + 0x18) & 1)) {  // (an inactive one is made active first, hit 4 frames later)
+            Cpu *saved = malloc(sizeof *saved);
+            *saved = *c;
+            c->x[1] = 1;
+            guest_call(c, guest_sym("_ZN10CEntityMP19SetActiveEb"));
+            *c = *saved;
+            free(saved);
+            LOG("[dt] %llx activated\n", (unsigned long long)t);
+            at = (long)vk_frame_counter() + 4;
+        } else if (best == k) {  // (hit as that one thinks: the state manager is in x1)
+            at = -1;
+            static uint8_t *mem;
+            if (!mem) mem = hle_alloc(0x80);
+            uint8_t *info = mem, *opt = mem + 0x40;
+            memset(mem, 0, 0x80);
+            info[0] = (uint8_t)weapon, info[1] = 4;  // CWeaponModeMP1: the type, then flags (as a trigger's damage)
+            float dmg = 1000, one = 1;
+            memcpy(info + 4, &dmg, 4), memcpy(info + 8, &dmg, 4);
+            uint64_t inv = 0;
+            Cpu *saved = malloc(sizeof *saved);
+            *saved = *c;
+            guest_call(c, guest_sym("_ZN9CObjectId7InvalidEv"));
+            inv = c->x[0];
+            memcpy(info + 0x14, (void *)(uintptr_t)inv, 16);
+            memcpy(info + 0x24, &one, 4);
+            guest_call(c, guest_sym("_ZN14CDataEnumValue7InvalidEv"));
+            ST32(info + 0x28, LD32(c->x[0]));
+            guest_call(c, guest_sym("_ZN26NStateManagerLogicDefaults21default_damage_filterEv"));
+            uint64_t filter = c->x[0];
+            guest_call(c, guest_sym("_ZN26NStateManagerLogicDefaults21default_knockback_dirEv"));
+            uint64_t knock = c->x[0];
+            uint64_t mgr = saved->x[1], logic = LD64(mgr + 0x4e0150);
+            uint32_t me = LD32(g_player + 0x10), it = LD32(t + 0x10);
+            c->x[0] = logic, c->x[1] = mgr, c->x[2] = me, c->x[3] = it, c->x[4] = me;
+            c->x[5] = (uint64_t)(uintptr_t)info, c->x[6] = filter, c->x[7] = knock;
+            c->sp -= 0x20;  // (two stack arguments: the optional position, then the bool)
+            ST64(c->sp, (uint64_t)(uintptr_t)opt);
+            ST8(c->sp + 8, 1);
+            guest_call(c, guest_sym("_ZN25CStateManagerGameLogicMP111ApplyDamageER13CStateManager15CValueVersionIdIjjtLj16ELj16EES3_S3_RK14CDamageInfoMP1RK18CMaterialFilterMP1RK9CVector3fRKN4rstl15optional_objectISA_Lb0EEEb"));
+            *c = *saved;
+            free(saved);
+            LOG("[dt] %llx at %.2f %.2f %.2f hit with weapon %d\n", (unsigned long long)t, pos[k][0], pos[k][1], pos[k][2],
+                weapon);
+        }
+    }
+    g_dt_think(c);
+}
+
+// (debug) LARECOMP_TRACE_PLAYER=<from>:<to> (frames): every simulation tick in between, the player's position and
+// velocity ("[trace]"), and each force trigger the player is in or within a unit of, with its force ("[kick]") -
+// traced from the triggers' Think, which runs every tick, cutscenes included.
+static float *player_transform(uint64_t player);
+static void trace_player(Cpu *c) {
+    static long from = -2, to;
+    if (from == -2) {
+        const char *e = getenv("LARECOMP_TRACE_PLAYER");
+        if (!e || sscanf(e, "%ld:%ld", &from, &to) != 2) from = -1;
+    }
+    extern uint64_t vk_frame_counter(void);
+    long f = (long)vk_frame_counter();
+    if (from < 0 || f < from || f > to || !g_player || !g_player_mgr) return;
+    float *m = player_transform(g_player);
+    if (!m) return;
+    static uint64_t last_tick = ~0ull;
+    uint64_t tick = game_ticks_total();
+    if (tick != last_tick) {
+        last_tick = tick;
+        Cpu *saved = malloc(sizeof *saved);
+        *saved = *c;
+        c->x[0] = g_player, c->x[1] = g_player_mgr;
+        guest_call(c, guest_sym("_ZNK16CPhysicsActorMP113GetVelocityWRERK13CStateManager"));
+        uint64_t v = c->x[0];
+        *c = *saved;
+        free(saved);
+        LOG("[trace] frame %ld tick %llu pos %.3f %.3f %.3f vel %.3f %.3f %.3f\n", f, (unsigned long long)tick, m[3],
+            m[7], m[11], ldf(v), ldf(v + 4), ldf(v + 8));
+    }
+    uint64_t t = c->x[0];
+    if (!(ldf(t + 0x24c) > 0) || !(LD8(t + 0x18) & 1)) return;
+    static float *box;
+    if (!box) box = hle_alloc(32);
+    Cpu *saved = malloc(sizeof *saved);
+    *saved = *c;
+    c->x[8] = (uint64_t)(uintptr_t)box;
+    guest_call(c, guest_sym("_ZNK17CScriptTriggerMP118GetTriggerBoundsWREv"));
+    *c = *saved;
+    free(saved);
+    bool near = true;
+    for (int i = 0; i < 3; i++) near &= m[3 + 4 * i] >= box[i] - 1.5f && m[3 + 4 * i] <= box[3 + i] + 1.5f;
+    if (near)
+        LOG("[kick] tick %llu trigger %llx force %.0f %.0f %.0f flags %x/%x inhabitants %d\n", (unsigned long long)tick,
+            (unsigned long long)t, ldf(t + 0x240), ldf(t + 0x244), ldf(t + 0x248), LD32(t + 0x250), LD8(t + 0x26c),
+            (int)LD32(t + 0x208));
+}
+
+static void rt_trigger_think(Cpu *c) {
+    log_trigger(c, false);
+    activate_trigger(c);
+    trace_player(c);
+    g_trigger_think(c);
+}
+static void rt_ball_trigger_think(Cpu *c) { log_trigger(c, true); activate_trigger(c); g_ball_trigger_think(c); }
+
 // ---- Particle effects at 90 and 120 fps (issue #17: the arm cannon's muzzle flash)
 // A particle system (CElementGen) runs in whole 1/60 s frames. CElementGen::Update (a virtual call: the jobs that
 // update effects make it) adds the time it's given to the system's time, kept in frames (+0x30, a double: dt * 60 to
@@ -539,6 +844,36 @@ void game_hooks_init(void) {  // (each boot, after dispatch_init)
             hle_override(st, rt_muzzle_stop, "CEffectModule::Stop");
             hle_override(f, rt_beam_fire, "CPowerBeamMP1::Fire");
             mhooked = true;
+        }
+    }
+    {   // impulse triggers' last push at 90 and 120 fps
+        uint64_t x = guest_sym("_ZN17CScriptTriggerMP116InhabitantExitedER9CActorMP1R13CStateManager");
+        static bool xhooked;
+        g_inhabitant_exited = dispatch_lookup(x);
+        if (g_inhabitant_exited && !xhooked)
+            hle_override(x, rt_inhabitant_exited, "CScriptTriggerMP1::InhabitantExited"), xhooked = true;
+    }
+    if (getenv("LARECOMP_HIT_DT")) {
+        uint64_t p = guest_sym("_ZN27CScriptDamageableTriggerMP15ThinkEfR13CStateManager");
+        static bool dhooked;
+        g_dt_think = dispatch_lookup(p);
+        if (g_dt_think && !dhooked) hle_override(p, rt_dt_think, "CScriptDamageableTriggerMP1::Think"), dhooked = true;
+    }
+    if (getenv("LARECOMP_KILL_GHOSTS")) {
+        uint64_t p = guest_sym("_ZN14CChozoGhostMP15ThinkEfR13CStateManager");
+        static bool phooked;
+        g_ghost_think = dispatch_lookup(p);
+        if (g_ghost_think && !phooked) hle_override(p, rt_ghost_think, "CChozoGhostMP1::Think"), phooked = true;
+    }
+    if (getenv("LARECOMP_LOG_TRIGGERS") || getenv("LARECOMP_ACTIVATE_TRIGGERS") || getenv("LARECOMP_TRACE_PLAYER")) {
+        uint64_t t = guest_sym("_ZN17CScriptTriggerMP15ThinkEfR13CStateManager");
+        uint64_t b = guest_sym("_ZN21CScriptBallTriggerMP15ThinkEfR13CStateManager");
+        static bool thooked2;
+        g_trigger_think = dispatch_lookup(t), g_ball_trigger_think = dispatch_lookup(b);
+        if (g_trigger_think && g_ball_trigger_think && !thooked2) {
+            hle_override(t, rt_trigger_think, "CScriptTriggerMP1::Think");
+            hle_override(b, rt_ball_trigger_think, "CScriptBallTriggerMP1::Think");
+            thooked2 = true;
         }
     }
     if (getenv("LARECOMP_LOG_FLUID")) {
@@ -1195,8 +1530,71 @@ static void debug_load_areas(Cpu *c) {
     free(saved);
 }
 
+// LARECOMP_WARP=<frame>:<world id>:<room id> (32 hex digits each: the ROOM asset ids in the paks' tables of contents -
+// a world's in Worlds/MP1/<world>/<world>.pak, a room's in its own pak, as the [state] line's room): from that frame
+// on, the next gameplay frame does what an elevator does (CScriptWorldTeleporterMP1::AcceptScriptMsg, its transition
+// effect left out): the world and its desired area set, the game instance quit to continue there. The game loads that
+// room and starts at its spawn point - a test run reaches any room. (State manager in x0.)
+static void debug_warp(Cpu *c) {
+    static long at = -2;
+    static uint64_t id[4];  // world lo, hi; room lo, hi
+    if (at == -2) {
+        at = -1;
+        const char *e = getenv("LARECOMP_WARP");
+        char w[40], r[40];
+        long f;
+        if (e && sscanf(e, "%ld:%32[0-9a-fA-F]:%32[0-9a-fA-F]", &f, w, r) == 3 && strlen(w) == 32 && strlen(r) == 32) {
+            uint8_t b[32];
+            for (int i = 0; i < 16; i++) {
+                unsigned v = 0, u = 0;
+                sscanf(w + 2 * i, "%2x", &v), sscanf(r + 2 * i, "%2x", &u);
+                b[i] = (uint8_t)v, b[16 + i] = (uint8_t)u;
+            }
+            memcpy(id, b, 32);
+            at = f;
+        }
+    }
+    extern uint64_t vk_frame_counter(void);
+    if (at < 0 || (long)vk_frame_counter() < at) return;
+    at = -1;
+    uint64_t mgr = c->x[0], gs = LD64(guest_sym("gpGameState"));
+    if (!GUEST_PTR_OK(gs)) return;
+    {   // (in byte order, as the "[area] load" lines and the paks give them)
+        char h[3][33];
+        const uint8_t *src[3] = {(const uint8_t *)id, (const uint8_t *)(uintptr_t)gs, (const uint8_t *)(id + 2)};
+        for (int k = 0; k < 3; k++)
+            for (int i = 0; i < 16; i++) snprintf(h[k] + 2 * i, 3, "%02x", src[k][i]);
+        LOG("[area] LARECOMP_WARP: world %s (was %s), room %s\n", h[0], h[1], h[2]);
+    }
+    static uint8_t *st;  // CGameState::SInitialState: the room, then -1
+    if (!st) st = hle_alloc(32);
+    memcpy(st, &id[2], 16);
+    ST32(st + 16, 0xffffffffu);
+    Cpu *saved = malloc(sizeof *saved);
+    *saved = *c;
+    c->x[0] = gs, c->x[1] = id[0], c->x[2] = id[1];
+    guest_call(c, guest_sym("_ZN13CGameStateMP117SetCurrentWorldIdE9CObjectId"));
+    c->x[0] = gs;
+    guest_call(c, guest_sym("_ZN13CGameStateMP117CurrentWorldStateEv"));
+    c->x[1] = id[2], c->x[2] = id[3];
+    guest_call(c, guest_sym("_ZN14CWorldStateMP121SetDesiredAreaAssetIdE9CObjectId"));
+    c->x[0] = mgr;
+    guest_call(c, guest_sym("_ZN13CStateManager9GameStateEv"));
+    c->x[1] = (uint64_t)(uintptr_t)st;
+    guest_call(c, guest_sym("_ZN10CGameState27ContinueWithNewInitialStateERS_RKNS_13SInitialStateE"));
+    uint64_t logic = LD64(mgr + 0x4e0150);
+    if (GUEST_PTR_OK(logic)) ST8(logic + 0xc10, LD8(logic + 0xc10) | 2);
+    c->x[0] = mgr;
+    guest_call(c, guest_sym("_ZN13CStateManager17GameInstanceStateEv"));
+    c->x[1] = 7;
+    guest_call(c, guest_sym("_ZN18CGameInstanceState8QuitGameEN18NGameInstanceState11EQuitReasonE"));
+    *c = *saved;
+    free(saved);
+}
+
 // From CStateManager::BeginFrame (rt_debug_autosave): the teleport runs between frames, not inside the player's update
 static void debug_teleport(Cpu *c) {
+    debug_warp(c);
     debug_load_areas(c);
     enum { MAXTP = 32 };
     static struct { long at; float to[3], rot[9]; int nrot; } tp[MAXTP];
