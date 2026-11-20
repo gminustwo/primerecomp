@@ -819,7 +819,8 @@ static uint64_t g_pad_obj;
 RT_ON_RESET(input_reboot_reset) { g_pad_obj = 0; }  // (reboot: the controller object was guest memory)
 void input_frame(uint64_t frame) {
     wiimote_start();  // (once: the Wii Remote's reader thread, runtime/hle/wiimote.c)
-    // (once: the Steam Deck's own gyro, for Steam Input's virtual pad - not in scripted runs, as SDL's sensor events)
+    // (once: the real controller's gyro read directly, for Steam Input's virtual pad - not in scripted runs, as SDL's
+    // sensor events)
     motion_init(!scripted_run() || getenv("LARECOMP_REAL_GYRO"));
     if (g_pad_obj && getenv("LARECOMP_DUMP_PAD") && frame % 600 == 0) {
         const uint8_t *m = (const uint8_t *)(uintptr_t)(g_pad_obj - 0x98);

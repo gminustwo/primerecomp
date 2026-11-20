@@ -742,7 +742,7 @@ static void tab_display(void) {
 }
 
 extern "C" bool motion_available(void);  // runtime/hle/motion.c
-extern "C" bool motion_deck(void);
+extern "C" const char *motion_direct(void);
 
 // Gameplay: Metroid Prime's own options (runtime/hle/game.c, motion.c), live
 static void tab_gameplay(void) {
@@ -771,15 +771,18 @@ static void tab_gameplay(void) {
     }
     opt_section("Motion");
     {
-        char d[900];
+        char d[1100], src[96];
+        const char *direct = motion_direct();
+        if (direct) snprintf(src, sizeof src, "the %s's own gyro, read beside Steam Input", direct);
+        else snprintf(src, sizeof src, "%s", motion_available() ? "gyro found" : "no gyro found");
         snprintf(d, sizeof d, "Your controller's gyro drives the game's own motion aiming, as a Joy-Con or Pro "
                               "Controller does on the Switch. Pick it in the game: pause, Options -> Controls -> "
                               "Control Scheme -> Pointer (aim and turn by pointing, as on the Wii) or Hybrid (sticks, "
                               "aiming by motion). The game then asks to calibrate: lay the controller flat for a "
-                              "moment.\n\nNeeds a controller with a gyro: Steam Deck (its own, also through Steam Input), "
-                              "Steam Controller, DualSense, DualShock 4, "
-                              "Switch Pro Controller, Joy-Con (Xbox controllers have none).\n\nYour controller: %s.",
-                 motion_deck() ? "the Steam Deck's own gyro" : motion_available() ? "gyro found" : "no gyro found");
+                              "moment.\n\nNeeds a controller with a gyro: Steam Deck, Steam Controller, DualSense, "
+                              "DualShock 4, Switch Pro Controller, Joy-Con (Xbox controllers have none). Played through "
+                              "Steam Input too: Steam's stand-in controller has no gyro, so the real one's is read "
+                              "directly, and Steam keeps the buttons and sticks.\n\nYour controller: %s.", src);
         opt_toggle("Gyro aiming", &g_settings.gyro, true, d);
     }
     opt_section("Cutscenes");

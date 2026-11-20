@@ -535,3 +535,112 @@ bool plat_replace_file(const char *from, const char *to) {
 
 // End the process at once, skipping DLL teardown (from an atexit handler, after flushing). Exit status 0.
 void plat_terminate(void) { TerminateProcess(GetCurrentProcess(), 0); }
+
+// ---- raw HID input reports (platform.h; runtime/hle/motion.c)
+// Steam's overlay (gameoverlayrenderer64.dll, in every game Steam starts) patches SetupDiGetClassDevs,
+// SetupDiEnumDeviceInterfaces, HidD_GetAttributes / GetPreparsedData / GetProductString and the raw input calls, so
+// that a controller Steam Input drives can't be found through them (SDL's hid functions use them); cfgmgr32's list,
+// CreateFile, ReadFile and DeviceIoControl it leaves alone (seen 2026-11-19 in the game's own memory). So: the HID
+// interfaces from CM_Get_Device_Interface_ListW, vendor / product from the interface path, the input report's length
+// through the IOCTLs HidD_GetPreparsedData sends, read with overlapped ReadFile. Read-only: nothing is written.
+#include <cfgmgr32.h>
+
+static const GUID k_hid_guid = {0x4D1E55B2, 0xF16F, 0x11CF, {0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30}};
+#define HID_IOCTL_COLLECTION_INFO 0x000B01A8  // IOCTL_HID_GET_COLLECTION_INFORMATION: CTL_CODE(KEYBOARD, 106, BUFFERED)
+#define HID_IOCTL_COLLECTION_DESC 0x000B0193  // IOCTL_HID_GET_COLLECTION_DESCRIPTOR: CTL_CODE(KEYBOARD, 100, NEITHER)
+typedef struct { ULONG descriptor_size; BOOLEAN polled; UCHAR reserved; USHORT vid, pid, version; } HidCollectionInfo;
+typedef struct { USHORT usage, usage_page, input_len, output_len, feature_len, rest[27]; } HidCaps;  // (HIDP_CAPS)
+
+// "\?\hid#vid_054c&pid_0ce6&..." (USB), "\?\hid#{00001124-...}_vid&0002054c_pid&0ce6#..." (Bluetooth),
+// "..._dev_vid&02045e_pid&0b22_..." (Bluetooth LE): the low 16 bits of the hex after vid_ / vid&, and pid
+static bool hid_path_ids(const char *path, unsigned *vid, unsigned *pid) {
+    char low[1024];
+    size_t n = strlen(path);
+    if (n >= sizeof low) return false;
+    for (size_t i = 0; i <= n; i++) low[i] = (char)tolower((unsigned char)path[i]);
+    const char *v = strstr(low, "vid_"), *p = strstr(low, "pid_");
+    if (!v) v = strstr(low, "vid&");
+    if (!p) p = strstr(low, "pid&");
+    if (!v || !p) return false;
+    *vid = (unsigned)(strtoul(v + 4, NULL, 16) & 0xFFFF), *pid = (unsigned)(strtoul(p + 4, NULL, 16) & 0xFFFF);
+    return true;
+}
+
+bool plat_hid_each(bool (*fn)(const char *path, unsigned vid, unsigned pid, void *ud), void *ud) {
+    GUID g = k_hid_guid;
+    wchar_t *list = NULL;
+    CONFIGRET cr;
+    do {
+        ULONG len = 0;
+        if (CM_Get_Device_Interface_List_SizeW(&len, &g, NULL, CM_GET_DEVICE_INTERFACE_LIST_PRESENT) != CR_SUCCESS || !len)
+            return free(list), false;
+        free(list);
+        if (!(list = malloc(len * sizeof *list))) return false;
+        cr = CM_Get_Device_Interface_ListW(&g, NULL, list, len, CM_GET_DEVICE_INTERFACE_LIST_PRESENT);
+    } while (cr == CR_BUFFER_SMALL);  // (a device came between the two calls)
+    bool hit = false;
+    for (wchar_t *w = list; cr == CR_SUCCESS && *w && !hit; w += wcslen(w) + 1) {
+        char path[1024];
+        unsigned vid, pid;
+        if (WideCharToMultiByte(CP_UTF8, 0, w, -1, path, sizeof path, NULL, NULL) && hid_path_ids(path, &vid, &pid))
+            hit = fn(path, vid, pid, ud);
+    }
+    free(list);
+    return hit;
+}
+
+struct PlatHid { HANDLE h, ev; OVERLAPPED ov; bool pending; DWORD len; uint8_t buf[]; };
+
+PlatHid *plat_hid_open(const char *path) {
+    wchar_t w[1024];
+    if (!MultiByteToWideChar(CP_UTF8, 0, path, -1, w, 1024)) return NULL;
+    HANDLE h = CreateFileW(w, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+    if (h == INVALID_HANDLE_VALUE) return NULL;
+    // the input report's length: from the collection's parsed descriptor (HidP_GetCaps, a parser in hid.dll)
+    DWORD len = 0, got;
+    HidCollectionInfo ci;
+    if (DeviceIoControl(h, HID_IOCTL_COLLECTION_INFO, NULL, 0, &ci, sizeof ci, &got, NULL) && ci.descriptor_size) {
+        void *pp = malloc(ci.descriptor_size);
+        typedef LONG(WINAPI * GetCaps)(void *, HidCaps *);
+        static GetCaps get_caps;
+        if (!get_caps) get_caps = (GetCaps)(void *)GetProcAddress(LoadLibraryW(L"hid.dll"), "HidP_GetCaps");
+        HidCaps caps;
+        if (pp && get_caps && DeviceIoControl(h, HID_IOCTL_COLLECTION_DESC, NULL, 0, pp, ci.descriptor_size, &got, NULL) &&
+            get_caps(pp, &caps) == 0x00110000 /* HIDP_STATUS_SUCCESS */)
+            len = caps.input_len;
+        free(pp);
+    }
+    if (!len) len = 1024;  // (unknown: one report fits)
+    PlatHid *d = calloc(1, sizeof *d + len);
+    if (!d || !(d->ev = CreateEventW(NULL, TRUE, FALSE, NULL))) return free(d), CloseHandle(h), NULL;
+    d->h = h, d->len = len, d->ov.hEvent = d->ev;
+    return d;
+}
+
+int plat_hid_read(PlatHid *d, uint8_t *buf, int cap, int ms) {
+    if (!d->pending) {
+        ResetEvent(d->ev);
+        if (!ReadFile(d->h, d->buf, d->len, NULL, &d->ov) && GetLastError() != ERROR_IO_PENDING) return -1;
+        d->pending = true;  // (done at once or later: the event says)
+    }
+    DWORD r = WaitForSingleObject(d->ev, ms < 0 ? INFINITE : (DWORD)ms), got = 0;
+    if (r == WAIT_TIMEOUT) return 0;
+    d->pending = false;
+    if (r != WAIT_OBJECT_0 || !GetOverlappedResult(d->h, &d->ov, &got, FALSE)) return -1;
+    const uint8_t *p = d->buf;
+    if (got && !p[0]) p++, got--;  // (an unnumbered report: Windows puts a 0 in front, as hidapi drops)
+    int n = (int)got < cap ? (int)got : cap;
+    memcpy(buf, p, (size_t)n);
+    return n;
+}
+
+void plat_hid_close(PlatHid *d) {
+    if (!d) return;
+    if (d->pending) {
+        DWORD got;
+        CancelIo(d->h);
+        GetOverlappedResult(d->h, &d->ov, &got, TRUE);
+    }
+    CloseHandle(d->ev), CloseHandle(d->h);
+    free(d);
+}

@@ -84,6 +84,18 @@ void plat_crash_handler_install(void);  // per thread where the OS needs it (alt
 bool rt_fault_watch(uint64_t fault_addr, uint64_t host_pc);
 void rt_fault_report(const char *what, uint64_t fault_addr, uint64_t host_pc, uint64_t host_lr) __attribute__((noreturn));
 
+#ifdef _WIN32
+// ---- raw HID input reports (runtime/hle/motion.c: a controller's gyro beside Steam Input), read-only and shared,
+// without the calls Steam's overlay hooks to hide the controllers it drives from the game (SetupDi*, HidD_*, raw
+// input): listed through cfgmgr32, read with ReadFile. plat_hid_each calls fn with each present HID collection's
+// path and vendor / product until it returns true (then true).
+typedef struct PlatHid PlatHid;
+bool plat_hid_each(bool (*fn)(const char *path, unsigned vid, unsigned pid, void *ud), void *ud);
+PlatHid *plat_hid_open(const char *path);  // NULL: can't (a keyboard or mouse: the system's own)
+int plat_hid_read(PlatHid *h, uint8_t *buf, int cap, int ms);  // a report's bytes, its id first (an unnumbered
+void plat_hid_close(PlatHid *h);                               // one's 0 left out); 0 none in time; -1 gone
+#endif
+
 #ifdef __cplusplus
 }
 #endif
