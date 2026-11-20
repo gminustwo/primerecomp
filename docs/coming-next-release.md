@@ -18,10 +18,23 @@ shows Switch buttons, a save right before the Plated Beetle, run once with `LARE
 
 ### Dark blocks around the map on AMD RX 7000 cards on Linux ([#53](https://github.com/gminustwo/primerecomp/issues/53))
 
-On an RX 7600 XT with Linux's RADV driver, the map screen shows dark 8 x 8-pixel blocks along the map's edges. It
-doesn't happen on NVIDIA, on the Steam Deck or on an AMD integrated GPU under Windows. The driver's color compression
-and its pixel grouping are ruled out; two more tests are waiting on the reporter. If you see this on an RX 7000 card,
-the issue has the tests to run.
+On an RX 7600 XT with Linux's RADV driver, the map screen showed dark 8 x 8-pixel blocks along the map's edges. v0.1.2
+leaves out the map's edge-smoothing pass on RX 7000 cards with RADV, which made the map right for the reporter (its
+edges are a little rougher there). The cause in the driver is still unknown. If you still see the blocks on v0.1.2,
+please add your `primerecomp.log` to the issue.
+
+### Rainbow colors on the visor's HUD or on rocks and trees ([#26](https://github.com/gminustwo/primerecomp/issues/26), [#99](https://github.com/gminustwo/primerecomp/issues/99))
+
+After an elevator ride or a death, the visor frame could change colors every frame, or rocks and trees turn flat and
+noisy, until a restart. v0.1.2 fixes the likely cause: a shader loaded where an earlier one had been could be drawn
+with the earlier one's translation. We couldn't make it happen here, so please tell us whether it's gone, and if not,
+add your `primerecomp.log` from that session.
+
+### Missing character shadows on AMD graphics cards under Windows ([#40](https://github.com/gminustwo/primerecomp/issues/40))
+
+AMD's Windows driver takes at most 2 GB in one piece, and the buffer Samus' shadow is built in sat past it. v0.1.2
+moves that window to where the game's memory is. We have no AMD card to check it on, so please tell us whether the
+shadows are back.
 
 ### Rising lava in Magmoor Caverns doesn't stop or burn ([#54](https://github.com/gminustwo/primerecomp/issues/54))
 
