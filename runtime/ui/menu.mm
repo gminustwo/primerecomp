@@ -1474,6 +1474,10 @@ extern "C" int menu_keyboard_run(const char *initial, int max_len, char *out, in
 // The tab bar and its pages, into the current window: the in-game menu, and the start screen's Settings (in_game
 // false: nothing of the game is loaded yet - the tabs that need it are grayed out; prelaunch: the start screen's own
 // first tab, game files and fonts, drawn by launcher.mm).
+void prime_achievements_menu();
+bool prime_achievements_tick(bool visible);
+void prime_achievements_popup(ImVec2 display, ImFont *font, float scale);
+
 static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     // (id: the page; -1 = Prelaunch)
     struct Tab { const char *name; int id; bool on; };
@@ -1484,8 +1488,8 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     // Prime's; ids stay: test hooks)
     // (Cosmetics, id 7: LAS Recomp's tunic / heart colors - nothing to recolor in Metroid Prime, so not shown)
     // (Mods, id 2: emulator mods and texture mods)
-    static const char *names[] = {"Video", "Audio", "Mods", "", "", "Cheats", "Gameplay", "", "Controls", "Quit"};
-    static const int order[] = {6, 0, 1, 8, 2, 5, 9};  // Gameplay, Video, Audio, Controls, Mods, Cheats, Quit
+    static const char *names[] = {"Video", "Audio", "Mods", "", "", "Cheats", "Gameplay", "", "Controls", "Quit", "Achievements"};
+    static const int order[] = {6, 0, 1, 8, 2, 5, 10, 9};
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT)
         if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
@@ -1592,8 +1596,9 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case 6: tab_gameplay(); break;
                 case 8: tab_about(); break;
                 case 9: tab_quit(scale, in_game); break;
+                case 10: prime_achievements_menu(); break;
                 }
-                if (t.id == -1 || t.id == 8) {
+                if (t.id == -1 || t.id == 8 || t.id == 10) {
                     // pages of ImGui's own controls (Prelaunch, Controls): Down with nowhere further down to go - text
                     // after the last control, as Prelaunch's About - scrolls the page instead (a controller couldn't
                     // reach it; user 2026-11-13). The move is ImGui's a frame later: unmoved two frames on, scroll.
@@ -1687,7 +1692,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     const double tw = target_w, th = target_h;
     bool open = g_open.load();
     bool kbd = g_kbd.load() == 1;
-    if (!open && !kbd && !g_settings.show_fps) {
+    bool achievement = prime_achievements_tick(!open && !kbd);
+    if (!open && !kbd && !g_settings.show_fps && !achievement) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         return;
     }
@@ -1766,6 +1772,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         osk_draw(g_font_big, scale);  // (a text field activated with the controller)
     }
 
+    if (achievement) prime_achievements_popup(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont(), scale);
     if (kbd) keyboard_draw(io, scale);
     ImGui::Render();
     g_text_busy = open && ui_text_busy();

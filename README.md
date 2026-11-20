@@ -37,6 +37,9 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 
 ## Features
 
+- Local achievements for the frigate intro, gear, capacity upgrades and Chozo Artifacts. The F1 menu's **Achievements** tab shows
+  progress and earned badges. New milestones pop up during play; opening a save sets a baseline for its existing gear.
+  Unlocks are stored separately from the game save in `achievements-prime-v1.log`.
 - Mouse aim that turns and aims directly, as in a PC shooter; full keyboard, mouse and controller rebinding
 - Any resolution up to 8K, AMD FSR 1 upscaling, SMAA anti-aliasing, anisotropic texture filtering; on Windows also
   AMD FSR 3 (any graphics card) and AMD FSR 4 (AMD Radeon RX 6000 and newer), which build each frame from several

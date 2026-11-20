@@ -22,6 +22,7 @@
 
 #include "../hle.h"
 #include "../platform.h"
+#include "../prime_achievements.h"
 #include "../romfs_build.h"
 #include "../settings.h"
 
@@ -240,6 +241,7 @@ void playlog_frame(const float pos[3]) {
     if (!ps) return;
     memcpy(g_pos, pos, sizeof g_pos), g_pos_set = true;
     items_frame(ps);
+    if (LD8(ps) & 1) prime_achievements_inventory(ps, (const int32_t *)(uintptr_t)(ps + 0x2c), room_name(g_room));
     controls_frame();
     bool alive = (LD8(ps) & 1) != 0;
     if (g_alive && !alive) {

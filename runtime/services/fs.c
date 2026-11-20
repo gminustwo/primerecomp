@@ -1,4 +1,5 @@
 // fsp-srv: RomFS as a raw storage image, save data and SD card backed by host directories.
+#include "../prime_achievements.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -716,6 +717,9 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
         if ((uint64_t)size > b->size) size = (int64_t)b->size;
         ssize_t n = pread(f->fd, (void *)(uintptr_t)b->addr, (size_t)size, off);
         if (is_save_path(f->path)) {
+            const char *name = strrchr(f->path, '/');
+            if (n >= 16 && off == 0 && name && !strcmp(name + 1, "save.bin"))
+                prime_achievements_save_read();
             LOG("[save] read %s off %lld size %lld -> guest %llx\n", f->path, (long long)off, (long long)size, (unsigned long long)b->addr);
         }
         OUT(int64_t, 0) = n < 0 ? 0 : n;
