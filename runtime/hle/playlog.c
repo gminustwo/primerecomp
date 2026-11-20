@@ -159,9 +159,14 @@ static void state_line(const float *pos, const char *why) {
     if (!pos && g_pos_set) pos = g_pos;  // (entering a room: where she was last frame, by its door)
     if (pos) snprintf(where, sizeof where, " | at %.1f %.1f %.1f", pos[0], pos[1], pos[2]);
     extern uint64_t vk_frame_counter(void);
+    // (the difficulty: CGameStateMP1 +0x2b8, which GetDamageMultiplier / GetWeaponMultiplier read)
+    static const char *const difficulties[] = {"Casual", "Normal", "Hard"};
+    uint64_t gs = LD64(guest_sym("gpGameState"));
+    uint32_t diff = GUEST_PTR_OK(gs) ? LD32(gs + 0x2b8) : 99;
     snprintf(g_last, sizeof g_last,
-             "frame %llu | %s%s | energy %.0f/%d | missiles %d/%d | power bombs %d/%d | %s | %s | %s%s%s%s",
-             (unsigned long long)vk_frame_counter(), room, where, energy, it[2 * 24 + 1] * 100 + 99, it[2 * 4],
+             "frame %llu | %s%s | %s | energy %.0f/%d | missiles %d/%d | power bombs %d/%d | %s | %s | %s%s%s%s",
+             (unsigned long long)vk_frame_counter(), room, where, diff < 3 ? difficulties[diff] : "difficulty ?",
+             energy, it[2 * 24 + 1] * 100 + 99, it[2 * 4],
              it[2 * 4 + 1], it[2 * 7], it[2 * 7 + 1], suit < 4 ? suits[suit] : "suit ?", visor < 4 ? visors[visor] : "visor ?",
              beam < 4 ? beams[beam] : "beam ?", g_settings.inf_energy ? " | cheat: infinite energy" : "",
              g_settings.inf_missiles ? " | cheat: infinite missiles" : "",

@@ -78,7 +78,8 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 - Cheats (F1 menu, Cheats tab): infinite energy, missiles and power bombs, a hint timer that cuts the game's
   15-40 minute wait for a hint down to as little as a second, and L3 (keyboard: H) to show the next hint at once;
   Samus' upgrades set as you like - missiles, power bombs, energy tanks, suit, beams, visors, morph ball upgrades,
-  artifacts - or all unlocked at once
+  artifacts - or all unlocked at once; Hard difficulty on the new-game Difficulty screen without finishing the game
+  first
 - Shader pre-load (F1 menu, Video tab; on by default): the game's shaders built on the start screen - everything
   you've seen, and the shaders of the rest of the game that come with PrimeRecomp as a list (hashes and render
   settings only: their code is read from your own game files) - so nothing pops in or hitches the first time it's

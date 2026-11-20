@@ -1,4 +1,5 @@
-// Cheats (the menu's Cheats tab): the hint timer, infinite energy, missiles and power bombs. All from the runtime, on
+// Cheats (the menu's Cheats tab): the hint timer, infinite energy, missiles and power bombs, Hard difficulty without
+// finishing the game. All from the runtime, on
 // the game's own data: the game code players built stays as it is (no patch, no new game code id).
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -58,11 +59,60 @@ static void rt_player_health_info(Cpu *c) {
     c->x[0] = (uint64_t)(uintptr_t)g_stand_in;
 }
 
+// ---- Unlock Hard difficulty (issue #64)
+// The new-game Difficulty screen lists Hard once the game has been finished. The ending (CScriptSpecialFunctionMP1)
+// makes gallery item 60 selectable (NGalleryItemsMP1 0x3c, "Metroid Prime completed": CSystemStateMP1::
+// IsMetroidPrimeCompleted); the game copies its gallery items into the shared option store (CGameOptions, an enum
+// option each: CGameOptionsMP1::PushToBaseGameOptions, whose table at MAIN + 0x4b22fd8 has their keys at +0x1a8 and
+// the state values at +0x14c: 0 locked, 1 new, 2 seen) and saves the store; the title menus' scripts read item 60 there.
+// With the cheat on, on the title menus (CFrontEndManagerGOC::Think, called through a pointer: hle_override) item 60
+// still locked in the store becomes "seen": Hard is listed, without the game's "Hard Mode Unlocked!" message (that's
+// "new"). Checked each title frame, as loading the save puts the saved value back. The game saves the store with it
+// (on the save slot screen), as after a real finish: Hard stays once the cheat is off, and the game counts as finished
+// once - finishing it on Normal later takes the ending's already-finished branch (no item 59, the first finish's Extras
+// unlock). Checked with a 100% save that never finished: no Hard before; Hard listed with it, and after it was off.
+#define GALLERY_TABLE (MAIN_BASE + 0x4b22fd8)
+enum { GALLERY_COMPLETED = 60, GALLERY_LOCKED = 0, GALLERY_SEEN = 2 };
+static GuestFn g_frontend_think;
+
+static void rt_frontend_think(Cpu *c) {  // CFrontEndManagerGOC::Think(this, CStateManager&, float)
+    uint64_t sm = c->x[1];
+    g_frontend_think(c);
+    if (!g_settings.unlock_hard) return;
+    // (CStateManager::GameState: the CGameState; its +0xffb18 the option store, as CGameOptionsAccessorGOC reads it)
+    uint64_t p = GUEST_PTR_OK(sm) ? LD64(sm + 8) : 0, gs = GUEST_PTR_OK(p) ? LD64(p + 8) : 0;
+    uint64_t opts = GUEST_PTR_OK(gs) ? LD64(gs + 0xffb18) : 0;
+    uint64_t key = GALLERY_TABLE + 0x1a8 + 4 * GALLERY_COMPLETED, locked = GALLERY_TABLE + 0x14c + 4 * GALLERY_LOCKED,
+             seen = GALLERY_TABLE + 0x14c + 4 * GALLERY_SEEN;
+    static int said;
+    if (!GUEST_PTR_OK(opts)) return;
+    if (!LD32(key) || !LD32(locked) || LD32(locked) == LD32(seen)) {  // (the table isn't filled in as expected)
+        if (!said++) LOG("[cheat] Hard difficulty: the game's gallery table isn't as expected, nothing changed\n");
+        return;
+    }
+    static Cpu saved;  // (the game's thread only)
+    saved = *c;
+    c->x[0] = opts, c->x[1] = key;
+    guest_call(c, guest_sym("_ZNK12CGameOptions12GetEnumValueERK14CDataEnumValue"));  // (a reference to the value)
+    uint64_t v = c->x[0];
+    if (v >= GUEST_LO && v < GUEST_HI && !(v & 3) && LD32(v) == LD32(locked)) {
+        c->x[0] = opts, c->x[1] = key, c->x[2] = seen;
+        guest_call(c, guest_sym("_ZN12CGameOptions12SetEnumValueERK14CDataEnumValueS2_"));
+        if (said < 3) LOG("[cheat] Hard difficulty: unlocked, the Difficulty screen lists Hard%s\n",
+                          ++said == 3 ? " (no more of these)" : "");
+    }
+    *c = saved;
+}
+
 void cheats_hooks_init(void) {  // (each boot, from game_hooks_init)
     uint64_t a = guest_sym("_ZN10CPlayerMP110HealthInfoER13CStateManager");
     static bool hooked;
     g_health_info = dispatch_lookup(a);
     if (g_health_info && !hooked) hle_override(a, rt_player_health_info, "CPlayerMP1::HealthInfo"), hooked = true;
+    uint64_t t = guest_sym("_ZN19CFrontEndManagerGOC5ThinkER13CStateManagerf");
+    static bool thooked;
+    g_frontend_think = dispatch_lookup(t);
+    if (g_frontend_think && !thooked) hle_override(t, rt_frontend_think, "CFrontEndManagerGOC::Think"), thooked = true;
 }
 
 // ---- Hint timer

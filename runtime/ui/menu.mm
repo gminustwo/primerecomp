@@ -1092,6 +1092,13 @@ static void tab_cheats(void) {
                "found room for).");
     opt_toggle("Infinite power bombs", &g_settings.inf_power_bombs, false,
                "Power bombs stay full once you have them.");
+    opt_section("Unlocks");
+    opt_toggle("Hard difficulty", &g_settings.unlock_hard, false,  // (runtime/hle/cheats.c rt_frontend_think; #64)
+               "Hard on the new-game Difficulty screen without finishing the game first. It's the game's own Hard: "
+               "among other things, a hit takes about half again as much energy.\n\nUnlocked the way finishing the "
+               "game does it, on the game's title menus (if you're playing: Quit tab, Quit to Start Screen, then "
+               "PLAY). The game saves it, so Hard stays once this is off. Finishing on Normal afterwards doesn't "
+               "unlock the Extras item a first finish brings.");
     upgrades_section();
     cheat_files_section();
     opt_end();

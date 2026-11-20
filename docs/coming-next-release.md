@@ -5,9 +5,8 @@ or the screenshot we're asking for, please add it to the issue.
 
 ### Unlock Hard difficulty without finishing the game ([#64](https://github.com/gminustwo/primerecomp/issues/64))
 
-Finishing the game records "Metroid Prime completed" as a gallery unlock, but the new-game Difficulty screen decides
-whether to offer Hard somewhere in its own menu scripts. Setting the completed flags alone didn't make Hard appear.
-A save from a game that has been finished (so Hard shows up) would make the flag easy to find.
+Done for the next release: F1 menu, Cheats tab, **Hard difficulty**. The new-game Difficulty screen then lists Hard,
+unlocked the way finishing the game unlocks it, and the game saves it.
 
 ### Two button prompts may still show Switch buttons ([#52](https://github.com/gminustwo/primerecomp/issues/52))
 

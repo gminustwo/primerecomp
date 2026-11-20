@@ -250,6 +250,7 @@ void settings_load(void) {
         else if (!strcmp(key, "infinite_energy")) g_settings.inf_energy = atoi(val) != 0;
         else if (!strcmp(key, "infinite_missiles")) g_settings.inf_missiles = atoi(val) != 0;
         else if (!strcmp(key, "infinite_power_bombs")) g_settings.inf_power_bombs = atoi(val) != 0;
+        else if (!strcmp(key, "unlock_hard")) g_settings.unlock_hard = atoi(val) != 0;
         else if (!strcmp(key, "wiimote")) g_settings.wiimote = atoi(val) != 0;
         else if (!strcmp(key, "wiimote_mid")) sscanf(val, "%f %f", &g_settings.wiimote_mid[0], &g_settings.wiimote_mid[1]);
         else if (!strcmp(key, "wiimote_area")) g_settings.wiimote_area = (float)atof(val);
@@ -400,6 +401,7 @@ static void write_settings(void *o) {
     put(o, "hint_seconds = %d\nhint_on_l3 = %d\ninfinite_energy = %d\ninfinite_missiles = %d\ninfinite_power_bombs = %d\n",
             g_settings.hint_seconds, g_settings.hint_on_l3, g_settings.inf_energy, g_settings.inf_missiles,
             g_settings.inf_power_bombs);
+    put(o, "unlock_hard = %d\n", g_settings.unlock_hard);
     put(o, "wiimote = %d\nwiimote_mid = %.4f %.4f\nwiimote_area = %.2f\nwiimote_smooth = %.2f\n", g_settings.wiimote,
             g_settings.wiimote_mid[0], g_settings.wiimote_mid[1], g_settings.wiimote_area, g_settings.wiimote_smooth);
     if (g_settings.steam_controller_direct) put(o, "steam_controller_direct = 1\n");  // (written only when set)
