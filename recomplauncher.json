@@ -703,6 +703,17 @@
       "defaults": {"infinite_power_bombs": "0"}
     },
     {
+      "id": "unlock_hard",
+      "label": "Hard difficulty without finishing the game",
+      "group": "Cheats",
+      "advanced": true,
+      "choices": [
+        {"label": "Off", "set": {"unlock_hard": "0"}},
+        {"label": "On", "set": {"unlock_hard": "1"}}
+      ],
+      "defaults": {"unlock_hard": "0"}
+    },
+    {
       "id": "texture_mods",
       "label": "Texture mods",
       "group": "Mods",

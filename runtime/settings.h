@@ -118,6 +118,8 @@ typedef struct {
     bool inf_energy;     // Cheats: damage takes no energy, and the energy stays full
     bool inf_missiles;   // Cheats: missiles stay full
     bool inf_power_bombs;  // Cheats: power bombs stay full
+    bool unlock_hard;    // Cheats: the new-game Difficulty screen lists Hard without the game finished (issue #64;
+                         // runtime/hle/cheats.c rt_frontend_think) - the game saves the unlock, as after a finish
     bool wiimote;        // a Wii Remote (+ Nunchuk) is used when one is found (runtime/hle/wiimote.c)
     float wiimote_mid[2];  // the pointer's middle: where the remote reads the screen's middle (calibrated)
     float wiimote_area;  // how much of the IR camera's view is the screen (0.2..1; smaller: less movement)
