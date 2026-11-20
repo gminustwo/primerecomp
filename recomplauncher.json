@@ -508,6 +508,16 @@
       "defaults": {"skippable_cutscenes": "0"}
     },
     {
+      "id": "discord_status",
+      "label": "Discord status",
+      "group": "Gameplay",
+      "choices": [
+        {"label": "Off", "set": {"discord_status": "0"}},
+        {"label": "On", "set": {"discord_status": "1"}}
+      ],
+      "defaults": {"discord_status": "1"}
+    },
+    {
       "id": "hint_seconds",
       "label": "Hint timer",
       "group": "Gameplay",

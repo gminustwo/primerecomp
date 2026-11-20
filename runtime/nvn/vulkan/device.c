@@ -1035,6 +1035,7 @@ void ui_window_init(void) {
     atexit(quick_exit_handler);
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     settings_load();
+    { extern void discord_start(void); discord_start(); }  // (the Discord status: runtime/discord.c)
     // primerecomp.ini steam_controller_direct = 1: SDL drives a Steam Controller itself (its gyro too: Steam Input's
     // virtual pad has none) - for Steam Input turned off for this game (runtime/hle/motion.c)
     if (g_settings.steam_controller_direct) SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM, "1");

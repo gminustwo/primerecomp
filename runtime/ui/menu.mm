@@ -29,6 +29,7 @@ void controls_bindings_draw(float scale);  // controls_ui.mm
 #include "../paths.h"
 #include "../mods.h"
 #include "../hle/atmocheats.h"
+#include "../discord.h"
 }
 
 // ------------------------------------------------------------------ state shared with the main thread
@@ -785,6 +786,17 @@ static void tab_gameplay(void) {
     opt_toggle("Skip any cutscene", &g_settings.skippable_cutscenes, false,
                "Every cutscene can be skipped with the game's own skip prompt, the first time too. The game normally "
                "lets you skip only the ones you've seen before.");
+#ifndef __ANDROID__
+    opt_section("Discord");
+    {   // runtime/discord.c (issue #96)
+        char d[700];
+        snprintf(d, sizeof d, "Your Discord profile shows what you're playing: the world Samus is in, your item "
+                              "percentage and how long you've played, as games with Discord support do.\n\n"
+                              "Needs the Discord app running on this computer: PrimeRecomp tells it, and nothing "
+                              "else. Turning this off clears it at once.\n\n%s", discord_status_text());
+        if (opt_toggle("Discord status", &g_settings.discord, true, d)) settings_save();
+    }
+#endif
     opt_section("Suit");
     {   // runtime/nvn/vulkan/suitmods.c
         static const char *const styles[SUIT_STYLES] = {"Original", "Custom"};

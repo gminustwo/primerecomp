@@ -68,6 +68,8 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
   following your bindings - in the game's own style (F1 menu, Controls tab: Button icons; Auto follows what you used
   last)
 - Any cutscene skippable
+- Discord status: your Discord profile shows the world Samus is in, your item percentage and how long you've played,
+  when the Discord app is running on the same computer (F1 menu, Gameplay tab: Discord status; on by default)
 - Suit colors (F1 menu, Gameplay tab): Samus' suit - all four of them - in your own colors for the helmet, the
   armor and the rest; recolored from your own game files as the suit loads, seen on the pause screen's Samus and in
   cutscenes
