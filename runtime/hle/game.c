@@ -2,6 +2,7 @@
 // Awakening's answers (its level name from PlayerStatus, widescreen framing per room) went with the rest of its game
 // code (git history: runtime/hle/widescreen.c); Metroid Prime Remastered's belong here.
 #include <math.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -239,15 +240,19 @@ bool game_played_recently(uint64_t frames) {
 // above 1, in play). The manager is CGameIOWinMP1's +0x48, noted as CGameIOWinMP1::FrameBegin runs each frame: a
 // virtual call, so the runtime steps in at dispatch (hle_override) - no patch, the game code players built stays.
 static uint64_t g_gui_mgr, g_gui_seen;
+static _Atomic uint64_t g_gui_seen_ns;  // (when, by the clock: the Discord status' thread, runtime/hle/playlog.c)
 static GuestFn g_frame_begin;
 
-RT_ON_RESET(gui_reset) { g_gui_mgr = g_gui_seen = 0; }
+RT_ON_RESET(gui_reset) { g_gui_mgr = g_gui_seen = g_gui_seen_ns = 0; }
+
+uint64_t game_screens_seen_ns(void) { return g_gui_seen_ns; }  // (0: not since the game booted)
 
 static void rt_frame_begin(Cpu *c) {
     extern uint64_t vk_frame_counter(void);
     uint64_t m = LD64(c->x[0] + 0x48);
     g_gui_mgr = GUEST_PTR_OK(m) ? m : 0;
     g_gui_seen = vk_frame_counter();
+    g_gui_seen_ns = plat_now_ns();
     if (g_gui_mgr) {
         static uint32_t was[2] = {~0u, ~0u};
         uint32_t s[2] = {LD32(g_gui_mgr + 0x2e0), LD32(g_gui_mgr + 0x2e4)};

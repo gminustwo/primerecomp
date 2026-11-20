@@ -145,6 +145,8 @@ typedef struct {
     int gc_prev_scheme;  // the game's control scheme before the GameCube layout made it Classic (-1: none to restore)
     bool menu_tip_seen;  // the start screen's one-time "how to open the menu" note was shown (first PLAY ever)
     bool check_updates;  // the start screen asks GitHub for a newer release (runtime/update.c; Settings > Prelaunch)
+    bool discord;        // the Discord app on this computer shows the game on the player's profile: the world, the item
+                         // percentage, the time played (runtime/discord.c; Gameplay tab "Discord status", issue #96)
 } Settings;
 
 extern Settings g_settings;

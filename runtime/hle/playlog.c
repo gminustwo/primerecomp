@@ -93,16 +93,24 @@ static void *read_rooms(void *arg) {
     return NULL;
 }
 
-static const char *room_name(const uint8_t id[16]) {
-    if (g_rooms_state != 2) return NULL;
+static int room_index(const uint8_t id[16]) {
+    if (g_rooms_state != 2) return -1;
     for (int i = 0; i < g_nrooms; i++)
-        if (!memcmp(g_rooms[i].id, id, 16)) return g_rooms[i].name;
-    return NULL;
+        if (!memcmp(g_rooms[i].id, id, 16)) return i;
+    return -1;
+}
+
+static const char *room_name(const uint8_t id[16]) {
+    int i = room_index(id);
+    return i < 0 ? NULL : g_rooms[i].name;
 }
 
 // ------------------------------------------------------------------ the state line
 static uint8_t g_room[16];         // the room Samus is in (zero: none yet)
 static bool g_room_named;          // (its name was in the line: once the names are read, the next frame says it)
+static _Atomic int g_room_index = -1;  // ... its g_rooms entry, once named (the Discord status' thread reads it)
+static _Atomic int g_items_pct = -1;   // the item percentage, as the game works it out (-1: no save loaded yet)
+static _Atomic uint64_t g_play_ns;     // when Samus was last in play
 static char g_last[640];           // the latest state line (rt_fatal_trace: in a crash report)
 static uint64_t g_last_ns;         // when a state line was written
 static int32_t g_caps[41];         // the items' capacities in the latest frame
@@ -162,6 +170,17 @@ static void state_line(const float *pos, const char *why) {
     g_last_ns = plat_now_ns();
 }
 
+// The item percentage as the game works it out (CPlayerStateMP1::GetCurrItemPercentage): 99 pickups make 100% - the
+// power bombs' capacity past the first 3, the missiles' fifths, one each for the other upgrades, energy tanks,
+// artifacts and the Wavebuster; not the Power Beam, Scan and Combat Visors, Power Suit or Phazon Suit
+static int item_percent(const int32_t *it) {
+    static const uint8_t ones[] = {1, 2, 3, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 21, 22, 24, 28, 29, 30,
+                                   31, 32, 33, 34, 35, 36, 37, 38, 39, 40};
+    int pb = it[2 * 7 + 1], n = (pb > 3 ? pb - 3 : pb) + it[2 * 4 + 1] / 5;
+    for (size_t i = 0; i < sizeof ones; i++) n += it[2 * ones[i] + 1];
+    return n * 100 / 99;
+}
+
 // Items: picked up (a capacity up), or all of them when a save comes in (many at once)
 static void items_frame(uint64_t ps) {
     const int32_t *it = (const int32_t *)(uintptr_t)(ps + 0x2c);
@@ -181,6 +200,7 @@ static void items_frame(uint64_t ps) {
             if (k_items[i] && it[2 * i + 1] != g_caps[i])
                 LOG("[state] item: %s %d -> %d\n", k_items[i], g_caps[i], it[2 * i + 1]);
     }
+    if (!g_caps_set || changed) g_items_pct = item_percent(it);
     for (int i = 0; i < 41; i++) g_caps[i] = it[2 * i + 1];
     g_caps_set = true;
 }
@@ -217,6 +237,7 @@ void playlog_area(uint64_t lo, uint64_t hi) {
     if (!memcmp(id, g_room, 16)) {
         if (!g_room_named && room_name(g_room)) {  // (the names came in since: said once)
             g_room_named = true;
+            g_room_index = room_index(g_room);
             char room[128];
             room_text(room, sizeof room);
             LOG("[state] (that room: %s)\n", room);
@@ -230,7 +251,8 @@ void playlog_area(uint64_t lo, uint64_t hi) {
         if (pthread_create(&t, NULL, read_rooms, NULL) == 0) pthread_detach(t);
         else g_rooms_state = 2;
     }
-    g_room_named = room_name(g_room) != NULL;
+    g_room_index = room_index(g_room);
+    g_room_named = g_room_index >= 0;
     state_line(NULL, "  (entered)");
 }
 
@@ -239,6 +261,7 @@ void playlog_frame(const float pos[3]) {
     uint64_t ps = player_state();
     if (!ps) return;
     memcpy(g_pos, pos, sizeof g_pos), g_pos_set = true;
+    g_play_ns = plat_now_ns();
     items_frame(ps);
     controls_frame();
     bool alive = (LD8(ps) & 1) != 0;
@@ -256,6 +279,23 @@ RT_ON_RESET(playlog_reset) {
     g_caps_set = false, g_alive = true, g_pos_set = false, g_last_ns = 0;
     g_ctl_scheme = -2, g_ctl_swap = -2;
     memset(g_room, 0, sizeof g_room);
+    g_room_index = -1, g_items_pct = -1, g_play_ns = 0;
+}
+
+// The Discord status (runtime/discord.c, its own thread): in a game, the world Samus is in ("Phendrana Drifts") and
+// the item percentage. A game is going while the in-game screens run (runtime/hle/game.c: play, pause screens,
+// cutscenes) or Samus was in play in the last 30 s (a world's loading); false in the title menus - after the game's
+// own Quit Game too, 30 s on.
+bool playlog_presence(char *world, size_t cap, int *items_pct) {
+    extern uint64_t game_screens_seen_ns(void);
+    uint64_t now = plat_now_ns(), seen = game_screens_seen_ns(), play = g_play_ns;
+    int r = g_room_index, pct = g_items_pct;  // (both, else the world went out first and the items 5 s later)
+    if (r < 0 || pct < 0 || (!(seen && now - seen < 30000000000ull) && !(play && now - play < 30000000000ull)))
+        return false;
+    const char *n = g_rooms[r].name, *slash = strstr(n, " / ");  // ("Phendrana Drifts / 01_Ice_Plaza")
+    snprintf(world, cap, "%.*s", slash ? (int)(slash - n) : (int)strlen(n), n);
+    *items_pct = pct;
+    return true;
 }
 
 // The crash report's (runtime/dispatch.c rt_fatal_trace)
