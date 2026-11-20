@@ -25,7 +25,8 @@ CPU). Set it up once in Desktop Mode; play it from Game Mode afterwards:
    the Deck's controller directly for its motion only (read-only: Steam Input and your layout stay in charge of the
    buttons and sticks). Pick it in the game: pause, Options -> Controls -> Control Scheme -> Hybrid (sticks, aiming
    by motion) or Pointer. The PrimeRecomp menu's Gameplay tab says "the Steam Deck's own gyro" when it's in use; a
-   controller with a gyro of its own (DualSense, Switch Pro...) takes over while it's the one in use.
+   controller with a gyro of its own (DualSense, Switch Pro, Steam Controller...) takes over while it's the one in
+   use, through Steam Input too (its own gyro is read the same way).
 
 To keep those 8 GB on the SD card instead, move `~/.local/share/primerecomp` there before the setup and leave a
 link in its place (`ln -s /run/media/deck/<card name>/primerecomp ~/.local/share/primerecomp`). The folder picker is a

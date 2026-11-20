@@ -51,8 +51,10 @@ For a graphics problem, you can also press **F9** at the spot: it saves a captur
 - Steam Deck presets
 - 5.1 and 7.1 surround sound: the game's own 5.1 mix, as a Switch plays it to a surround TV, on as many speakers as
   your output has (F1 menu, Audio tab: Speakers; Auto follows your sound settings, stereo on headphones)
-- Gyro aiming with controllers that have one, and with the Steam Deck's own gyro in Game Mode (Steam Input's Xbox
-  controller has none: the Deck's is read directly)
+- Gyro aiming through the game's own motion controls (Pointer or Hybrid), with any controller that has a gyro:
+  DualSense, DualShock 4, Switch Pro Controller, Joy-Con, Steam Controller, the Steam Deck's own - also played through
+  Steam Input, whose stand-in controller has none: the real controller's gyro is read directly, and Steam keeps the
+  buttons and sticks
 - Wii Remote + Nunchuk: point at the screen to aim, with the buttons laid out like Metroid Prime: Trilogy (a Mayflash
   DolphinBar or the PC's Bluetooth; F1 menu, Controls tab: Wii Remote)
 - GameCube controllers (through an adapter, or Switch 2's GameCube controller) play as Metroid Prime did on the
@@ -128,7 +130,7 @@ graphics and 16 GB (60 fps with FSR 1), GeForce GTX 1080 Ti, RTX 4060 Ti and RTX
 
 ### Windows
 
-1. Download `PrimeRecomp-v0.1.1-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
+1. Download `PrimeRecomp-v0.1.2-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
    extract it somewhere you can write to (e.g. Documents or a games folder - not Program Files).
 2. Run `primerecomp.exe`. The start screen asks for your game files: choose the folder that holds `exefs` and
    `romfs`, then **Set up**. It copies what it needs and recompiles the game on your PC. This happens once and takes
@@ -141,7 +143,7 @@ from a short note of where that folder is (`%LOCALAPPDATA%\PrimeRecomp\copies.tx
 
 ### macOS (Apple Silicon)
 
-1. Download `PrimeRecomp-v0.1.1-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
+1. Download `PrimeRecomp-v0.1.2-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
    it and drag **PrimeRecomp** onto **Applications**.
 2. PrimeRecomp isn't notarized by Apple, so macOS won't open it as downloaded. Open Terminal once and run:
 
@@ -160,7 +162,7 @@ appears, MoltenVK compiles its shader for Metal, which can show as a brief hitch
 
 ### Linux
 
-1. Download `PrimeRecomp-v0.1.1-linux-x86_64.AppImage` from
+1. Download `PrimeRecomp-v0.1.2-linux-x86_64.AppImage` from
    [Releases](https://github.com/gminustwo/primerecomp/releases) and make it executable (`chmod +x`, or in your file
    manager: Properties -> Permissions -> executable).
 2. Run it. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs`, **Set up**,

@@ -11,8 +11,9 @@
 // measured gravity (a Mahony filter's proportional term), its heading free (the game recentres its cursor itself).
 // The gyro's bias is learnt while the controller is still (SDL passes the raw sensor).
 //
-// Sources: the controller in use, through SDL; or, when it has no gyro (Steam Input's virtual Xbox pad), the Steam
-// Deck's own controller read directly (deck_thread below).
+// Sources: the controller in use, through SDL; or, when it has no gyro (Steam Input's virtual pad), the real controller
+// behind it - DualSense, DualShock 4, Switch Pro Controller, Joy-Con, Steam Controller, the Steam Deck's own - read
+// directly (direct_thread below).
 //
 // Setting: Gameplay tab "Gyro aiming" (g_settings.gyro); off, or no gyro on the controller: the sensor reads
 // disconnected. Tests (no controller needed): LARECOMP_GYRO_TEST="frame:x:y:z:frames,..." turns the controller at x,
@@ -25,7 +26,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(__linux__) && !defined(__ANDROID__)  // (the Steam Deck)
+#if defined(__linux__) && !defined(__ANDROID__)  // (hidraw: direct_open)
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -34,6 +35,7 @@
 #endif
 
 #include "../hle.h"
+#include "../platform.h"
 #include "../settings.h"
 #include "wiimote.h"
 
@@ -115,11 +117,11 @@ static void integrate(const float *w_in, float dt) {
 
 static bool g_sdl_test;  // LARECOMP_GYRO_SDL_TEST drives sensor_sample
 
-// One sample in SDL's frame and units (rad / s, m / s^2); deck: from the Steam Deck's own controller (deck_thread),
+// One sample in SDL's frame and units (rad / s, m / s^2); direct: from a controller read directly (direct_thread),
 // taken only while the controller in use has no gyro of its own
-static void sensor_sample(int sensor, const float *d, uint64_t ts, bool deck) {
+static void sensor_sample(int sensor, const float *d, uint64_t ts, bool direct) {
     pthread_mutex_lock(&g_lock);
-    if (deck && (m.pad || m.test || g_sdl_test)) { pthread_mutex_unlock(&g_lock); return; }
+    if (direct && (m.pad || m.test || g_sdl_test)) { pthread_mutex_unlock(&g_lock); return; }
     if (sensor == SDL_SENSOR_ACCEL) {
         const float g = SDL_STANDARD_GRAVITY;
         float a[3] = {-d[0] / g, d[2] / g, -d[1] / g}, j = 0;
@@ -164,6 +166,8 @@ static void sensor_sample(int sensor, const float *d, uint64_t ts, bool deck) {
     pthread_mutex_unlock(&g_lock);
 }
 
+static void direct_want(SDL_Gamepad *pad, bool own_gyro);
+
 // From runtime/hle/input.c (main thread): the controller it opened / closed, and every event
 void motion_pad(SDL_Gamepad *pad) {
     bool gyro = pad && SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO), accel = pad && SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL);
@@ -178,6 +182,7 @@ void motion_pad(SDL_Gamepad *pad) {
     m.accel_jitter = m.g_jitter = 1;
     memset(m.bias, 0, sizeof m.bias);
     pthread_mutex_unlock(&g_lock);
+    direct_want(pad, gyro);
 }
 
 void motion_event(const SDL_Event *e) {
@@ -185,126 +190,413 @@ void motion_event(const SDL_Event *e) {
         sensor_sample(e->gsensor.sensor, e->gsensor.data, e->gsensor.sensor_timestamp, false);
 }
 
-// ---- The Steam Deck's own gyro, beside Steam Input (Linux; GitHub issue #73, after the Metroid Prime 2 port's way)
-// Started from Steam, the game sees only Steam Input's virtual Xbox pad, which has no sensors: Steam hides the Deck's
-// real controller from SDL (SDL_GAMECONTROLLER_IGNORE_DEVICES). Its reports still reach every reader of its hidraw
-// node (Valve 28de:1205; of its three interfaces the controller one, which streams 64-byte "deck state" reports, 250
-// a second - keyboard and mouse send nothing while Steam runs). Read here, read-only: nothing is sent to the controller
-// (SDL's own Steam Deck driver would set its trackpads and lizard mode, which are Steam's), so Steam Input and its
-// layout stay as they are. Buttons and sticks still come from the virtual pad; this only feeds the motion filter, with
-// SDL's driver's conversion (SDL_hidapi_steamdeck.c), while the controller in use has no gyro (sensor_sample's deck).
-// The firmware zeroes the gyro within +-1 count (0.06 deg/s) of still: held, it is never 0, so "at rest" works as on
-// other controllers. Access: Steam's udev rules (uaccess on Valve's hidraw nodes; SteamOS has them). It retries every
-// 2 s while the controller is missing (resume from sleep). LARECOMP_DECK_GYRO=0: off.
-static _Atomic bool g_deck_found;  // the Deck's controller is open and reporting
+// ---- A controller's own gyro beside Steam Input (GitHub issue #73, after the Metroid Prime 2 port's way; any controller)
+// Started from Steam with Steam Input on, the game sees only Steam's virtual pad, which has no sensors: Steam hides the
+// real controller from SDL (SDL_GAMECONTROLLER_IGNORE_DEVICES). Its reports still reach every reader of its HID device,
+// so the controller behind the virtual pad (SDL has its vendor / product from Steam) is read here, read-only: nothing
+// is sent to it - SDL's own drivers would set its report mode, lights, trackpads and lizard mode, which are Steam's - so
+// Steam Input and its layout stay in charge of the buttons and sticks. Only the accelerometer and gyro are taken,
+// converted as SDL's drivers do (SDL 3.4: SDL_hidapi_steamdeck.c, _ps5.c, _ps4.c, _switch.c, _steam_triton.c), and only
+// while the controller in use has no gyro of its own (sensor_sample's direct). Steam has the sensors stream for its own
+// gyro features; reports without them (a controller Steam set to send none) give nothing, and the log says so. On a
+// Steam Deck its own controller is read whenever the controller in use has no gyro, as an Xbox pad played through Steam.
+// Linux reads the hidraw nodes (/sys/class/hidraw: Steam's udev rules give access; SteamOS has them), Windows the HID
+// device through calls Steam's overlay doesn't hook to hide it (runtime/platform/windows.c plat_hid_*), macOS SDL's
+// hid functions; all shared, as Steam's own. Looked for every 2 s while wanted and missing (a controller switched on, resume
+// from sleep), every 10 s after the first minute. LARECOMP_DIRECT_GYRO=0 (or the older LARECOMP_DECK_GYRO=0): off.
+enum { FAM_DECK, FAM_PS5, FAM_PS4, FAM_SWITCH, FAM_TRITON, FAM_ALL = 0x1F };
+static const struct { uint16_t vid, pid; uint8_t fam; const char *name; } k_direct[] = {
+    {0x28de, 0x1205, FAM_DECK, "Steam Deck"},        // (LCD and OLED alike)
+    {0x054c, 0x0ce6, FAM_PS5, "DualSense"},
+    {0x054c, 0x0df2, FAM_PS5, "DualSense Edge"},
+    {0x054c, 0x05c4, FAM_PS4, "DualShock 4"},
+    {0x054c, 0x09cc, FAM_PS4, "DualShock 4"},
+    {0x054c, 0x0ba0, FAM_PS4, "DualShock 4"},        // (Sony's wireless adapter)
+    {0x057e, 0x2009, FAM_SWITCH, "Switch Pro Controller"},
+    {0x057e, 0x2007, FAM_SWITCH, "Joy-Con (R)"},
+    {0x057e, 0x2006, FAM_SWITCH, "Joy-Con (L)"},
+    {0x28de, 0x1302, FAM_TRITON, "Steam Controller"},  // (2026's: USB, Bluetooth, its two wireless receivers)
+    {0x28de, 0x1303, FAM_TRITON, "Steam Controller"},
+    {0x28de, 0x1304, FAM_TRITON, "Steam Controller"},
+    {0x28de, 0x1305, FAM_TRITON, "Steam Controller"},
+};
+enum { N_DIRECT = sizeof k_direct / sizeof k_direct[0] };
+static int direct_index(unsigned vid, unsigned pid) {
+    for (int i = 0; i < N_DIRECT; i++)
+        if (k_direct[i].vid == vid && k_direct[i].pid == pid) return i;
+    return -1;
+}
 
-#if defined(__linux__) && !defined(__ANDROID__)  // (the Steam Deck)
-enum { DECK_REPORT = 64, DECK_STATE = 9 };  // (ValveInReportHeader_t: version 1 (u16), type ID_CONTROLLER_DECK_STATE, length)
-static bool deck_state_report(const uint8_t *r, ssize_t n) { return n == DECK_REPORT && r[0] == 1 && r[1] == 0 && r[2] == DECK_STATE; }
+static _Atomic uint32_t g_direct_want;     // the families (1 << FAM_*) whose controller may be read now (motion_pad)
+static _Atomic uint32_t g_direct_pref;     // vendor << 16 | product of the controller behind Steam's pad, 0: unknown
+static _Atomic uint32_t g_direct_gen;      // bumped by each controller change: look again
+static _Atomic int g_direct_idx = -1;      // k_direct index of the controller being read
+static _Atomic uint64_t g_direct_live_ns;  // when its last motion sample came (SDL_GetTicksNS)
+static bool direct_live(void) {
+    uint64_t t = g_direct_live_ns;
+    return t && SDL_GetTicksNS() - t < 2000000000ull && g_direct_idx >= 0;
+}
 
-// The Deck controller's hidraw node, opened (non-blocking), or -1
-static int deck_open(char *path, size_t cap) {
+typedef struct {
+    int idx, fam;
+    uint64_t ts;         // ns: this controller's sample clock
+    uint32_t tick;       // its own timestamp / packet counter at the last sample
+    bool have_tick;
+    uint64_t last_host;  // ns: the last Switch report's arrival (they carry no timestamp)
+    float interval;      // s between Switch motion samples, measured
+    int empty;           // state reports in a row without motion
+    bool told_empty;
+} DirectDev;
+
+static int16_t rd16(const uint8_t *p) { return (int16_t)(p[0] | p[1] << 8); }
+static uint32_t rd32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
+
+// The sample clock moves on by its own timestamp's step (ns); one out of range (a gap, a reset) counts as 4 ms
+static void direct_step(DirectDev *d, uint64_t ns) { d->ts += ns >= 100000 && ns <= 100000000 ? ns : 4000000; }
+
+static void direct_feed(DirectDev *d, const float *a, const float *g) {  // (SDL's frame and units)
+    sensor_sample(SDL_SENSOR_ACCEL, a, d->ts, true);
+    sensor_sample(SDL_SENSOR_GYRO, g, d->ts, true);
+    g_direct_live_ns = SDL_GetTicksNS();
+    if (d->told_empty) LOG("[gyro] %s: its motion is coming now\n", k_direct[d->idx].name), d->told_empty = false;
+    d->empty = 0;
+}
+
+static void direct_empty(DirectDev *d) {  // a state report without motion
+    if (++d->empty == 1000 && !d->told_empty)  // (4 s or so)
+        LOG("[gyro] %s: its reports carry no motion (Steam has its gyro turned off?)\n", k_direct[d->idx].name),
+            d->told_empty = true;
+}
+
+// One report from the controller: 0 not one of its state reports, 1 a state report (its motion fed when feed is set)
+static int direct_report(DirectDev *d, const uint8_t *r, int n, bool feed) {
+    const float D2R = (float)M_PI / 180, G = SDL_STANDARD_GRAVITY;
+    if (n < 1) return 0;
+    switch (d->fam) {
+    case FAM_DECK: {
+        // ValveInReportHeader_t (version 1 as u16, type 9 = ID_CONTROLLER_DECK_STATE, length), then the deck state:
+        // its packet counter (u32) at 4, accelerometer and gyro (int16 x, y, z) at 24 and 30 - +-2 G and +-2000 deg/s
+        // over the int16 range; one report each 4 ms, 250 a second. (The firmware zeroes the gyro within +-1 count,
+        // 0.06 deg/s, of still: held, it's never 0, so "at rest" works as on other controllers.)
+        if (n != 64 || r[0] != 1 || r[1] != 0 || r[2] != 9) return 0;
+        if (!feed) return 1;
+        uint32_t pkt = rd32(r + 4), steps = pkt - d->tick;
+        d->ts += 4000000ull * (d->have_tick && steps >= 1 && steps <= 250 ? steps : 1);  // (a batch keeps its spacing)
+        d->tick = pkt, d->have_tick = true;
+        const float as = 2 * G / 32768, gs = 2000 * D2R / 32768;
+        float a[3] = {rd16(r + 24) * as, rd16(r + 28) * as, -rd16(r + 26) * as};
+        float g[3] = {rd16(r + 30) * gs, rd16(r + 34) * gs, -rd16(r + 32) * gs};
+        direct_feed(d, a, g);
+        return 1;
+    }
+    case FAM_PS5: {
+        // USB: report 1, the state from byte 1; Bluetooth: report 0x31, from byte 2 (its report 1 is the short one
+        // without motion - Steam has it send the long one). Gyro (int16 x, y, z) at 15, accelerometer at 21, a 32-bit
+        // timestamp in 1/3 us at 27; 16 counts per deg/s, 8192 per G (SDL's figures without the factory calibration,
+        // which takes a request to the controller); its axes are SDL's
+        const uint8_t *p = r[0] == 0x01 ? r + 1 : r[0] == 0x31 && n > 2 ? r + 2 : NULL;
+        if (!p) return 0;
+        if (!feed) return 1;
+        if (n < (p - r) + 31) return direct_empty(d), 1;
+        uint32_t tick = rd32(p + 27);
+        if (d->have_tick && tick == d->tick) return 1;  // (no new sample)
+        if (d->have_tick) direct_step(d, (uint64_t)(tick - d->tick) * 1000 / 3);
+        d->tick = tick, d->have_tick = true;
+        const float gs = D2R / 16, as = G / 8192;
+        float g[3] = {rd16(p + 15) * gs, rd16(p + 17) * gs, rd16(p + 19) * gs};
+        float a[3] = {rd16(p + 21) * as, rd16(p + 23) * as, rd16(p + 25) * as};
+        if (a[0] == 0 && a[1] == 0 && a[2] == 0) return direct_empty(d), 1;
+        direct_feed(d, a, g);
+        return 1;
+    }
+    case FAM_PS4: {
+        // USB: report 1, the state from byte 1; Bluetooth: reports 0x11-0x19 with byte 1's top bit (HID data in it),
+        // from byte 3. A 16-bit timestamp in 16/3 us at 9, gyro (int16 x, y, z) at 12, accelerometer at 18; 16
+        // counts per deg/s, 8192 per G; SDL's axes. (The wireless adapter reports zeros with no controller.)
+        const uint8_t *p = r[0] == 0x01 ? r + 1 : r[0] >= 0x11 && r[0] <= 0x19 && n >= 78 && (r[1] & 0x80) ? r + 3 : NULL;
+        if (!p) return 0;
+        if (!feed) return 1;
+        if (n < (p - r) + 24) return direct_empty(d), 1;
+        uint32_t tick = (uint32_t)(p[9] | p[10] << 8);
+        if (d->have_tick && tick == d->tick) return 1;
+        if (d->have_tick) direct_step(d, (uint64_t)(uint16_t)(tick - d->tick) * 16000 / 3);
+        d->tick = tick, d->have_tick = true;
+        const float gs = D2R / 16, as = G / 8192;
+        float g[3] = {rd16(p + 12) * gs, rd16(p + 14) * gs, rd16(p + 16) * gs};
+        float a[3] = {rd16(p + 18) * as, rd16(p + 20) * as, rd16(p + 22) * as};
+        if (a[0] == 0 && a[1] == 0 && a[2] == 0) return direct_empty(d), 1;
+        direct_feed(d, a, g);
+        return 1;
+    }
+    case FAM_SWITCH: {
+        // Report 0x30, the full mode Steam sets for its gyro features (0x3F is the simple one, without motion): 12
+        // bytes of state from byte 1, then three motion samples, newest first, 12 bytes each - accelerometer then
+        // gyro, int16 x, y, z in the controller's own axes (x forward, y left, z up): 4096 counts per G, 14.2842 per
+        // deg/s (SDL's figures without the factory calibration). No timestamp: the samples are spaced by the reports'
+        // measured rate (as SDL). A right Joy-Con's x and y point the other way.
+        if (r[0] == 0x3F) {
+            if (feed) direct_empty(d);
+            return 1;
+        }
+        if (r[0] != 0x30) return 0;
+        if (!feed) return 1;
+        if (n < 49) return direct_empty(d), 1;
+        uint64_t now = SDL_GetTicksNS();
+        if (d->interval <= 0) d->interval = 0.005f;
+        if (d->last_host) {
+            float rep = (float)((now - d->last_host) * 1e-9);
+            if (rep > 0.001f && rep < 0.05f) d->interval += (rep / 3 - d->interval) * 0.02f;
+        }
+        d->last_host = now;
+        const float as = G / 4096, gs = D2R / 14.2842f, flip = k_direct[d->idx].pid == 0x2007 ? -1.0f : 1.0f;
+        bool any = false;
+        for (int k = 2; k >= 0; k--) {  // (oldest first)
+            const uint8_t *s = r + 13 + 12 * k;
+            float a[3] = {-rd16(s + 2) * as * flip, rd16(s + 4) * as * flip, -rd16(s + 0) * as};
+            float g[3] = {-rd16(s + 8) * gs * flip, rd16(s + 10) * gs * flip, -rd16(s + 6) * gs};
+            if (a[0] == 0 && a[1] == 0 && a[2] == 0) continue;
+            d->ts += (uint64_t)(d->interval * 1e9f);
+            direct_feed(d, a, g);
+            any = true;
+        }
+        if (!any) direct_empty(d);
+        return 1;
+    }
+    case FAM_TRITON: {
+        // Reports 0x42 (USB, or through a receiver), 0x45 (Bluetooth), 0x47 (with the trackpads' timestamp): the state
+        // from byte 1; accelerometer (int16 x, y, z) at 34, gyro at 40 - +-2 G and +-2000 deg/s over the int16 range;
+        // the motion's timestamp in us (32-bit at 30), or for 0x47 in 32 us (16-bit at 32). A sample whose timestamp
+        // hasn't moved is an old one (the sensors off: as SDL, nothing).
+        if (r[0] != 0x42 && r[0] != 0x45 && r[0] != 0x47) return 0;
+        if (!feed) return 1;
+        if (n < 46) return direct_empty(d), 1;
+        uint32_t tick = r[0] == 0x47 ? (uint32_t)(r[32] | r[33] << 8) : rd32(r + 30);
+        if (d->have_tick && tick == d->tick) return direct_empty(d), 1;
+        if (d->have_tick)
+            direct_step(d, r[0] == 0x47 ? (uint64_t)(uint16_t)(tick - d->tick) * 32000 : (uint64_t)(tick - d->tick) * 1000);
+        d->tick = tick, d->have_tick = true;
+        const float as = 2 * G / 32768, gs = 2000 * D2R / 32768;
+        float a[3] = {rd16(r + 34) * as, rd16(r + 38) * as, -rd16(r + 36) * as};
+        float g[3] = {rd16(r + 40) * gs, rd16(r + 44) * gs, -rd16(r + 42) * gs};
+        if (a[0] == 0 && a[1] == 0 && a[2] == 0) return direct_empty(d), 1;
+        direct_feed(d, a, g);
+        return 1;
+    }
+    }
+    return 0;
+}
+
+// The controller's HID device: Linux hidraw, elsewhere SDL's hid functions. direct_open: the first wanted one that
+// sends one of its state reports within 200 ms (of a controller's several interfaces, or a receiver's several slots,
+// the one in use), the preferred one first.
+#if defined(__linux__) && !defined(__ANDROID__)
+typedef struct { int fd; } RawDev;
+static bool direct_open(uint32_t want, uint32_t pref, RawDev *out, DirectDev *dev) {
     DIR *dir = opendir("/sys/class/hidraw");
-    if (!dir) return -1;
-    int fd = -1;
-    for (struct dirent *de; fd < 0 && (de = readdir(dir));) {
-        if (strncmp(de->d_name, "hidraw", 6)) continue;
-        char p[300], line[256];
-        snprintf(p, sizeof p, "/sys/class/hidraw/%s/device/uevent", de->d_name);
-        FILE *f = fopen(p, "r");
-        if (!f) continue;
-        unsigned bus = 0, vid = 0, pid = 0;
-        while (fgets(line, sizeof line, f))
-            if (!strncmp(line, "HID_ID=", 7)) sscanf(line + 7, "%x:%x:%x", &bus, &vid, &pid);
-        fclose(f);
-        if (vid != 0x28de || pid != 0x1205) continue;  // (USB_VENDOR_VALVE, USB_PRODUCT_STEAM_DECK: LCD and OLED alike)
-        snprintf(path, cap, "/dev/%s", de->d_name);
-        int c = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-        if (c < 0) {
-            static bool told;  // (once: it's looked for again every 2 s)
-            if (!told) LOG("[gyro] Steam Deck controller %s: can't read it (%s)\n", path, strerror(errno)), told = true;
-            continue;
+    if (!dir) return false;
+    bool found = false;
+    for (int pass = 0; pass < 2 && !found; pass++) {  // (the preferred one, then the rest)
+        rewinddir(dir);
+        for (struct dirent *de; !found && (de = readdir(dir));) {
+            if (strncmp(de->d_name, "hidraw", 6)) continue;
+            char p[300], line[256], path[64];
+            snprintf(p, sizeof p, "/sys/class/hidraw/%s/device/uevent", de->d_name);
+            FILE *f = fopen(p, "r");
+            if (!f) continue;
+            unsigned bus = 0, vid = 0, pid = 0;
+            while (fgets(line, sizeof line, f))
+                if (!strncmp(line, "HID_ID=", 7)) sscanf(line + 7, "%x:%x:%x", &bus, &vid, &pid);
+            fclose(f);
+            int idx = direct_index(vid, pid);
+            if (idx < 0 || !(want & 1u << k_direct[idx].fam) || (pass == 0) != (pref == (vid << 16 | pid))) continue;
+            snprintf(path, sizeof path, "/dev/%s", de->d_name);
+            int c = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+            if (c < 0) {
+                static bool told;  // (once: it's looked for again every few seconds)
+                if (!told) LOG("[gyro] %s %s: can't read it (%s)\n", k_direct[idx].name, path, strerror(errno)), told = true;
+                continue;
+            }
+            DirectDev t = {.idx = idx, .fam = k_direct[idx].fam};
+            uint8_t r[128];
+            for (int i = 0; i < 10 && !found; i++) {  // (up to 200 ms)
+                struct pollfd pf = {c, POLLIN, 0};
+                if (poll(&pf, 1, 20) > 0) {
+                    ssize_t n;
+                    while (!found && (n = read(c, r, sizeof r)) > 0) found = direct_report(&t, r, (int)n, false);
+                }
+            }
+            if (found) {
+                out->fd = c, *dev = t;
+                LOG("[gyro] %s %s: its motion is read directly, for when the controller in use has no gyro\n",
+                    k_direct[idx].name, path);
+            } else close(c);
         }
-        uint8_t r[DECK_REPORT];
-        for (int i = 0; i < 10 && fd < 0; i++) {  // (up to 200 ms: the controller interface reports every 4)
-            struct pollfd pf = {c, POLLIN, 0};
-            if (poll(&pf, 1, 20) > 0 && deck_state_report(r, read(c, r, sizeof r))) fd = c;
-        }
-        if (fd < 0) close(c);
     }
     closedir(dir);
-    return fd;
+    return found;
 }
-
-// One report: accelerometer and gyro (int16 at 24 and 30: x, y, z) into SDL's frame, as SDL_hidapi_steamdeck.c -
-// gyro +-2000 deg/s, accelerometer +-2 G over the int16 range. Timestamps from the packet counter (4 ms a report), so
-// reports read in a batch keep their spacing.
-static void deck_sample(const uint8_t *r, uint64_t *ts, uint32_t *last_pkt) {
-    int16_t v[6];
-    uint32_t pkt;
-    memcpy(&pkt, r + 4, 4);
-    memcpy(v, r + 24, sizeof v);
-    uint32_t steps = pkt - *last_pkt;
-    *ts += 4000000ull * (*last_pkt && steps >= 1 && steps <= 250 ? steps : 1);
-    *last_pkt = pkt;
-    const float gs = 2000.0f * (float)M_PI / 180 / 32768, as = 2.0f * SDL_STANDARD_GRAVITY / 32768;
-    float a[3] = {v[0] * as, v[2] * as, -v[1] * as}, g[3] = {v[3] * gs, v[5] * gs, -v[4] * gs};
-    sensor_sample(SDL_SENSOR_ACCEL, a, *ts, true);
-    sensor_sample(SDL_SENSOR_GYRO, g, *ts, true);
+// A report (bytes), 0 none within the time, -1 the device is gone
+static int direct_read(RawDev *d, uint8_t *buf, int cap, int ms) {
+    struct pollfd pf = {d->fd, POLLIN, 0};
+    int pr = poll(&pf, 1, ms);
+    if (pr < 0) return errno == EINTR ? 0 : -1;
+    if (pr == 0) return 0;
+    if (pf.revents & (POLLERR | POLLHUP | POLLNVAL)) return -1;
+    ssize_t n = read(d->fd, buf, (size_t)cap);
+    if (n < 0) return errno == EAGAIN || errno == EINTR ? 0 : -1;
+    return (int)n;
 }
+static void direct_close(RawDev *d) { close(d->fd), d->fd = -1; }
+#elif defined(_WIN32)
+// (not SDL's hid functions: in a game Steam starts, its overlay hides the controllers Steam Input drives from the
+// calls they make - runtime/platform/windows.c plat_hid_*)
+typedef struct { PlatHid *h; } RawDev;
+typedef struct { uint32_t want, pref; int pass; RawDev *out; DirectDev *dev; } DirectFind;
+static bool direct_try(const char *path, unsigned vid, unsigned pid, void *ud) {
+    DirectFind *f = ud;
+    int idx = direct_index(vid, pid);
+    if (idx < 0 || !(f->want & 1u << k_direct[idx].fam) || (f->pass == 0) != (f->pref == (vid << 16 | pid))) return false;
+    PlatHid *h = plat_hid_open(path);
+    if (!h) return false;  // (a keyboard or mouse interface: the system's own)
+    DirectDev t = {.idx = idx, .fam = k_direct[idx].fam};
+    uint8_t r[128];
+    bool found = false;
+    for (uint64_t until = SDL_GetTicks() + 200; !found && SDL_GetTicks() < until;) {
+        int n = plat_hid_read(h, r, sizeof r, 20);
+        if (n < 0) break;
+        if (n > 0) found = direct_report(&t, r, n, false);
+    }
+    if (!found) return plat_hid_close(h), false;
+    f->out->h = h, *f->dev = t;
+    LOG("[gyro] %s (%04x:%04x): its motion is read directly, for when the controller in use has no gyro\n",
+        k_direct[idx].name, vid, pid);
+    return true;
+}
+static bool direct_open(uint32_t want, uint32_t pref, RawDev *out, DirectDev *dev) {
+    DirectFind f = {want, pref, 0, out, dev};
+    for (f.pass = 0; f.pass < 2; f.pass++)  // (the preferred one, then the rest)
+        if (plat_hid_each(direct_try, &f)) return true;
+    return false;
+}
+static int direct_read(RawDev *d, uint8_t *buf, int cap, int ms) { return plat_hid_read(d->h, buf, cap, ms); }
+static void direct_close(RawDev *d) { plat_hid_close(d->h), d->h = NULL; }
+#else
+typedef struct { SDL_hid_device *h; } RawDev;
+static bool direct_open(uint32_t want, uint32_t pref, RawDev *out, DirectDev *dev) {
+    SDL_hid_device_info *list = SDL_hid_enumerate(0, 0);
+    bool found = false;
+    for (int pass = 0; pass < 2 && !found; pass++)
+        for (SDL_hid_device_info *i = list; i && !found; i = i->next) {
+            int idx = direct_index(i->vendor_id, i->product_id);
+            if (idx < 0 || !(want & 1u << k_direct[idx].fam) ||
+                (pass == 0) != (pref == ((uint32_t)i->vendor_id << 16 | i->product_id)))
+                continue;
+            SDL_hid_device *h = SDL_hid_open_path(i->path);
+            if (!h) continue;  // (a keyboard or mouse interface: the system's own)
+            DirectDev t = {.idx = idx, .fam = k_direct[idx].fam};
+            uint8_t r[128];
+            uint64_t until = SDL_GetTicks() + 200;
+            while (!found && SDL_GetTicks() < until) {
+                int n = SDL_hid_read_timeout(h, r, sizeof r, 20);
+                if (n < 0) break;
+                if (n > 0) found = direct_report(&t, r, n, false);
+            }
+            if (found) {
+                out->h = h, *dev = t;
+                LOG("[gyro] %s (%04x:%04x, interface %d): its motion is read directly, for when the controller in use "
+                    "has no gyro\n", k_direct[idx].name, i->vendor_id, i->product_id, i->interface_number);
+            } else SDL_hid_close(h);
+        }
+    SDL_hid_free_enumeration(list);
+    return found;
+}
+static int direct_read(RawDev *d, uint8_t *buf, int cap, int ms) { return SDL_hid_read_timeout(d->h, buf, (size_t)cap, ms); }
+static void direct_close(RawDev *d) { SDL_hid_close(d->h), d->h = NULL; }
+#endif
 
-static void *deck_thread(void *arg) {
+static void *direct_thread(void *arg) {
     (void)arg;
-    char path[64];
-    uint64_t ts = 1000000000ull;
-    bool told_missing = false;
+    RawDev raw;
+    DirectDev dev = {.idx = -1};
+    bool open_ = false, told_missing = false;
+    uint32_t gen = ~0u;
+    uint64_t next_look = 0, wanted_since = 0;
     for (;;) {
-        int fd = deck_open(path, sizeof path);
-        if (fd < 0) {
-            if (!told_missing) LOG("[gyro] Steam Deck controller not found (looking again every 2 s)\n");
-            told_missing = true;
-            sleep(2);
+        uint32_t want = g_direct_want, g = g_direct_gen, pref = g_direct_pref;
+        // another controller in use: the one read is let go if it isn't wanted any more, or (once per change) if
+        // another one is preferred - it may come back: a Steam Controller's receiver can stand for the controller
+        uint32_t id = open_ ? (uint32_t)k_direct[dev.idx].vid << 16 | k_direct[dev.idx].pid : 0;
+        if (open_ && (!(want & 1u << dev.fam) || (g != gen && pref && pref != id))) {
+            direct_close(&raw), open_ = false, g_direct_idx = -1;
+            LOG("[gyro] %s: no longer read (the controller in use changed)\n", k_direct[dev.idx].name);
+        }
+        if (g != gen) gen = g, next_look = 0, wanted_since = SDL_GetTicks(), told_missing = false;
+        if (!open_) {
+            uint64_t now = SDL_GetTicks();
+            if (!want || now < next_look) { SDL_Delay(250); continue; }
+            next_look = now + (now - wanted_since < 60000 ? 2000 : 10000);
+            if (direct_open(want, pref, &raw, &dev)) {
+                open_ = true, told_missing = false, g_direct_idx = dev.idx;
+                dev.ts = SDL_GetTicksNS();
+            } else if (!told_missing) {
+                LOG("[gyro] no controller found to read the gyro of directly (looking again every few seconds)\n");
+                told_missing = true;
+            }
             continue;
         }
-        LOG("[gyro] Steam Deck controller %s: its gyro is read directly, for when the controller in use has none\n", path);
-        g_deck_found = true;
-        told_missing = false;
-        uint32_t last_pkt = 0;
-        int err = 0;
-        while (!err) {
-            struct pollfd pf = {fd, POLLIN, 0};
-            int pr = poll(&pf, 1, 1000);
-            if (pr < 0) { if (errno != EINTR) err = errno; continue; }
-            if (pr == 0) continue;  // (asleep: no reports)
-            if (pf.revents & (POLLERR | POLLHUP | POLLNVAL)) { err = ENODEV; break; }
-            uint8_t r[DECK_REPORT];
-            ssize_t n;
-            while ((n = read(fd, r, sizeof r)) > 0)
-                if (deck_state_report(r, n)) deck_sample(r, &ts, &last_pkt);
-            if (n < 0 && errno != EAGAIN && errno != EINTR) err = errno;
+        uint8_t r[128];
+        int n = direct_read(&raw, r, sizeof r, 100);
+        if (n < 0) {
+            LOG("[gyro] %s gone\n", k_direct[dev.idx].name);
+            direct_close(&raw), open_ = false, g_direct_idx = -1, next_look = SDL_GetTicks() + 1000;
+            wanted_since = SDL_GetTicks();
+            continue;
         }
-        g_deck_found = false;
-        close(fd);
-        LOG("[gyro] Steam Deck controller %s gone (%s)\n", path, strerror(err));
-        sleep(1);
+        if (n > 0) direct_report(&dev, r, n, true);
     }
     return NULL;
 }
-#endif
 
-// From runtime/hle/input.c input_frame (each frame; it starts once): deck = the Deck's own gyro may be read (not in
-// scripted test runs, as for SDL's sensor events there)
-void motion_init(bool deck) {
+// From motion_pad (main thread): which controller's own motion may stand in for the one in use, when it has none
+static void direct_want(SDL_Gamepad *pad, bool own_gyro) {
+    uint32_t want = 0, pref = 0;
+    if (pad && !own_gyro) {
+        unsigned vid = SDL_GetGamepadVendor(pad), pid = SDL_GetGamepadProduct(pad);
+        bool unknown = vid == 0x28de && pid == 0x11ff;  // (Steam's virtual pad, the controller behind it not said)
+        if (SDL_GetGamepadSteamHandle(pad) || unknown) {
+            int idx = direct_index(vid, pid);
+            want = idx >= 0 ? 1u << k_direct[idx].fam : unknown ? FAM_ALL : 0;
+            if (idx >= 0) pref = vid << 16 | pid;
+            LOG("[input] %s is Steam Input's virtual pad for %04x:%04x%s\n", SDL_GetGamepadName(pad), vid, pid,
+                idx >= 0 ? "" : unknown ? " (any controller with a gyro is looked for)" : " (no gyro there)");
+        }
+    }
+    static int test = -1;  // LARECOMP_DIRECT_GYRO=<vendor>:<product> (hex; tests): that controller is read as if it
+    static unsigned tv, tp;  // were behind the one in use, or no controller - SDL_GAMECONTROLLER_IGNORE_DEVICES hides
+    if (test < 0) {          // it from SDL as Steam does
+        const char *e = getenv("LARECOMP_DIRECT_GYRO");
+        test = e && sscanf(e, "%x:%x", &tv, &tp) == 2 && direct_index(tv, tp) >= 0;
+    }
+    if (test && !own_gyro) want |= 1u << k_direct[direct_index(tv, tp)].fam, pref = tv << 16 | tp;
+    if (!own_gyro && settings_on_steam_deck()) want |= 1u << FAM_DECK;  // (the Deck's own: no controller, or none
+    g_direct_want = want, g_direct_pref = pref;                         // with a gyro)
+    g_direct_gen++;
+}
+
+// From runtime/hle/input.c input_frame (each frame; it starts once): direct = a controller may be read directly (not
+// in scripted test runs, as for SDL's sensor events there)
+void motion_init(bool direct) {
     static bool started;
     if (started) return;
     started = true;
-#if defined(__linux__) && !defined(__ANDROID__)  // (the Steam Deck)
-    const char *e = getenv("LARECOMP_DECK_GYRO");
-    if (!deck || (e && atoi(e) == 0) || !settings_on_steam_deck()) return;
+#ifndef __ANDROID__  // (no Steam Input there: SDL has the controllers themselves)
+    const char *e = getenv("LARECOMP_DIRECT_GYRO"), *e2 = getenv("LARECOMP_DECK_GYRO");
+    if (!direct || (e && atoi(e) == 0) || (e2 && atoi(e2) == 0)) return;
+    if (!g_direct_gen) direct_want(NULL, false);  // (no controller opened yet: a Deck's own still counts)
     pthread_t t;
-    if (pthread_create(&t, NULL, deck_thread, NULL) == 0) pthread_detach(t);
+    if (pthread_create(&t, NULL, direct_thread, NULL) == 0) pthread_detach(t);
 #else
-    (void)deck;
+    (void)direct;
 #endif
 }
 
@@ -319,9 +611,13 @@ static bool wiimote_drives(void) {
     return s.connected;
 }
 
-bool motion_available(void) { return m.pad != NULL || m.test || g_sdl_test || wiimote_drives() || g_deck_found; }
-// The gyro in use is the Deck's own (for the menu's text)
-bool motion_deck(void) { return !m.pad && !m.test && !g_sdl_test && !wiimote_drives() && g_deck_found; }
+bool motion_available(void) { return m.pad != NULL || m.test || g_sdl_test || wiimote_drives() || direct_live(); }
+// The gyro in use is a controller's own, read directly (for the menu's text): its name ("DualSense", "Steam Deck"...),
+// or NULL
+const char *motion_direct(void) {
+    int i = g_direct_idx;
+    return !m.pad && !m.test && !g_sdl_test && !wiimote_drives() && direct_live() && i >= 0 ? k_direct[i].name : NULL;
+}
 
 // LARECOMP_GYRO_SDL_TEST="frame:x:y:z:frames,...": raw SDL samples instead (rad / s in SDL's frame, 4 per frame at
 // 240 Hz, the accelerometer at rest), with LARECOMP_GYRO_BIAS="x:y:z" (rad / s) added and LARECOMP_GYRO_NOISE=<rad / s>
@@ -488,7 +784,7 @@ HLE_FUNC("_ZN2nn3hid23GetSixAxisSensorHandlesEPNS0_19SixAxisSensorHandleEiRKjNS_
 HLE_FUNC("_ZN2nn3hid18StartSixAxisSensorERKNS0_19SixAxisSensorHandleE", hid_sixaxis_start) {
     static int nlog;
     if (nlog++ < 4) LOG("[gyro] StartSixAxisSensor %#x (controller gyro: %s)\n", *(uint32_t *)(uintptr_t)c->x[0],
-                        m.pad ? "yes" : motion_deck() ? "the Steam Deck's own" : "no");
+                        m.pad ? "yes" : motion_direct() ? motion_direct() : "no");
 }
 
 HLE_FUNC("_ZN2nn3hid25SetGyroscopeZeroDriftModeERKNS0_19SixAxisSensorHandleERKNS0_22GyroscopeZeroDriftModeE",

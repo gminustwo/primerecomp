@@ -157,31 +157,44 @@ bool input_mouse_take(float *dx, float *dy) {
 }
 void input_mouse_stick(int32_t rx, int32_t ry) { mouse_rx = rx, mouse_ry = ry; }
 
-// The pointer, while the mouse isn't captured (the game's menus and cutscenes, Mouse aim off): hidden once a controller
-// or the Wii Remote is what's played with, shown again as soon as the mouse moves a little or clicks - it sat in the
-// middle of the screen while playing with a controller (issue #51). Motion right after the capture changes is left
-// out (SDL may move the pointer back then).
+// The pointer, while the mouse isn't captured (the game's menus and cutscenes, Mouse aim off): hidden, and shown again
+// as soon as the mouse moves a little or clicks,
+// - once a controller or the Wii Remote is what's played with: it sat in the middle of the screen while playing with
+//   a controller (issue #51);
+// - when the game lets the mouse go (a cutscene, an elevator, the pause screen): it came up in the middle of every
+//   cutscene for mouse aim players (issue #98);
+// - after 10 s without moving.
+// Motion right after the capture changes is left out (SDL may move the pointer back then).
 static _Atomic bool pad_in_use;  // a controller / the Wii Remote used since the mouse last moved
-static float pointer_moved;      // (pixels the mouse moved since then)
-static uint64_t capture_changed_ns;
+static _Atomic bool pointer_away;  // hidden until the mouse moves: let go by the game, or still for 10 s
+static float pointer_moved;      // (pixels the mouse moved since it was hidden)
+static uint64_t capture_changed_ns, pointer_used_ns;
 
 static bool scripted_run(void);
 void input_mouse_frame(SDL_Window *w) {  // (the event loop, each pass)
     extern bool menu_input_captured(void);
     bool want = g_settings.mouse_aim && game_in_play() && !menu_input_captured() &&
                 (SDL_GetWindowFlags(w) & SDL_WINDOW_INPUT_FOCUS) && !scripted_run();
-    bool hide = pad_in_use;
+    uint64_t now = SDL_GetTicksNS();
+    if (!pointer_used_ns) pointer_used_ns = now;
+    if (!mouse_captured && !pointer_away && now - pointer_used_ns > 10000000000ull) pointer_away = true;
+    bool hide = pad_in_use || pointer_away;
     if (hide == SDL_CursorVisible()) {  // (checked each pass: the start screen shows it again)
         if (hide) SDL_HideCursor(), pointer_moved = 0;
         else SDL_ShowCursor();
         static int n;
-        if (n++ < 6) LOG("[input] pointer %s\n", hide ? "hidden: a controller is in use" : "shown");
+        if (n < 20)
+            LOG("[input] pointer %s%s\n", !hide ? "shown" : pad_in_use ? "hidden: a controller is in use"
+                                                   : now - pointer_used_ns > 10000000000ull ? "hidden: still for 10 s"
+                                                   : "hidden: the game let the mouse go",
+                ++n == 20 ? " (no more of these)" : "");
     }
     if (want == mouse_captured) return;
     SDL_SetWindowRelativeMouseMode(w, want);
     mouse_captured = want;
     mouse_dx = mouse_dy = 0;
-    capture_changed_ns = SDL_GetTicksNS();
+    capture_changed_ns = now;
+    if (!want) pointer_away = true;  // (until the mouse moves: not over a cutscene)
     LOG("[input] mouse %s\n", want ? "captured (mouse aim)" : "released");
 }
 
@@ -213,7 +226,7 @@ bool input_menu_pointer(float *x, float *y, uint32_t *moves, uint32_t *clicks) {
     uint32_t bx = menu_px_bits, by = menu_py_bits;
     memcpy(x, &bx, 4), memcpy(y, &by, 4);
     *moves = menu_moves, *clicks = menu_clicks;
-    return !mouse_captured && !pad_in_use && !game_in_play();
+    return !mouse_captured && !pad_in_use && !pointer_away && !game_in_play();  // (a hidden pointer picks nothing)
 }
 
 void input_menu_press_a(void) {  // (the game's thread)
@@ -222,10 +235,12 @@ void input_menu_press_a(void) {  // (the game's thread)
 }
 
 static void pointer_used(float dx, float dy, bool click) {
-    if (!pad_in_use) return;
-    if (!click && SDL_GetTicksNS() - capture_changed_ns < 200000000ull) return;
+    uint64_t now = SDL_GetTicksNS();
+    if (!click && now - capture_changed_ns < 200000000ull) return;
+    pointer_used_ns = now;
+    if (!pad_in_use && !pointer_away) return;
     pointer_moved += fabsf(dx) + fabsf(dy);
-    if (click || pointer_moved > 12) pad_in_use = false;
+    if (click || pointer_moved > 12) pad_in_use = pointer_away = false;
 }
 static void pad_used(void) { pad_in_use = true; }  // (also from the game's thread: the Wii Remote)
 
@@ -819,7 +834,8 @@ static uint64_t g_pad_obj;
 RT_ON_RESET(input_reboot_reset) { g_pad_obj = 0; }  // (reboot: the controller object was guest memory)
 void input_frame(uint64_t frame) {
     wiimote_start();  // (once: the Wii Remote's reader thread, runtime/hle/wiimote.c)
-    // (once: the Steam Deck's own gyro, for Steam Input's virtual pad - not in scripted runs, as SDL's sensor events)
+    // (once: the real controller's gyro read directly, for Steam Input's virtual pad - not in scripted runs, as SDL's
+    // sensor events)
     motion_init(!scripted_run() || getenv("LARECOMP_REAL_GYRO"));
     if (g_pad_obj && getenv("LARECOMP_DUMP_PAD") && frame % 600 == 0) {
         const uint8_t *m = (const uint8_t *)(uintptr_t)(g_pad_obj - 0x98);
