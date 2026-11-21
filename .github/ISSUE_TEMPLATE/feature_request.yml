@@ -1,0 +1,29 @@
+name: Feature request
+description: An idea for PrimeRecomp, such as an option, a control, a graphics or sound setting, or support for something.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! PrimeRecomp runs the game's own code, so requests about the PC side (settings, controls, displays, mods) are the easiest to add; changes to the game itself are case by case.
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: What it should do, and where you'd expect to find it (the start screen, the F1 menu and which tab, a button, a setting).
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why?
+      description: How you'd use it, or what it would fix for you. If another port or emulator (Ryujinx or Dolphin, for example) does it, say how.
+
+  - type: input
+    id: version
+    attributes:
+      label: PrimeRecomp version
+      description: In the lower right corner of the start screen, e.g. "Version 0.1.2".
+      placeholder: "0.1.2"
