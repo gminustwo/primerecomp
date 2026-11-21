@@ -15,21 +15,12 @@ Chat and news: the project's Discord server, https://discord.gg/CdwFjGCEGf (bug 
 > version 1.0.0 (no updates), dumped from your own console. Nothing from the game is in this repository or in the
 > release downloads; the game is recompiled on your PC from your files the first time you set it up.
 
-### Bug reporting; Feature requests
-
-Please report bugs and request features on the [Issues tabs](https://github.com/gminustwo/primerecomp/issues). For a bug, these help the most:
-
-- **Screenshots, a GIF or a short video** of the problem
-- **The details:** what happened, what you were doing and where in the game, and your system (Windows, macOS, Linux or
-  Steam Deck; CPU and GPU, or your Mac's model)
-- **A copy of your save file:** zip up the `save` folder (Windows: in the PrimeRecomp folder; macOS:
-  `~/Library/Application Support/io.github.primerecomp/save`; Linux and Steam Deck: `~/.local/share/primerecomp/save`)
-- `primerecomp.log`, if you can, from the folder that holds `save`. It always holds the latest run, and
-  `primerecomp.previous.log` the run before. It notes your settings and what you change, each room you enter and
-  your items there, so it says where you were when something went wrong (nothing leaves your PC unless you send it).
-
-For a graphics problem, you can also press **F9** at the spot: it saves a capture of that frame in
-`build/f9_<frame>/` in that same folder (zip it up). **F8** notes your position in `positions.txt`.
+> [!IMPORTANT]
+> **Bug reports:**
+>
+> Use the **Bug report** form on [Issues](https://github.com/gminustwo/primerecomp/issues/new/choose) and attach the
+> log of the run where the problem happened: `primerecomp.log`, or `primerecomp.previous.log` if you've started
+> PrimeRecomp again since. [Reporting a problem](#reporting-a-problem) says where it is on each platform.
 
 ![The PrimeRecomp start screen](docs/start_screen.jpg)
 
@@ -225,6 +216,36 @@ Until the game files are set up, both open the start screen as usual.
 
 **PrimeRecomp's own menu** (graphics, controls, audio, quitting): **F1**, or on a controller both sticks pressed in
 (or Back + Start; Start + Z on a GameCube controller). Fullscreen: F11 or Alt+Enter.
+
+## Reporting a problem
+
+Open an issue on the [Issues](https://github.com/gminustwo/primerecomp/issues/new/choose) page and pick **Bug report**
+(or **Feature request** for an idea): the form asks for what helps. Please check the open issues first, and report one
+problem per issue. What to have at hand:
+
+- **The version**: in the lower right corner of the start screen, e.g. "Version 0.1.2". A newer version may already
+  fix it: the start screen offers it (**UPDATE TO ...**).
+- **What happened and where**: the room (the map names it) or the menu, cutscene or start screen, and the moment,
+  whether it happens every time, and how to get there.
+- **The log (required)**: a bug report needs the log of the run where the problem happened. PrimeRecomp writes it to
+  `primerecomp.log`, and each start renames the last one to `primerecomp.previous.log` and begins a new one. So if you
+  started PrimeRecomp again after the problem, attach `primerecomp.previous.log`; after a second start the log of the
+  problem is gone, so copy it somewhere before you play again. Drag it into the issue. Both are in PrimeRecomp's
+  folder (on the start screen, **Settings > Prelaunch > Game files**: Show in Explorer / Open folder / Show in Finder):
+  - Windows: next to `primerecomp.exe`
+  - Linux and Steam Deck: `~/.local/share/primerecomp`
+  - macOS: `~/Library/Application Support/io.github.primerecomp`
+  - Android: `Android/data/io.github.primerecomp/files`
+
+  It notes your build, your PC and graphics card, your settings and what you change, each room you enter and your
+  items there, the frame rate, and how the run ended. Nothing leaves your PC unless you attach it; it shows the
+  folders PrimeRecomp uses, which can include your user name.
+- **Your setup**: the controller (and whether you start PrimeRecomp through Steam or another launcher), your display,
+  aspect ratio and frame rate, HDR and the upscaler, mods or a texture pack, your CPU and graphics card.
+- **A screenshot or a short video** for anything you can see. For a graphics problem, press **F9** at the spot: it
+  saves a capture of that frame in `build/f9_<frame>/` in PrimeRecomp's folder (zip it up). **F8** notes your position
+  in `positions.txt` and the log.
+- **Your save** can help too: zip up the `save` folder, in the same folder.
 
 ## Credits
 

@@ -1,0 +1,98 @@
+name: Bug report
+description: Something crashes, freezes, looks wrong, sounds wrong or doesn't respond.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! A few details make a problem much quicker to find and fix. One problem per issue, please.
+        **Attach the log of the run where the problem happened**: a bug report can't be sent without it. "Log" below says which file it is and where.
+
+  - type: input
+    id: version
+    attributes:
+      label: PrimeRecomp version
+      description: In the lower right corner of the start screen, e.g. "Version 0.1.2", and on the log's first line ("[version] PrimeRecomp v0.1.2").
+      placeholder: "0.1.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows (the release zip)
+        - Steam Deck (the AppImage)
+        - Linux desktop, x86_64 (the AppImage)
+        - Linux, ARM64 (the AppImage)
+        - macOS, Apple Silicon (the dmg)
+        - Android (the APK)
+        - Built from source
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you saw or heard, and what you expected instead.
+      placeholder: "The game froze for a few seconds when the door opened, and the sound stuttered."
+    validations:
+      required: true
+
+  - type: textarea
+    id: where
+    attributes:
+      label: Where, and how to make it happen
+      description: The room (the map names it) or the menu, cutscene or start screen, and the moment. Does it happen every time? The steps to get there help a lot.
+      placeholder: |
+        Phendrana Drifts, Ruined Courtyard, when the water drains. Every time.
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log (required)
+      description: |
+        **A bug report needs the log of the run where the problem happened.** PrimeRecomp writes it to `primerecomp.log`. Each start of PrimeRecomp renames the last one to `primerecomp.previous.log` and begins a new `primerecomp.log`, so:
+        - if you haven't started PrimeRecomp since the problem, attach `primerecomp.log`
+        - if you started it once since, attach `primerecomp.previous.log`
+        - after a second start, the log of the problem is gone: next time, copy it somewhere before you start PrimeRecomp again
+
+        Drag it into this box. Both are in PrimeRecomp's folder (on the start screen, **Settings > Prelaunch > Game files**: Show in Explorer / Open folder / Show in Finder opens it):
+        - **Windows**: next to `primerecomp.exe`
+        - **Steam Deck / Linux**: `~/.local/share/primerecomp`
+        - **macOS**: `~/Library/Application Support/io.github.primerecomp`
+        - **Android**: `Android/data/io.github.primerecomp/files`
+
+        It notes your build, your PC and graphics card, your settings and what you change, each room you enter and your items there, the frame rate, and how the run ended (a crash, a freeze, the GPU lost). It shows the folders PrimeRecomp uses, which can include your user name.
+      placeholder: "Drop primerecomp.log (or primerecomp.previous.log) here"
+    validations:
+      required: true
+
+  - type: textarea
+    id: setup
+    attributes:
+      label: Your setup
+      description: Your controller (and whether you start PrimeRecomp through Steam, RecompLauncher or another launcher), your display and the aspect ratio you play at, the frame rate, HDR and the upscaler if you use them, mods or a texture pack, your PC's CPU and graphics card (on a Mac, its model; on Android, the phone or handheld).
+      placeholder: "DualSense over Bluetooth, started from Steam; 3440x1440, 21:9, 120 FPS, HDR on, FSR 3; no mods; Ryzen 7 7800X3D, RX 7900 XT"
+
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshots, video or a capture
+      description: |
+        For anything you can see, a screenshot or a short clip (drag it in) shows it best. For a graphics problem, press **F9** at the spot: it saves a capture of that frame in `build/f9_<frame>/` in PrimeRecomp's folder; zip it up and drag it in. A zip of your `save` folder (in the same folder) helps too.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send it
+      options:
+        - label: I'm playing my own copy of Metroid Prime Remastered for Nintendo Switch, version 1.0.0 (no updates)
+          required: true
+        - label: The log I attached is from the run where the problem happened, not from a later start of PrimeRecomp (if I started it again since, I attached primerecomp.previous.log)
+          required: true
+        - label: I looked at the open issues, and this one isn't there yet
