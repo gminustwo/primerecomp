@@ -1,7 +1,7 @@
 // Live progress, menu, and queued unlock banner. Animation adapted from the LAS Recomp prototype.
 #include "../prime_achievements.h"
 #include "../paths.h"
-#include "prime_achievement_rules.h"
+#include "prime_boss_progress.h"
 #include "imgui.h"
 #include <algorithm>
 #include <array>
@@ -22,21 +22,45 @@ struct LiveInventory {
     uint64_t player = 0, load = 0;
     bool valid = false, in_intro = false;
     IntroProgress intro;
+    std::bitset<BossCount> boss_wins;
+    bool ending = false;
 };
 static LiveInventory inventory;
+static BossProgress bosses;
+static uint64_t boss_game, boss_player;
 static std::mutex inventory_lock;
 
 void prime_achievements_save_read(void) {
     std::lock_guard<std::mutex> lock(inventory_lock);
     inventory.valid = inventory.in_intro = false;
-    inventory.intro.reactor_seen = false;
+    inventory.intro = {};
+    inventory.ending = false;
+    bosses.rebase();
+    boss_game = boss_player = 0;
     ++inventory.load;
 }
 
-void prime_achievements_inventory(uint64_t player, const int32_t *items, const char *room) {
-    if (!room || !strncmp(room, "Ending", 6) || !strncmp(room, "Gallery", 7)) return;
+void prime_achievements_inventory(uint64_t game, uint64_t player, const int32_t *items, const char *room) {
+    const auto read = [](uint64_t address, auto &value) {
+        if (address < GUEST_LO || address > GUEST_HI - sizeof(value)) return false;
+        memcpy(&value, reinterpret_cast<const void *>(address), sizeof(value));
+        return true;
+    };
     std::lock_guard<std::mutex> lock(inventory_lock);
+    const auto sample = read_bosses(game, items, read);
+    if (boss_game != game || boss_player != player) {
+        bosses.rebase();
+        boss_game = game;
+        boss_player = player;
+    }
+    inventory.boss_wins |= bosses.observe(sample);
+    inventory.ending = sample.room == EndingRoom;
+    if (!room || !strncmp(room, "Ending", 6) || !strncmp(room, "Gallery", 7)) {
+        inventory.valid = inventory.in_intro = false;
+        return;
+    }
     inventory.intro.observe(room);
+    if (inventory.intro.reactor_clear) inventory.boss_wins.set(ParasiteQueen);
     inventory.in_intro = !strncmp(room, "Frigate Orpheon / ", 18);
     // The frigate loans equipment. Its route can earn story achievements, while inventory starts at Tallon IV.
     if (inventory.in_intro) {
@@ -59,6 +83,8 @@ static double elapsed, clock_before, next_sample;
 RT_ON_RESET(prime_achievements_reset) {
     std::lock_guard<std::mutex> lock(inventory_lock);
     inventory = {};
+    bosses.rebase();
+    boss_game = boss_player = 0;
     shown = {};
     tracker.rebase();
     pending.clear();
@@ -93,18 +119,20 @@ bool prime_achievements_tick(bool visible) {
         if (!current.valid || !shown.valid || current.player != shown.player || current.load != shown.load)
             tracker.rebase();
         shown = current;
-        if (shown.valid || shown.in_intro) open_history();
+        if (shown.valid || shown.in_intro || shown.boss_wins.any()) open_history();
         if (history_opened) {
             for (size_t i = 0; i < rule_count; ++i) {
-                bool occurred = (rules[i].metric == ReactorClear && shown.intro.reactor_clear) ||
+                bool occurred = (rules[i].metric == ReactorClear && shown.boss_wins[ParasiteQueen]) ||
                                 (rules[i].metric == FrigateEscape && shown.intro.escaped);
+                if (rules[i].metric >= FirstBoss)
+                    occurred = shown.boss_wins[rules[i].metric - FirstBoss];
                 if (occurred && tracker.award(i)) queue_unlock(i);
             }
         }
         if (shown.valid)
             for (size_t i : tracker.sample(shown.values.data())) queue_unlock(i);
     }
-    if (!visible || (!shown.valid && !shown.in_intro) || pending.empty()) return false;
+    if (!visible || (!shown.valid && !shown.in_intro && !shown.ending) || pending.empty()) return false;
     elapsed += std::min(delta, .1);
     if (elapsed >= 7) {
         pending.pop_front();
@@ -142,6 +170,11 @@ static void draw_badge(ImDrawList *draw, Rule::Badge badge, ImVec2 center, float
     case Rule::Bomb:
         draw->AddCircle(point(0,.15f), radius * .57f, ink, 20, stroke);
         line(.23f,-.43f,.51f,-.79f);
+        break;
+    case Rule::Boss:
+        draw->AddRect(point(-.72f,-.68f), point(.72f,.68f), ink, radius * .28f, 0, stroke);
+        line(-.46f,-.14f,.46f,-.14f);
+        line(-.25f,.34f,.25f,.34f);
         break;
     case Rule::Escape:
         line(-.87f, 0, .75f, 0);

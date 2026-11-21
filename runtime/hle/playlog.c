@@ -123,9 +123,13 @@ static const char *const k_items[41] = {
 
 // The player's state (CPlayerStateMP1, runtime/hle/cheats.c): +0x00 bit 0 alive, +0x08 the beam, +0x0c the energy,
 // +0x18 the visor, +0x24 the suit worn, +0x2c + 8 * item an item's amount, +0x30 + 8 * item its capacity
-static uint64_t player_state(void) {
-    uint64_t gs = LD64(guest_sym("gpGameState")), ps = GUEST_PTR_OK(gs) ? LD64(gs + 0x20) : 0;
+static uint64_t player_state_at(uint64_t gs) {
+    uint64_t ps = GUEST_PTR_OK(gs) ? LD64(gs + 0x20) : 0;
     return GUEST_PTR_OK(ps) ? ps : 0;
+}
+
+static uint64_t player_state(void) {
+    return player_state_at(LD64(guest_sym("gpGameState")));
 }
 
 static void room_text(char *out, size_t cap) {
@@ -237,11 +241,11 @@ void playlog_area(uint64_t lo, uint64_t hi) {
 
 // Each frame Samus is in play (rt_player_frame), her position (x, y, z; y up)
 void playlog_frame(const float pos[3]) {
-    uint64_t ps = player_state();
+    uint64_t gs = LD64(guest_sym("gpGameState")), ps = player_state_at(gs);
     if (!ps) return;
     memcpy(g_pos, pos, sizeof g_pos), g_pos_set = true;
     items_frame(ps);
-    if (LD8(ps) & 1) prime_achievements_inventory(ps, (const int32_t *)(uintptr_t)(ps + 0x2c), room_name(g_room));
+    if (LD8(ps) & 1) prime_achievements_inventory(gs, ps, (const int32_t *)(uintptr_t)(ps + 0x2c), room_name(g_room));
     controls_frame();
     bool alive = (LD8(ps) & 1) != 0;
     if (g_alive && !alive) {

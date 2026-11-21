@@ -7,7 +7,28 @@ namespace prime_achievements {
 using local_achievements::Rule;
 constexpr unsigned Items = 41;
 constexpr unsigned ArtifactCount = Items;
-using Progress = std::array<unsigned, ArtifactCount + 3>;
+constexpr unsigned ReactorClear = ArtifactCount + 1;
+constexpr unsigned FrigateEscape = ReactorClear + 1;
+
+enum Boss : unsigned {
+    ParasiteQueen,
+    HiveMecha,
+    PlatedBeetle,
+    IncineratorDrone,
+    Flaahgra,
+    Sheegoth,
+    Thardus,
+    ElitePirate,
+    CloakedDrone,
+    PhazonElite,
+    OmegaPirate,
+    MetaRidley,
+    PrimeShell,
+    PrimeCore,
+    BossCount,
+};
+constexpr unsigned FirstBoss = FrigateEscape + 1;
+using Progress = std::array<unsigned, FirstBoss + BossCount>;
 inline Progress read_capacities(const int32_t *items) {
     Progress result{};
     for (unsigned i = 0; i < Items; ++i) {
@@ -17,8 +38,6 @@ inline Progress read_capacities(const int32_t *items) {
     for (unsigned i = 29; i < Items; ++i) result[ArtifactCount] += result[i] > 0;
     return result;
 }
-constexpr unsigned ReactorClear = ArtifactCount + 1;
-constexpr unsigned FrigateEscape = ReactorClear + 1;
 
 // The reactor's escape passage is reached after the Parasite Queen encounter.
 // Loading directly on Tallon IV cannot establish the preceding frigate route.
@@ -35,8 +54,8 @@ struct IntroProgress {
 };
 
 constexpr Rule rules[] = {
-    {"PRIME-REACTOR-CLEAR", "Reactor Showdown", "Defeat the Parasite Queen and enter the escape route", ReactorClear, 1,
-     Rule::Beam},
+    {"PRIME-REACTOR-CLEAR", "Reactor Showdown", "Defeat the Parasite Queen", ReactorClear, 1,
+     Rule::Boss},
     {"PRIME-FRIGATE-ESCAPE", "Escape from Orpheon", "Escape the frigate and land on Tallon IV", FrigateEscape, 1,
      Rule::Escape},
     {"PRIME-EQUIP-01", "Ice Beam", "Obtain the Ice Beam", 1, 1, Rule::Beam},
@@ -95,5 +114,31 @@ constexpr Rule rules[] = {
     {"PRIME-ARTIFACT-38", "Artifact of World", "Obtain the Artifact of World", 38, 1, Rule::Artifact},
     {"PRIME-ARTIFACT-39", "Artifact of Spirit", "Obtain the Artifact of Spirit", 39, 1, Rule::Artifact},
     {"PRIME-ARTIFACT-40", "Artifact of Newborn", "Obtain the Artifact of Newborn", 40, 1, Rule::Artifact},
+    {"PRIME-BOSS-HIVE-MECHA", "Hive Mecha", "Defeat Hive Mecha",
+     FirstBoss + HiveMecha, 1, Rule::Boss},
+    {"PRIME-BOSS-PLATED-BEETLE", "Plated Beetle", "Defeat the Plated Beetle and recover the Morph Ball",
+     FirstBoss + PlatedBeetle, 1, Rule::Boss},
+    {"PRIME-BOSS-INCINERATOR-DRONE", "Incinerator Drone", "Defeat the Incinerator Drone",
+     FirstBoss + IncineratorDrone, 1, Rule::Boss},
+    {"PRIME-BOSS-FLAAHGRA", "Flaahgra", "Defeat Flaahgra",
+     FirstBoss + Flaahgra, 1, Rule::Boss},
+    {"PRIME-BOSS-SHEEGOTH", "Sheegoth", "Defeat Sheegoth and recover the Wave Beam",
+     FirstBoss + Sheegoth, 1, Rule::Boss},
+    {"PRIME-BOSS-THARDUS", "Thardus", "Defeat Thardus and recover the Spider Ball",
+     FirstBoss + Thardus, 1, Rule::Boss},
+    {"PRIME-BOSS-ELITE-PIRATE", "Elite Pirate", "Defeat the Elite Pirate in Omega Research",
+     FirstBoss + ElitePirate, 1, Rule::Boss},
+    {"PRIME-BOSS-CLOAKED-DRONE", "Cloaked Drone", "Defeat the Cloaked Drone and recover the Power Bombs",
+     FirstBoss + CloakedDrone, 1, Rule::Boss},
+    {"PRIME-BOSS-PHAZON-ELITE", "Phazon Elite", "Defeat the Phazon Elite in Elite Research",
+     FirstBoss + PhazonElite, 1, Rule::Boss},
+    {"PRIME-BOSS-OMEGA-PIRATE", "Omega Pirate", "Defeat the Omega Pirate",
+     FirstBoss + OmegaPirate, 1, Rule::Boss},
+    {"PRIME-BOSS-META-RIDLEY", "Meta Ridley", "Defeat Meta Ridley and enter the Impact Crater",
+     FirstBoss + MetaRidley, 1, Rule::Boss},
+    {"PRIME-BOSS-PRIME-SHELL", "Metroid Prime: Shell", "Defeat the shell and enter the final arena",
+     FirstBoss + PrimeShell, 1, Rule::Boss},
+    {"PRIME-BOSS-PRIME-CORE", "Metroid Prime: Core", "Defeat the final form of Metroid Prime",
+     FirstBoss + PrimeCore, 1, Rule::Boss},
 };
 }

@@ -13,7 +13,7 @@ namespace local_achievements {
 struct Rule {
     const char *id, *title, *description;
     unsigned metric, target;
-    enum Badge { Gear, Beam, Suit, Missile, Tank, Bomb, Artifact, Escape } badge;
+    enum Badge { Gear, Beam, Suit, Missile, Tank, Bomb, Artifact, Escape, Boss } badge;
 };
 
 class Tracker {
