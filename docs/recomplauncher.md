@@ -18,12 +18,14 @@ number is guessed before those features ship.
 ## Setup
 
 Choose your own **Metroid Prime Remastered v1.0.0, without updates**, extracted: a folder holding
-`exefs` and `romfs`. PrimeRecomp validates the main module's build ID and the required game files
-before building its code. It takes only that extracted folder, and no keys.
+`exefs` and `romfs`. The launcher reads the build ID of `exefs/main` when the folder is picked
+(`check.nup_build_id`) and refuses another version right away; PrimeRecomp validates the same build
+ID and the required game files again before building its code. It takes only that extracted folder,
+and no keys.
 
 The extracted files are copied/linked into PrimeRecomp's data folder. Setups and compilation can take
-several minutes; the manifest allows up to one hour. Cancelling preserves saves, and retrying can
-reuse validated staged files. An interrupted code build restarts compilation from those files.
+several minutes; the launcher sets no time limit on the step. Cancelling preserves saves, and
+retrying can reuse validated staged files. An interrupted code build restarts compilation from those files.
 
 Windows uses its installation folder for settings, saves and prepared game files. Linux uses
 `$XDG_DATA_HOME/primerecomp` (normally `~/.local/share/primerecomp`). The profile doesn't pass these
