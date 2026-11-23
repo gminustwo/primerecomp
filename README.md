@@ -135,7 +135,7 @@ graphics and 16 GB (60 fps with FSR 1), GeForce GTX 1080 Ti, RTX 4060 Ti and RTX
 
 ### Windows
 
-1. Download `PrimeRecomp-v0.1.2-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
+1. Download `PrimeRecomp-v0.1.3-windows.zip` from [Releases](https://github.com/gminustwo/primerecomp/releases) and
    extract it somewhere you can write to (e.g. Documents or a games folder - not Program Files).
 2. Run `primerecomp.exe`. The start screen asks for your game files: choose the folder that holds `exefs` and
    `romfs`, then **Set up**. It copies what it needs and recompiles the game on your PC. This happens once and takes
@@ -148,7 +148,7 @@ from a short note of where that folder is (`%LOCALAPPDATA%\PrimeRecomp\copies.tx
 
 ### macOS (Apple Silicon)
 
-1. Download `PrimeRecomp-v0.1.2-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
+1. Download `PrimeRecomp-v0.1.3-macOS.dmg` from [Releases](https://github.com/gminustwo/primerecomp/releases), open
    it and drag **PrimeRecomp** onto **Applications**.
 2. PrimeRecomp isn't notarized by Apple, so macOS won't open it as downloaded. Open Terminal once and run:
 
@@ -167,7 +167,7 @@ appears, MoltenVK compiles its shader for Metal, which can show as a brief hitch
 
 ### Linux
 
-1. Download `PrimeRecomp-v0.1.2-linux-x86_64.AppImage` from
+1. Download `PrimeRecomp-v0.1.3-linux-x86_64.AppImage` from
    [Releases](https://github.com/gminustwo/primerecomp/releases) and make it executable (`chmod +x`, or in your file
    manager: Properties -> Permissions -> executable).
 2. Run it. The start screen works as on Windows: choose the folder that holds `exefs` and `romfs`, **Set up**,
@@ -242,7 +242,7 @@ Or open an issue on the [Issues](https://github.com/gminustwo/primerecomp/issues
 (or **Feature request** for an idea): the form asks for what helps. Please check the open issues first, and report one
 problem per issue. What to have at hand:
 
-- **The version**: in the lower right corner of the start screen, e.g. "Version 0.1.2". A newer version may already
+- **The version**: in the lower right corner of the start screen, e.g. "Version 0.1.3". A newer version may already
   fix it: the start screen offers it (**UPDATE TO ...**).
 - **What happened and where**: the room (the map names it) or the menu, cutscene or start screen, and the moment,
   whether it happens every time, and how to get there.
