@@ -295,6 +295,11 @@ dmg: app
 # (RELEASE=1: the log goes to primerecomp.log next to the exe, fatal errors show a message box). Its DLLs are looked up
 # with build/deps-win/bin first (the FFmpeg DLL names are the same as MSYS2's GPL ones). vulkan-1.dll is left
 # out: every Vulkan driver installs the loader in System32. Saves and game files go next to the exe at run time.
+# The zip's exe is stripped (strip -s: no DWARF or COFF symbol table - 12 MB down to 3 MB, and no data appended after
+# its sections, which virus scanners' heuristics flag as an "overlay"); code, data, exports and relocations stay
+# byte for byte, so the game code's import library and a crash log's primerecomp+<offset> still match. The unstripped
+# exe is kept as build/symbols/primerecomp-<version>-windows.exe to read those offsets with:
+# addr2line -fpe build/symbols/primerecomp-<version>-windows.exe 0x<0x140000000 + offset>
 # Needs: Windows 10+ x64, a Vulkan 1.3 driver, an SSE4.2 CPU (checked at startup; GENARCH x86-64-v3, built as
 # x86-64-v2 on the player's PC without AVX2: runtime/gamebuild.c gamebuild_x86_level).
 DIST     := build/dist/PrimeRecomp
@@ -309,7 +314,9 @@ dist:
 	$(MAKE) B=$(WIN_B) DEPS=$(CURDIR)/build/deps-win RELEASE=1 $(WIN_B)/primerecomp.exe
 	! nm $(WIN_B)/primerecomp.exe | grep ' f_70' >/dev/null  # (no game code inside)
 	rm -rf build/dist && mkdir -p "$(DIST)/gamelib-src"
-	cp $(WIN_B)/primerecomp.exe $(WIN_B)/primerecomp.dll.a "$(DIST)/"
+	strip -s -o "$(DIST)/primerecomp.exe" $(WIN_B)/primerecomp.exe  # (no debug info or symbols: see above)
+	mkdir -p build/symbols && cp $(WIN_B)/primerecomp.exe build/symbols/primerecomp-$(VERSION)-windows.exe
+	cp $(WIN_B)/primerecomp.dll.a "$(DIST)/"
 	tools/zig_slim.sh $(strip $(filter-out -Iruntime,$(GENFLAGS)))  # (zig with its runtime built ahead of time)
 	cp -R build/helper/primegen "$(DIST)/"
 	cp -R build/zig-slim "$(DIST)/zig"
