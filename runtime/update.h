@@ -32,6 +32,10 @@ int update_state(UpdateInfo *info, float *progress, char *msg, size_t msg_size);
 void update_install_start(void);
 // Starts the new version in this one's place (returns only if it couldn't)
 void update_restart(void);
+// The JSON string after "key": (the first from `at` on), unescaped into out: where its value ends, NULL if none
+const char *json_str(const char *at, const char *key, char *out, size_t n);
+// The system's curl (Windows 10+, macOS and Linux have it): its path; false if there is none
+bool find_curl(char *out, size_t n);
 
 #ifdef __cplusplus
 }

@@ -7,8 +7,8 @@
 **PrimeRecomp** runs *Metroid Prime Remastered* (Nintendo Switch, 2023) natively on Windows, macOS (Apple Silicon) and
 Linux, including the Steam Deck. The game's code is statically recompiled.
 
-Chat and news: the project's Discord server, https://discord.gg/CdwFjGCEGf (bug reports and feature requests go on
-[Issues](https://github.com/gminustwo/primerecomp/issues), below).
+Chat and news: the project's Discord server, https://discord.gg/CdwFjGCEGf (also **DISCORD** on the start screen; bug
+reports and feature requests go on [Issues](https://github.com/gminustwo/primerecomp/issues), below).
 
 > [!NOTE]
 > **No game files are included.** You need your own copy of Metroid Prime Remastered for Nintendo Switch,
@@ -29,6 +29,9 @@ Chat and news: the project's Discord server, https://discord.gg/CdwFjGCEGf (bug 
 ## Features
 
 - Mouse aim that turns and aims directly, as in a PC shooter; full keyboard, mouse and controller rebinding
+- Keyboard only (F1 menu, Controls tab): play without a mouse - bindings of its own with keys for what the mouse did
+  (Left Shift locks on, Right Ctrl shoots and charges; Right Option on a Mac), the arrows turn and look, and they
+  ease in: a tap turns a little, a held key turns at full speed
 - Any resolution up to 8K, AMD FSR 1 upscaling, SMAA anti-aliasing, anisotropic texture filtering; on Windows also
   AMD FSR 3 (any graphics card) and AMD FSR 4 (AMD Radeon RX 6000 and newer), which build each frame from several
   rendered ones (F1 menu, Video tab: Upscaler)
@@ -55,8 +58,9 @@ Chat and news: the project's Discord server, https://discord.gg/CdwFjGCEGf (bug 
 - Rumble with a strength setting, and HD rumble: the game's own two-tone vibration, as a Switch plays it, on a
   Switch Pro Controller or a single Joy-Con, and on a DualSense's haptics over USB (F1 menu, Audio tab)
 - Stick dead zones, with a picture of where each stick rests, flick stick (push the right stick out to face that
-  way, turn it round to turn with it), Legacy sticks (the left stick turns, the right one strafes) and Swap map sticks
-  (the left stick moves the map, the right one turns it) (F1 menu, Controls tab)
+  way, turn it round to turn with it), Legacy sticks (the left stick turns, the right one strafes), Swap map sticks
+  (the left stick moves the map, the right one turns it) and Invert map turning (left and right, up and down)
+  (F1 menu, Controls tab)
 - The game's button prompts drawn for your controller - Xbox, PlayStation, Switch, GameCube, keyboard and mouse or Wii Remote,
   following your bindings - in the game's own style (F1 menu, Controls tab: Button icons; Auto follows what you used
   last)
@@ -85,6 +89,9 @@ Chat and news: the project's Discord server, https://discord.gg/CdwFjGCEGf (bug 
   PNG of any size, or DDS (BC1-BC7) for big packs. Turn on Dump textures to get the game's textures, named the way
   `mods` wants them (`dump\textures\tex_<size>_<name>.png`): edit one and put it in `mods`. Made for Remastered's own
   textures: GameCube / Wii (Dolphin) packs don't fit its models
+- Report a bug from inside PrimeRecomp (F1 menu, or Settings on the start screen: Report a bug): your answers and
+  the log go to the project's [Issues](https://github.com/gminustwo/primerecomp/issues) under your own GitHub account,
+  the log always with them
 
 ## Future work
 
@@ -219,7 +226,13 @@ Until the game files are set up, both open the start screen as usual.
 
 ## Reporting a problem
 
-Open an issue on the [Issues](https://github.com/gminustwo/primerecomp/issues/new/choose) page and pick **Bug report**
+The quickest way is from PrimeRecomp itself: **Report a bug** in the F1 menu (or in Settings on the start screen) asks
+the form's questions, fills in your setup, and sends the report to [Issues](https://github.com/gminustwo/primerecomp/issues)
+with the log of the run you pick - this run's, or the run before's after a crash. You sign in with your GitHub account
+(a code to enter at github.com/login/device), so the report is yours: GitHub tells you of replies, and you can add
+screenshots there. In the log it sends, your home folder is written as `~` (`%USERPROFILE%` on Windows).
+
+Or open an issue on the [Issues](https://github.com/gminustwo/primerecomp/issues/new/choose) page and pick **Bug report**
 (or **Feature request** for an idea): the form asks for what helps. Please check the open issues first, and report one
 problem per issue. What to have at hand:
 

@@ -87,7 +87,7 @@ static bool exe_dir(char *out, size_t n) {
     return true;
 }
 
-static bool find_curl(char *out, size_t n) {
+bool find_curl(char *out, size_t n) {  // (also runtime/report.c)
 #ifdef _WIN32
     const char *root = getenv("SystemRoot");
     snprintf(out, n, "%s\\System32\\curl.exe", root ? root : "C:\\Windows");
@@ -127,8 +127,8 @@ static bool newer(const char *remote, const char *local) {
 }
 
 // The JSON string after "key": (the first from at on), unescaped into out (UTF-8). Returns where its value ends, NULL
-// if there's none. (GitHub's release JSON: flat strings are all that's read.)
-static const char *json_str(const char *at, const char *key, char *out, size_t n) {
+// if there's none. (GitHub's release JSON: flat strings are all that's read. Also the bug reports' replies: report.c)
+const char *json_str(const char *at, const char *key, char *out, size_t n) {
     char pat[64];
     snprintf(pat, sizeof pat, "\"%s\":", key);
     const char *p = strstr(at, pat);

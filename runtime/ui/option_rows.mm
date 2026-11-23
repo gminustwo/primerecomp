@@ -212,7 +212,17 @@ bool opt_text(const char *label, char *buf, size_t cap, const char *hint, const 
     static int focus;        // frames left to give it the keyboard focus
     ImGuiID id = ImGui::GetID(label);
     if (editing != id) {
-        if (row(label, buf[0] ? buf : (hint ? hint : ""), false, desc) == 2) editing = id, focus = 2;
+        // (a long text: as much as fits beside the label, then "..." - the whole of it shows while it's edited)
+        std::string shown = buf[0] ? buf : (hint ? hint : "");
+        float maxw = ImGui::GetContentRegionAvail().x * 0.55f, fs = ImGui::GetFontSize();
+        ImFont *font = ImGui::GetFont();
+        if (font->CalcTextSizeA(fs, FLT_MAX, 0, shown.c_str()).x > maxw) {
+            const char *rest = NULL;
+            float dots = font->CalcTextSizeA(fs, FLT_MAX, 0, "...").x;
+            font->CalcTextSizeA(fs, fmaxf(maxw - dots, 0), 0, shown.c_str(), NULL, &rest);
+            shown = std::string(shown.c_str(), rest) + "...";
+        }
+        if (row(label, shown, false, desc) == 2) editing = id, focus = 2;
         return false;
     }
     ImGui::PushID(label);

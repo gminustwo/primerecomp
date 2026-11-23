@@ -64,6 +64,46 @@ static bool g_gc_on;  // g_bind_pad is the GameCube layout's
 static int16_t *std_table(void) { return g_gc_on ? g_bind_other : g_bind_pad; }
 static int16_t *gc_table(void) { return g_gc_on ? g_bind_pad : g_bind_other; }
 
+// Keyboard only (g_settings.keyboard_only): the keyboard's own table for play without a mouse. As DEF_KEY, but the
+// mouse buttons' jobs on keys: Left Shift locks on / scans (ZL, held: the left hand's little finger, with WASD; it was
+// L, a second Jump beside Space), Right Ctrl shoots (ZR, held: charge - the key beside the Left arrow, for the hand on
+// the arrows that turn and look; on a Mac's keyboard Right Option sits there). Enter still shoots too (A). Like the
+// GameCube layout's table: g_bind_key is the one in use, g_kbo_other the one waiting; bind_keyboard_only_set trades them.
+#ifdef __APPLE__
+#define KBO_SHOOT SDL_SCANCODE_RALT
+#else
+#define KBO_SHOOT SDL_SCANCODE_RCTRL
+#endif
+#define KBO_KEY { \
+    SDL_SCANCODE_RETURN, SDL_SCANCODE_SPACE, SDL_SCANCODE_X, SDL_SCANCODE_LCTRL, SDL_SCANCODE_H, 0, \
+    0, SDL_SCANCODE_F, SDL_SCANCODE_LSHIFT, KBO_SHOOT, SDL_SCANCODE_TAB, SDL_SCANCODE_ESCAPE, \
+    SDL_SCANCODE_T, SDL_SCANCODE_Q, SDL_SCANCODE_E, SDL_SCANCODE_R, \
+    SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A, SDL_SCANCODE_D, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, \
+    SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4, \
+    SDL_SCANCODE_SPACE, SDL_SCANCODE_LALT}
+static const int16_t k_def_kbo[BIND_KEY_COUNT] = KBO_KEY;
+static int16_t g_kbo_other[BIND_KEY_COUNT] = KBO_KEY, g_kbo_other_mod[BIND_KEY_COUNT][BIND_MODS];
+static bool g_kbo_on;  // g_bind_key is the keyboard-only layout's
+static const int16_t *def_keys(void) { return g_kbo_on ? k_def_kbo : k_def_key; }  // (the table in use's defaults)
+// the keyboard and mouse table and the keyboard-only one, wherever each is now (and their combos' other keys)
+static int16_t *km_keys(void) { return g_kbo_on ? g_kbo_other : g_bind_key; }
+static int16_t *kbo_keys(void) { return g_kbo_on ? g_bind_key : g_kbo_other; }
+static int16_t (*km_mods(void))[BIND_MODS] { return g_kbo_on ? g_kbo_other_mod : g_bind_key_mod; }
+static int16_t (*kbo_mods(void))[BIND_MODS] { return g_kbo_on ? g_bind_key_mod : g_kbo_other_mod; }
+
+bool bind_keyboard_only_active(void) { return g_kbo_on; }
+void bind_keyboard_only_set(bool on) {
+    if (on == g_kbo_on) return;
+    // (the bindings in play only: the menu keys - Menus: accept / back - are the same in both, and stay)
+    int16_t t[BIND_PLAY_KEY_COUNT], m[BIND_PLAY_KEY_COUNT][BIND_MODS];
+    memcpy(t, g_bind_key, sizeof t), memcpy(m, g_bind_key_mod, sizeof m);
+    memcpy(g_bind_key, g_kbo_other, sizeof t), memcpy(g_bind_key_mod, g_kbo_other_mod, sizeof m);
+    memcpy(g_kbo_other, t, sizeof t), memcpy(g_kbo_other_mod, m, sizeof m);
+    g_kbo_on = on;
+    LOG("[input] keyboard only %s\n", on ? "on: the mouse isn't captured, the keyboard-only layout's bindings"
+                                         : "off: the keyboard and mouse bindings");
+}
+
 bool bind_gamecube_active(void) { return g_gc_on; }
 void bind_gamecube_set(bool on) {
     if (on == g_gc_on) return;
@@ -310,16 +350,21 @@ static void result(int kind, int dev, int slot, int other);
 
 void bind_reset(int dev) {  // (the controller's: those of the face buttons setting)
     if (dev == BIND_DEV_PAD) for (int i = 0; i < BIND_PAD_COUNT; i++) g_bind_pad[i] = def_pad(i);
-    else memcpy(g_bind_key, k_def_key, sizeof g_bind_key), memset(g_bind_key_mod, 0, sizeof g_bind_key_mod);
-    LOG("[input] %s bindings reset to the defaults\n", dev == BIND_DEV_PAD ? "controller" : "keyboard");
+    else memcpy(g_bind_key, def_keys(), sizeof g_bind_key), memset(g_bind_key_mod, 0, sizeof g_bind_key_mod);
+    LOG("[input] %s bindings reset to the defaults\n", dev == BIND_DEV_PAD ? "controller" : g_kbo_on ? "keyboard-only" : "keyboard");
     result(5, dev, -1, -1);
+}
+
+// a keyboard table's slot as its defaults have it (no combo keys)
+static bool keys_default(const int16_t *t, int16_t (*mods)[BIND_MODS], const int16_t *def, int slot) {
+    for (int m = 0; m < BIND_MODS; m++)
+        if (mods[slot][m]) return false;
+    return t[slot] == def[slot];
 }
 
 bool bind_is_default_slot(int dev, int slot) {
     if (dev == BIND_DEV_PAD) return g_bind_pad[slot] == def_pad(slot);
-    for (int m = 0; m < BIND_MODS; m++)
-        if (g_bind_key_mod[slot][m]) return false;
-    return g_bind_key[slot] == k_def_key[slot];
+    return keys_default(g_bind_key, g_bind_key_mod, def_keys(), slot);
 }
 
 bool bind_is_default(int dev) {
@@ -461,7 +506,7 @@ static void assign_keys(int slot, const int *keys, int n) {
 void bind_reset_slot(int dev, int slot) {
     if (slot < 0 || slot >= (dev == BIND_DEV_PAD ? BIND_PAD_COUNT : BIND_KEY_COUNT) || bind_is_default_slot(dev, slot)) return;
     if (dev == BIND_DEV_PAD) { assign(dev, slot, def_pad(slot)); return; }
-    int k = k_def_key[slot];
+    int k = def_keys()[slot];
     if (k) { assign_keys(slot, &k, 1); return; }
     set_keys(slot, NULL, 0);  // (no key by default)
     LOG("[input] keyboard %s -> (none)\n", k_names[slot]);
@@ -536,13 +581,27 @@ static bool keys_fps;
 bool bind_settings_load(const char *key, const char *val) {
     if (!strcmp(key, "bind_keys")) {  // (the keyboard's lines follow: the defaults, then those)
         keys_fps = !strcmp(val, "fps");
-        if (keys_fps) memcpy(g_bind_key, k_def_key, sizeof g_bind_key), memset(g_bind_key_mod, 0, sizeof g_bind_key_mod);
+        if (keys_fps) {  // (both keyboard tables: the keyboard and mouse one, the keyboard-only one)
+            memcpy(km_keys(), k_def_key, sizeof g_bind_key), memset(km_mods(), 0, sizeof g_bind_key_mod);
+            memcpy(kbo_keys(), k_def_kbo, sizeof g_bind_key), memset(kbo_mods(), 0, sizeof g_bind_key_mod);
+            for (int i = BIND_PLAY_KEY_COUNT; i < BIND_KEY_COUNT; i++) g_bind_key[i] = k_def_key[i];  // (menu keys)
+        }
         return true;
     }
-    int mod = !strncmp(key, "bind_keymod1_", 13) ? 1 : !strncmp(key, "bind_keymod2_", 13) ? 2 : 0;
+    // (the menu keys are the same in both tables: they always live in g_bind_key - bind_keyboard_only_set leaves them)
+    bool kbo = !strncmp(key, "bind_kbo", 8);
+    int mod = !strncmp(key, kbo ? "bind_kbomod1_" : "bind_keymod1_", 13) ? 1
+            : !strncmp(key, kbo ? "bind_kbomod2_" : "bind_keymod2_", 13) ? 2 : 0;
     if (mod) {  // a combo's other keys (BIND_MODS)
         int i = keys_fps ? bind_slot_from_name(key + 13) : -1;
-        if (i >= 0) g_bind_key_mod[i][mod - 1] = (int16_t)(strcmp(val, "none") ? bind_key_from_name(val) : 0);
+        int16_t (*mods)[BIND_MODS] = i >= BIND_PLAY_KEY_COUNT ? g_bind_key_mod : kbo ? kbo_mods() : km_mods();
+        if (i >= 0 && (!kbo || i < BIND_PLAY_KEY_COUNT))
+            mods[i][mod - 1] = (int16_t)(strcmp(val, "none") ? bind_key_from_name(val) : 0);
+        return true;
+    }
+    if (!strncmp(key, "bind_kbo_", 9)) {  // (the keyboard-only layout's table: play bindings only)
+        int i = keys_fps ? bind_slot_from_name(key + 9) : -1, sc = strcmp(val, "none") ? bind_key_from_name(val) : 0;
+        if (i >= 0 && i < BIND_PLAY_KEY_COUNT && (sc || !strcmp(val, "none"))) kbo_keys()[i] = (int16_t)sc;
         return true;
     }
     if (!strncmp(key, "bind_gc_", 8)) {  // (the GameCube layout's table)
@@ -564,10 +623,22 @@ bool bind_settings_load(const char *key, const char *val) {
                 if (!strcmp(val, k_pad_ini[h])) std_table()[i] = (int16_t)h;
         } else {
             int sc = strcmp(val, "none") ? bind_key_from_name(val) : 0;
-            if (sc || !strcmp(val, "none")) g_bind_key[i] = (int16_t)sc;
+            if (sc || !strcmp(val, "none")) (i >= BIND_PLAY_KEY_COUNT ? g_bind_key : km_keys())[i] = (int16_t)sc;
         }
     }
     return true;
+}
+
+// One keyboard table's lines: bind_<prefix>_<input> and its combo's bind_<prefix>mod1_ / mod2_ (only those that differ
+// from its defaults; from..to: its slots)
+static void save_keys(void (*put)(void *ctx, const char *fmt, ...), void *ctx, const char *prefix, const int16_t *t,
+                      int16_t (*mods)[BIND_MODS], const int16_t *def, int from, int to) {
+    for (int i = from; i < to; i++) {
+        if (keys_default(t, mods, def, i)) continue;
+        put(ctx, "bind_%s_%s = %s\n", prefix, k_ini[i], t[i] ? bind_key_label(t[i]) : "none");
+        for (int m = 0; m < BIND_MODS; m++)
+            if (mods[i][m]) put(ctx, "bind_%smod%d_%s = %s\n", prefix, m + 1, k_ini[i], bind_key_label(mods[i][m]));
+    }
 }
 
 void bind_settings_save(void (*put)(void *ctx, const char *fmt, ...), void *ctx) {
@@ -579,10 +650,7 @@ void bind_settings_save(void (*put)(void *ctx, const char *fmt, ...), void *ctx)
         if (g[i] != k_def_gc[i] && g[i] >= 0 && g[i] < PADB_HOST_COUNT)
             put(ctx, "bind_gc_%s = %s\n", k_ini[i], k_pad_ini[g[i]]);
     put(ctx, "bind_keys = fps\n");
-    for (int i = 0; i < BIND_KEY_COUNT; i++) {
-        if (bind_is_default_slot(BIND_DEV_KEY, i)) continue;
-        put(ctx, "bind_key_%s = %s\n", k_ini[i], g_bind_key[i] ? bind_key_label(g_bind_key[i]) : "none");
-        for (int m = 0; m < BIND_MODS; m++)
-            if (g_bind_key_mod[i][m]) put(ctx, "bind_keymod%d_%s = %s\n", m + 1, k_ini[i], bind_key_label(g_bind_key_mod[i][m]));
-    }
+    save_keys(put, ctx, "key", km_keys(), km_mods(), k_def_key, 0, BIND_PLAY_KEY_COUNT);
+    save_keys(put, ctx, "key", g_bind_key, g_bind_key_mod, k_def_key, BIND_PLAY_KEY_COUNT, BIND_KEY_COUNT);  // (menu keys)
+    save_keys(put, ctx, "kbo", kbo_keys(), kbo_mods(), k_def_kbo, 0, BIND_PLAY_KEY_COUNT);
 }

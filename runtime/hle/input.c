@@ -34,6 +34,7 @@ _Static_assert(BTN_DOWN == BIND_DOWN && BTN_ZL == BIND_ZL, "bindings follow the 
 
 static _Atomic uint64_t key_buttons, pad_buttons;
 static _Atomic int32_t key_lx, key_ly, key_rx, key_ry, pad_lx, pad_ly, pad_rx, pad_ry;
+static _Atomic bool key_rs_beam;  // the keyboard's right stick is a beam key's push (the GameCube layout: key_ease)
 static uint8_t keys_down[BIND_KEY_HOST_COUNT];  // keys, then mouse buttons and the wheel (BIND_MOUSE_*)
 static SDL_Gamepad *pad;
 static _Atomic int64_t sampling;
@@ -137,7 +138,23 @@ static void recompute_keyboard(void) {
     key_ly = (key_on[BIND_LS_UP] - key_on[BIND_LS_DOWN]) * 32767;
     key_rx = (key_on[BIND_RS_RIGHT] - key_on[BIND_RS_LEFT]) * 32767;
     key_ry = (key_on[BIND_RS_UP] - key_on[BIND_RS_DOWN]) * 32767;
+    key_rs_beam = beam >= 0;
     if (beam >= 0) key_rx = beam == 1 ? 32767 : beam == 3 ? -32767 : 0, key_ry = beam == 0 ? 32767 : beam == 2 ? -32767 : 0;
+}
+
+// Keyboard only: the turning keys (the right stick's: the arrows) ease in - a tap turns a little, a key held reaches
+// full speed after g_settings.key_turn_ease seconds - so aiming without a mouse can be fine as well as quick (a
+// controller's stick is pushed only part way for that). From 35 % of full tilt; each new direction starts over. Not
+// the beam keys' pushes (the GameCube layout's Classic picks beams with the stick).
+static int32_t key_ease(int32_t v, int axis) {
+    static uint64_t since[2];
+    static int32_t was[2];
+    if (!g_settings.keyboard_only || g_settings.key_turn_ease <= 0 || key_rs_beam || !v) { since[axis] = 0, was[axis] = v; return v; }
+    uint64_t now = SDL_GetTicksNS();
+    if (!since[axis] || (v > 0) != (was[axis] > 0)) since[axis] = now;
+    was[axis] = v;
+    float f = 0.35f + 0.65f * (float)((now - since[axis]) / 1e9 / g_settings.key_turn_ease);
+    return f >= 1 ? v : (int32_t)(v * f);
 }
 
 // ---- Mouse (runtime/hle/game.c mouse aim)
@@ -173,7 +190,8 @@ static uint64_t capture_changed_ns, pointer_used_ns;
 static bool scripted_run(void);
 void input_mouse_frame(SDL_Window *w) {  // (the event loop, each pass)
     extern bool menu_input_captured(void);
-    bool want = g_settings.mouse_aim && game_in_play() && !menu_input_captured() &&
+    // (Keyboard only: never captured - the mouse is left to point and click in menus)
+    bool want = g_settings.mouse_aim && !g_settings.keyboard_only && game_in_play() && !menu_input_captured() &&
                 (SDL_GetWindowFlags(w) & SDL_WINDOW_INPUT_FOCUS) && !scripted_run();
     uint64_t now = SDL_GetTicksNS();
     if (!pointer_used_ns) pointer_used_ns = now;
@@ -978,14 +996,20 @@ static void fill_state(Cpu *c) {
     // (Swap map sticks, issue #91: on the map screen the controller's sticks trade places - the left one pans the map,
     // the right one turns it; the game has it the other way round)
     extern bool game_map_screen(void);  // runtime/hle/game.c
-    bool map_swap = g_settings.swap_map_sticks && game_map_screen();
+    bool on_map = (g_settings.swap_map_sticks || g_settings.invert_map_x || g_settings.invert_map_y) && game_map_screen();
+    bool map_swap = g_settings.swap_map_sticks && on_map;
     int32_t plx = legacy || map_swap ? pad_rx : pad_lx, ply = map_swap ? pad_ry : pad_ly;
     int32_t lx = clamp_axis((menu ? 0 : key_lx + plx + wm_lx) + script_lx);
     int32_t ly = clamp_axis((menu ? 0 : key_ly + ply + wm_ly) + script_ly);
+    // (Invert map turning, issue #112: the game turns the map with its left stick - the controller's right one with
+    // Swap map sticks, W A S D on the keyboard -; each direction can turn it the other way. Panning stays as it is.)
+    if (on_map && g_settings.invert_map_x) lx = -lx;
+    if (on_map && g_settings.invert_map_y) ly = -ly;
     int32_t prx = legacy || map_swap ? pad_lx : flick_takes_stick ? 0 : pad_rx;
     int32_t pry = map_swap ? pad_ly : flick_takes_stick ? 0 : pad_ry;
-    int32_t rx = clamp_axis((menu ? 0 : key_rx + prx + mouse_rx + wm_rx) + script_rx);
-    int32_t ry = clamp_axis((menu ? 0 : key_ry + pry + mouse_ry + wm_ry) + script_ry);
+    int32_t krx = key_ease(key_rx, 0), kry = key_ease(key_ry, 1);  // (keyboard only: the turning keys ease in)
+    int32_t rx = clamp_axis((menu ? 0 : krx + prx + mouse_rx + wm_rx) + script_rx);
+    int32_t ry = clamp_axis((menu ? 0 : kry + pry + mouse_ry + wm_ry) + script_ry);
     static long stick_log = -2;  // (debug) LARECOMP_LOG_STICKS=<n>: the sticks the game gets, every n-th read
     if (stick_log == -2) stick_log = getenv("LARECOMP_LOG_STICKS") ? atol(getenv("LARECOMP_LOG_STICKS")) : 0;
     if (stick_log > 0 && sampling % stick_log == 0) LOG("[input] sticks %d %d  %d %d\n", lx, ly, rx, ry);

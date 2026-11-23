@@ -114,6 +114,12 @@ void bind_load_face_buttons(int mode);
 bool bind_gamecube_active(void);
 void bind_gamecube_set(bool on);
 
+// Keyboard only (g_settings.keyboard_only, Controls tab): the keyboard's bindings are a second table, the keyboard-only
+// layout's - the mouse's jobs on keys (lock on: Left Shift, shoot: Right Ctrl, Right Option on a Mac) - while it's
+// on; the keyboard and mouse table waits meanwhile. primerecomp.ini bind_kbo_<input> / bind_kbomod1_<input> ...
+bool bind_keyboard_only_active(void);
+void bind_keyboard_only_set(bool on);
+
 #ifdef __cplusplus
 }
 #endif

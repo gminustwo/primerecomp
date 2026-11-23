@@ -190,6 +190,9 @@ static void pick_device(void) {
     }
 }
 
+// The GPU in use, by its driver's name for it ("" before the device is chosen): the bug report's setup (runtime/report.c)
+const char *vk_gpu_name(void) { return g_vk.props.deviceName; }
+
 static bool g_fault_ext;
 // After VK_ERROR_DEVICE_LOST: what the driver says faulted (VK_EXT_device_fault), into the log.
 void vk_device_fault_report(void) {

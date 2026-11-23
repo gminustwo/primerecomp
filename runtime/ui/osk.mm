@@ -21,7 +21,7 @@ static struct {
     char *buf;                       // ... and its buffer (static in every caller: written on OK)
     size_t size;
     ImGuiInputTextFlags flags;
-    char text[128], title[96];
+    char text[1024], title[96];      // (a bug report's answers run long: the Report a bug tab)
     bool appearing, nav_kbd_off;
     ImGuiID done_field;              // answered: reported by that field's next ui_input_text
     int done, done_frame;            // 1 OK, -1 cancelled; when (a field gone by then never hears of it)
@@ -109,7 +109,9 @@ int osk_keys(char *text, size_t cap, int max_chars, bool appearing, float scale,
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, ImGuiInputFlags_Repeat, own)) del();
 
     ImGui::PushFont(big);
+    ImGui::PushTextWrapPos(0);  // (long text: on several lines, within the keyboard's width)
     ImGui::Text("%s_", text);
+    ImGui::PopTextWrapPos();
     ImGui::PopFont();
     static const char *rows_u[] = {"ABCDEFGHIJ", "KLMNOPQRST", "UVWXYZ-.'!", "0123456789"};
     static const char *rows_l[] = {"abcdefghij", "klmnopqrst", "uvwxyz-.'!", "0123456789"};
