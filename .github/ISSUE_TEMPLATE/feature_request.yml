@@ -25,5 +25,5 @@ body:
     id: version
     attributes:
       label: PrimeRecomp version
-      description: In the lower right corner of the start screen, e.g. "Version 0.1.2".
-      placeholder: "0.1.2"
+      description: In the lower right corner of the start screen, e.g. "Version 0.1.3".
+      placeholder: "0.1.3"

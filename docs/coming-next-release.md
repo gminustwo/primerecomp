@@ -3,11 +3,6 @@
 Reported issues still being worked on. Each says what we know so far and what would help, so if you have the save
 or the screenshot we're asking for, please add it to the issue.
 
-### Unlock Hard difficulty without finishing the game ([#64](https://github.com/gminustwo/primerecomp/issues/64))
-
-Done for the next release: F1 menu, Cheats tab, **Hard difficulty**. The new-game Difficulty screen then lists Hard,
-unlocked the way finishing the game unlocks it, and the game saves it.
-
 ### Two button prompts may still show Switch buttons ([#52](https://github.com/gminustwo/primerecomp/issues/52))
 
 v0.1.0 draws the hints that show two buttons in one picture ("X + d-pad", "ZR / A") with your buttons, which may
@@ -21,19 +16,6 @@ On an RX 7600 XT with Linux's RADV driver, the map screen showed dark 8 x 8-pixe
 leaves out the map's edge-smoothing pass on RX 7000 cards with RADV, which made the map right for the reporter (its
 edges are a little rougher there). The cause in the driver is still unknown. If you still see the blocks on v0.1.2,
 please add your `primerecomp.log` to the issue.
-
-### Rainbow colors on the visor's HUD or on rocks and trees ([#26](https://github.com/gminustwo/primerecomp/issues/26), [#99](https://github.com/gminustwo/primerecomp/issues/99))
-
-After an elevator ride or a death, the visor frame could change colors every frame, or rocks and trees turn flat and
-noisy, until a restart. v0.1.2 fixes the likely cause: a shader loaded where an earlier one had been could be drawn
-with the earlier one's translation. We couldn't make it happen here, so please tell us whether it's gone, and if not,
-add your `primerecomp.log` from that session.
-
-### Missing character shadows on AMD graphics cards under Windows ([#40](https://github.com/gminustwo/primerecomp/issues/40))
-
-AMD's Windows driver takes at most 2 GB in one piece, and the buffer Samus' shadow is built in sat past it. v0.1.2
-moves that window to where the game's memory is. We have no AMD card to check it on, so please tell us whether the
-shadows are back.
 
 ### Rising lava in Magmoor Caverns doesn't stop or burn ([#54](https://github.com/gminustwo/primerecomp/issues/54))
 
