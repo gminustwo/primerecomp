@@ -51,6 +51,7 @@ Settings g_settings = {
     .aniso = 16,
     .mouse_aim = true,
     .mouse_sens = 1.0f,
+    .key_turn_ease = 0.2f,
     .wiimote = true,
     .wiimote_area = 0.5f,
     .wiimote_smooth = 0.3f,
@@ -260,9 +261,13 @@ void settings_load(void) {
         else if (!strcmp(key, "mouse_sens")) g_settings.mouse_sens = (float)atof(val);
         else if (!strcmp(key, "mouse_invert")) g_settings.mouse_invert = atoi(val) != 0;
         else if (!strcmp(key, "mouse_flick_jump")) g_settings.mouse_flick_jump = atoi(val) != 0;
+        else if (!strcmp(key, "keyboard_only")) g_settings.keyboard_only = atoi(val) != 0;
+        else if (!strcmp(key, "key_turn_ease")) g_settings.key_turn_ease = (float)atof(val);
         else if (!strcmp(key, "flick_stick")) g_settings.flick_stick = atoi(val) != 0;
         else if (!strcmp(key, "legacy_sticks")) g_settings.legacy_sticks = atoi(val) != 0;
         else if (!strcmp(key, "swap_map_sticks")) g_settings.swap_map_sticks = atoi(val) != 0;
+        else if (!strcmp(key, "invert_map_x")) g_settings.invert_map_x = atoi(val) != 0;
+        else if (!strcmp(key, "invert_map_y")) g_settings.invert_map_y = atoi(val) != 0;
         else if (!strcmp(key, "steam_controller_direct")) g_settings.steam_controller_direct = atoi(val) != 0;
         else if (!strcmp(key, "resolution")) {  // match / dynamic / 75% / 50% / 25% / <lines>p / 4k / 8k (LAS: 1x-8x)
             int n = atoi(val);
@@ -333,6 +338,9 @@ void settings_load(void) {
     }
     if (!(g_settings.mouse_sens >= MOUSE_SENS_MIN)) g_settings.mouse_sens = MOUSE_SENS_MIN;  // (NaN too)
     if (g_settings.mouse_sens > MOUSE_SENS_MAX) g_settings.mouse_sens = MOUSE_SENS_MAX;
+    if (!(g_settings.key_turn_ease >= 0)) g_settings.key_turn_ease = 0;  // (NaN too)
+    if (g_settings.key_turn_ease > KEY_EASE_MAX) g_settings.key_turn_ease = KEY_EASE_MAX;
+    bind_keyboard_only_set(g_settings.keyboard_only);  // (its bindings in play: runtime/hle/bindings.c)
     if (!(g_settings.wiimote_area >= 0.2f)) g_settings.wiimote_area = 0.2f;  // (NaN too)
     if (g_settings.wiimote_area > 1) g_settings.wiimote_area = 1;
     if (!(g_settings.wiimote_smooth >= 0)) g_settings.wiimote_smooth = 0;
@@ -396,8 +404,10 @@ static void write_settings(void *o) {
     put(o, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
             g_settings.mouse_invert);
     put(o, "mouse_flick_jump = %d\n", g_settings.mouse_flick_jump);
+    put(o, "keyboard_only = %d\nkey_turn_ease = %.2f\n", g_settings.keyboard_only, g_settings.key_turn_ease);
     put(o, "flick_stick = %d\nlegacy_sticks = %d\nswap_map_sticks = %d\n", g_settings.flick_stick,
             g_settings.legacy_sticks, g_settings.swap_map_sticks);
+    put(o, "invert_map_x = %d\ninvert_map_y = %d\n", g_settings.invert_map_x, g_settings.invert_map_y);
     put(o, "hint_seconds = %d\nhint_on_l3 = %d\ninfinite_energy = %d\ninfinite_missiles = %d\ninfinite_power_bombs = %d\n",
             g_settings.hint_seconds, g_settings.hint_on_l3, g_settings.inf_energy, g_settings.inf_missiles,
             g_settings.inf_power_bombs);

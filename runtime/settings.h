@@ -53,6 +53,7 @@ enum { SUIT_COLOR_RED = 0, SUIT_COLOR_BLUE = 10, SUIT_COLOR_WHITE = 15 };
 #define RUMBLE_STRENGTH_MAX 2.0f  // (rumble strength, 0..this = 200%: Audio tab)
 #define MOUSE_SENS_MIN 0.1f  // (mouse aim sensitivity range: Controls tab)
 #define MOUSE_SENS_MAX 10.0f
+#define KEY_EASE_MAX 0.5f  // (keyboard only: the turning keys' ease-in, seconds: Controls tab)
 // System language served to the game (runtime/services/am.c GetDesiredLanguage, services/hid_set.c GetLanguageCode):
 // the game picks its text language from it, as it would from the Switch's own system setting. LANG_AUTO follows the
 // host locale ($LC_ALL / $LC_MESSAGES / $LANG); the rest are the codes of the languages the game has text for.
@@ -130,12 +131,17 @@ typedef struct {
     bool mouse_invert;   // mouse aim: moving the mouse forward looks down
     bool mouse_flick_jump;  // in the Morph Ball a quick push up of the mouse presses jump (the Spring Ball; issue #89):
                             // runtime/hle/game.c mouse_flick
+    bool keyboard_only;  // play with the keyboard alone: the mouse isn't captured, and the keyboard's bindings are the
+                         // keyboard-only layout's (runtime/hle/bindings.c bind_keyboard_only_set; Controls tab)
+    float key_turn_ease; // keyboard only: seconds the turning keys take to reach full speed (0: at once; KEY_EASE_MAX)
     bool flick_stick;    // the controller's right stick turns Samus to face where it points, then 1:1 as it goes round
                          // (looking up and down: gyro or mouse): runtime/hle/game.c flick_frame
     bool legacy_sticks;  // the controller's left stick turns and the right one strafes, in play on foot (issue #68):
                          // runtime/hle/game.c legacy_frame
     bool swap_map_sticks;  // on the map screen the controller's sticks trade places: the left pans, the right turns
                            // (issue #91): runtime/hle/input.c fill_state
+    bool invert_map_x, invert_map_y;  // on the map screen the stick that turns the map turns it the other way: left
+                                      // and right / up and down (issue #112): runtime/hle/input.c fill_state
     bool steam_controller_direct;  // (settings file only) SDL's own Steam Controller driver, for its gyro without
                                    // Steam Input (the window code sets SDL_HINT_JOYSTICK_HIDAPI_STEAM)
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language

@@ -26,6 +26,7 @@
 // mode (it has extracted/: stderr stays where it goes), else data_dir. The run before stays readable as
 // primerecomp.previous.log; processes started by this one (the start screen re-executing itself) append to the same log.
 static char g_log_path[1024];
+const char *plat_log_path(void) { return g_log_path; }
 
 void posix_log_to_file(const char *data_dir) {
     if (prime_headless) return;  // keep the setup progress pipe on every POSIX host

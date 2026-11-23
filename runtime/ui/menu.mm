@@ -5,7 +5,9 @@
 #include <SDL3/SDL.h>
 #include <math.h>
 #include <pthread.h>
+#include <time.h>
 #include <atomic>
+#include <string>
 #include <vector>
 
 #include "imgui.h"
@@ -30,6 +32,7 @@ void controls_bindings_draw(float scale);  // controls_ui.mm
 #include "../mods.h"
 #include "../hle/atmocheats.h"
 #include "../discord.h"
+#include "../report.h"
 }
 
 // ------------------------------------------------------------------ state shared with the main thread
@@ -1341,6 +1344,197 @@ static void sticks_section(void) {
     }
 }
 
+// Report a bug (runtime/report.c): the Bug report form's questions, the log to send with it, and sending it to the
+// project's GitHub Issues under the player's own GitHub account - the log always goes with it (no log, no report).
+// The same page on the start screen's Settings and in the game (where this run's log is the one by default).
+static std::string when_text(int64_t t) {  // "Nov 21, 18:23"
+    time_t tt = (time_t)t;
+    struct tm *lt = localtime(&tt);
+    char b[64] = "";
+    if (lt) strftime(b, sizeof b, "%b %d, %H:%M", lt);
+    return b;
+}
+
+static void open_file(const char *path) {  // (its own program: a text editor for a log, the file manager for a folder)
+    char url[1200];
+    snprintf(url, sizeof url, "file://%s%s", path[0] == '/' ? "" : "/", path);
+    for (char *c = url; *c; c++) if (*c == '\\') *c = '/';
+    SDL_OpenURL(url);
+}
+
+static void tab_report(bool in_game) {
+    static ReportForm f;  // (kept while PrimeRecomp runs: closing the menu doesn't lose what was typed)
+    static bool own_copy, log_ok, setup_filled, shot_test = getenv("LARECOMP_REPORT_TEST") != NULL;
+    static int log_sel = -1, was_state = -1;
+    if (!setup_filled) {
+        report_setup_text(f.setup, sizeof f.setup);
+        setup_filled = true;
+        if (shot_test) {  // (test: a page filled in, for a screenshot)
+            snprintf(f.title, sizeof f.title, "The game froze when the door to the Ruined Courtyard opened");
+            snprintf(f.what, sizeof f.what, "The picture stopped for about five seconds and the sound stuttered.");
+            snprintf(f.where, sizeof f.where, "Phendrana Drifts, Ruined Courtyard, the door from the Ruins Entryway. Every time.");
+        }
+    }
+    ReportState rs;
+    report_state(&rs);
+    ReportLog logs[2];
+    int nlogs = report_logs(logs);
+    if (log_sel < 0 || log_sel >= nlogs) log_sel = !in_game && nlogs > 1 ? 1 : 0;  // (the start screen: the run before)
+    // the code shown: GitHub's page opens; on the start screen the code goes on the clipboard too, to paste there (SDL's
+    // clipboard is the main thread's: the in-game menu is drawn on the render thread)
+    static bool clipped;
+    if (rs.state == REP_AUTHORIZE && was_state != REP_AUTHORIZE) {
+        clipped = !in_game && SDL_SetClipboardText(rs.user_code);
+        SDL_OpenURL(rs.verify_url);
+    }
+    was_state = rs.state;
+    float scale = ImGui::GetFontSize() / 34;  // (as the other option-row pages)
+
+    opt_begin("##report", scale);
+    opt_section("Your report");
+    auto text_row = [&](const char *label, char *buf, size_t cap, const char *desc) {
+        std::string d = desc;
+        if (buf[0]) d += std::string("\n\nNow: ") + buf;
+        opt_text(label, buf, cap, "Not filled in", d.c_str());
+    };
+    text_row("Title", f.title, sizeof f.title, "The issue's title: a few words on what went wrong, e.g. \"Freeze when the "
+             "Ruined Courtyard's door opens\". One problem per report, please.");
+    text_row("What happened", f.what, sizeof f.what, "What you saw or heard, and what you expected instead.");
+    text_row("Where and how", f.where, sizeof f.where, "Where, and how to make it happen: the room (the map names it) or the "
+             "menu, cutscene or start screen, and the moment. Does it happen every time? The steps to get there help a lot.");
+    text_row("Your setup", f.setup, sizeof f.setup, "Filled in from what PrimeRecomp knows: your controller, whether you "
+             "started it from Steam, your display, the frame rate, HDR, the upscaler, mods and your graphics card. Add your "
+             "CPU, the aspect ratio you play at, or anything else that may matter.");
+
+    opt_section("The log");
+    for (int i = 0; i < nlogs; i++) {
+        char label[160], desc[600];
+        long long kb = (logs[i].size + 1023) / 1024;  // (a few bytes: 1 KB, not 0)
+        if (logs[i].this_run)
+            snprintf(label, sizeof label, "This run's log  (%lld KB)", kb);
+        else
+            snprintf(label, sizeof label, "%s  (%s, %lld KB)", i == 0 ? "An earlier run's log" : "The run before's log",
+                     when_text(logs[i].modified).c_str(), kb);
+        std::string which = logs[i].this_run ? "the log of the run you're in now"
+                                             : "last written " + when_text(logs[i].modified);
+        snprintf(desc, sizeof desc, "%s - %s. Send the log of the run where the problem happened: each start of "
+                 "PrimeRecomp renames the last log to primerecomp.previous.log and begins a new one, so after a crash or "
+                 "a freeze it's the run before's. It's sent along with the report, always, with your home folder written "
+                 "as ~ in it.", logs[i].name, which.c_str());
+        if (opt_radio(label, log_sel == i, desc)) log_sel = i;
+    }
+    if (!nlogs) {
+        opt_disable_next();
+        opt_action("No log found", "", "PrimeRecomp writes no log file in this run (it was started from a terminal, or "
+                   "with what it prints sent elsewhere), and there's none from an earlier run. A report can't be sent "
+                   "without one: start PrimeRecomp the usual way, make the problem happen, then report it.");
+    } else if (opt_action("Open the log", "", "Opens the chosen log, so you can see what's sent.")) {
+        open_file(logs[log_sel].path);
+    }
+
+    opt_section("Before you send it");
+    if (opt_check("My own copy of the game, v1.0.0", own_copy, "", "I'm playing my own copy of Metroid Prime "
+                  "Remastered for Nintendo Switch, version 1.0.0 (no updates)."))
+        own_copy = !own_copy;
+    if (opt_check("The log is from the problem's run", log_ok, "", "The log chosen above is from the run where the "
+                  "problem happened, not from a later start of PrimeRecomp."))
+        log_ok = !log_ok;
+    if (opt_check("I looked at the open issues", f.checked_issues, "", "This problem isn't on the open issues yet "
+                  "(See the open issues, below, opens them in your browser). If it is, add to that one on GitHub instead."))
+        f.checked_issues = !f.checked_issues;
+    if (opt_action("See the open issues", "", "Opens the project's issues on GitHub in your browser.")) {
+        char url[200];
+        snprintf(url, sizeof url, "https://github.com/%s/issues", report_repo());
+        SDL_OpenURL(url);
+    }
+
+    opt_section("Send it to GitHub");
+    bool ready = f.title[0] && f.what[0] && f.where[0] && nlogs && own_copy && log_ok;
+    std::string missing;
+    if (!f.title[0]) missing += "\n- the title";
+    if (!f.what[0]) missing += "\n- what happened";
+    if (!f.where[0]) missing += "\n- where and how";
+    if (!nlogs) missing += "\n- a log";
+    if (!own_copy) missing += "\n- the own-copy check";
+    if (!log_ok) missing += "\n- the log check";
+    static const char *const sign_desc = "The report goes on the project's GitHub Issues under your own GitHub account, "
+        "so GitHub tells you when someone replies, and you can add screenshots or a video to it. Signing in shows a code: "
+        "PrimeRecomp opens github.com/login/device in your browser (or open it on your phone) - enter the code there and "
+        "authorize PrimeRecomp. No GitHub account? Making one is free. The sign-in is kept only until PrimeRecomp closes.";
+    if (!report_available()) {
+        opt_disable_next();
+        opt_action("Sign in with GitHub", "", "Sending from here isn't set up in this build. Use the form on GitHub, "
+                   "below: it opens in your browser with your answers filled in, and the log's folder opens beside it, "
+                   "to drag the log into the form.");
+    } else if (rs.state == REP_SIGNED_OUT) {
+        if (opt_action("Sign in with GitHub", "", sign_desc)) report_sign_in();
+    } else if (rs.state == REP_CODE) {
+        opt_disable_next();
+        opt_action("Signing in", "...", "Asking GitHub for a sign-in code.");
+        if (opt_action("Cancel sign-in", "", "Stops signing in.")) report_sign_in_cancel();
+    } else if (rs.state == REP_AUTHORIZE) {
+        char desc[700];
+        long left = (long)(rs.code_expires - time(NULL));
+        snprintf(desc, sizeof desc, "Go to %s (in your browser, or on your phone), enter this code and authorize "
+                 "PrimeRecomp.%s It works for %ld more minutes. Select this to open the page again.", rs.verify_url,
+                 clipped ? " The code is on the clipboard too." : "", left > 0 ? (left + 59) / 60 : 0);
+        if (opt_action("Enter this code on GitHub", rs.user_code, desc)) SDL_OpenURL(rs.verify_url);
+        if (opt_action("Cancel sign-in", "", "Stops signing in.")) report_sign_in_cancel();
+    } else if (rs.state == REP_SIGNED_IN) {
+        std::string d = "Sends the report to the project's GitHub Issues, with the log chosen above: first the log (a "
+                        "secret gist on your GitHub account, which the report links), then the report.";
+        if (!ready) d = "Fill these in first:" + missing, opt_disable_next();
+        if (opt_action("Send the report", "", d.c_str()) && ready && nlogs) {
+            snprintf(f.log_path, sizeof f.log_path, "%s", logs[log_sel].path);
+            snprintf(f.log_label, sizeof f.log_label, "%s", logs[log_sel].this_run ? "the log of the run it was sent from"
+                     : log_sel == 1 ? "the log of the run before the one it was sent from" : "an earlier run's log");
+            report_send(&f);
+        }
+        if (opt_action("Sign out", rs.login[0] ? rs.login : "", "Forgets the GitHub sign-in now (it's forgotten anyway "
+                       "when PrimeRecomp closes)."))
+            report_sign_out();
+    } else if (rs.state == REP_SENDING) {
+        opt_disable_next();
+        opt_action(rs.step[0] ? rs.step : "Sending...", "", "Sending the log, then the report.");
+    } else if (rs.state == REP_SENT) {
+        char label[64];
+        snprintf(label, sizeof label, "Open issue #%d", rs.issue_number);
+        if (opt_action(label, "", "Sent. Opens your report on GitHub: add screenshots or a short video there (drag them "
+                       "into a comment), and GitHub tells you when someone replies.") && rs.issue_url[0])
+            SDL_OpenURL(rs.issue_url);
+        if (opt_action("Write another report", "", "Clears the page for a new report (the setup stays).")) {
+            f.title[0] = f.what[0] = f.where[0] = 0;
+            f.checked_issues = false, own_copy = log_ok = false;
+            report_sent_done();
+        }
+    }
+    if (rs.state != REP_SENT && rs.state != REP_SENDING &&
+        opt_action("Use the form on GitHub instead", "", "Opens the Bug report form in your browser with your answers "
+                   "filled in, and the log's folder beside it: drag the log into the form's Log box, then submit it there. "
+                   "The form needs a GitHub account too.")) {
+        char url[8192];
+        report_form_url(&f, url, sizeof url);
+        SDL_OpenURL(url);
+        if (nlogs) {  // (its folder)
+            std::string dir = logs[log_sel].path;
+            size_t cut = dir.find_last_of("/\\");
+            if (cut != std::string::npos) open_file(dir.substr(0, cut).c_str());
+        }
+    }
+    if (rs.state == REP_SENT) {
+        ImGui::Dummy(ImVec2(0, 10 * scale));
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextColored(theme::good, "Sent: issue #%d, with the log. Thank you!", rs.issue_number);
+        ImGui::PopTextWrapPos();
+    } else if (rs.error[0]) {
+        ImGui::Dummy(ImVec2(0, 10 * scale));
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextColored(theme::bad, "%s", rs.error);
+        ImGui::PopTextWrapPos();
+    }
+    opt_end();
+}
+
 static void tab_about(void) {
     header("System language");
     {
@@ -1355,7 +1549,39 @@ static void tab_about(void) {
     hint("The game's text language, as its own system setting. Applies when the game restarts: Quit -> Quit to "
          "Start Screen, then Play.");
     ImGui::Spacing();
-    header("Mouse");
+    header("Keyboard and mouse");
+    {   // (runtime/hle/bindings.c: the keyboard-only layout's own bindings; input.c: the mouse left alone, key_ease)
+        bool kbo = g_settings.keyboard_only;
+        if (ImGui::Checkbox("Keyboard only", &kbo)) {
+            bind_capture_cancel();
+            g_settings.keyboard_only = kbo;
+            bind_keyboard_only_set(kbo);
+            settings_save();
+        }
+        char shoot[64], lock[64];
+        hint("Play with the keyboard alone, no mouse. The mouse isn't captured (it still points and clicks in menus), "
+             "and the keyboard gets bindings of its own, below, with keys for what the mouse did. By default: W / S / "
+             "A / D walk and strafe, the arrows turn and look up and down, Left Shift (held) locks on and scans, Right "
+             "Ctrl (Right Option on a Mac) shoots and, held, charges; Enter shoots too, Space jumps, Left Ctrl is the "
+             "Morph Ball, F a missile, X the beam menu (and the Spring Ball), 1-4 the beams, Q / E / R / T the visors, "
+             "Tab the map, Esc the pause menu. The keyboard and mouse bindings stay as they were, for when it's off.");
+        if (g_settings.keyboard_only) {
+            bind_key_combo_name(BIND_ZR, shoot, sizeof shoot);
+            bind_key_combo_name(BIND_ZL, lock, sizeof lock);
+            ImGui::TextColored(theme::heading, "On now: %s shoots, %s locks on.", shoot, lock);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Turning keys ease in");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1);
+            float ease = g_settings.key_turn_ease;
+            if (ImGui::SliderFloat("##ease", &ease, 0, KEY_EASE_MAX, ease <= 0 ? "Off" : "%.2f s"))
+                g_settings.key_turn_ease = ease;
+            if (ImGui::IsItemDeactivatedAfterEdit()) settings_save();
+            hint("A tap of a turning key (the arrows) turns Samus a little, and a key held turns her faster until she "
+                 "turns at full speed after this long, for fine aiming as well as quick turns. Off: full speed at once.");
+        }
+    }
+    ImGui::BeginDisabled(g_settings.keyboard_only);  // (the mouse's own options: no mouse aim with Keyboard only)
     {
         bool aim = g_settings.mouse_aim;
         if (ImGui::Checkbox("Mouse aim", &aim)) { g_settings.mouse_aim = aim; settings_save(); }
@@ -1383,6 +1609,7 @@ static void tab_about(void) {
              "in for the motion sensor). It presses the game's Spring Ball button, X, in the Dual Stick controls (the "
              "other control schemes have no Spring Ball button). A slow push up only moves the camera.");
     }
+    ImGui::EndDisabled();
     ImGui::Spacing();
     header("Controller sticks");
     sticks_section();
@@ -1409,6 +1636,13 @@ static void tab_about(void) {
         hint("On the map screen the left stick moves the map around and the right stick turns it, as the sticks "
              "move and look in play. The game has them the other way round, and the map's prompts still show its "
              "own sticks.");
+    }
+    {   // (runtime/hle/input.c fill_state; issue #112)
+        bool ix = g_settings.invert_map_x, iy = g_settings.invert_map_y;
+        if (ImGui::Checkbox("Invert map turning: left and right", &ix)) { g_settings.invert_map_x = ix; settings_save(); }
+        if (ImGui::Checkbox("Invert map turning: up and down", &iy)) { g_settings.invert_map_y = iy; settings_save(); }
+        hint("On the map screen the stick that turns the map turns it the other way: the left stick, or the right one "
+             "with Swap map sticks, and W A S D on the keyboard. Moving the map around stays as it is.");
     }
     ImGui::Spacing();
     header("Wii Remote");
@@ -1506,8 +1740,10 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     // Prime's; ids stay: test hooks)
     // (Cosmetics, id 7: LAS Recomp's tunic / heart colors - nothing to recolor in Metroid Prime, so not shown)
     // (Mods, id 2: emulator mods and texture mods)
-    static const char *names[] = {"Video", "Audio", "Mods", "", "", "Cheats", "Gameplay", "", "Controls", "Quit"};
-    static const int order[] = {6, 0, 1, 8, 2, 5, 9};  // Gameplay, Video, Audio, Controls, Mods, Cheats, Quit
+    // (Report a bug, id 10: runtime/report.c - a bug report to GitHub Issues with the log)
+    static const char *names[] = {"Video", "Audio", "Mods", "", "", "Cheats", "Gameplay", "", "Controls", "Quit",
+                                  "Report a bug"};
+    static const int order[] = {6, 0, 1, 8, 2, 5, 10, 9};  // Gameplay, Video, Audio, Controls, Mods, Cheats, Report, Quit
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT)
         if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
@@ -1614,6 +1850,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case 6: tab_gameplay(); break;
                 case 8: tab_about(); break;
                 case 9: tab_quit(scale, in_game); break;
+                case 10: tab_report(in_game); break;
                 }
                 if (t.id == -1 || t.id == 8) {
                     // pages of ImGui's own controls (Prelaunch, Controls): Down with nowhere further down to go - text

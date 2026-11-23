@@ -62,6 +62,9 @@ static const uint8_t BUILD_ID[8] = {0x67, 0xc9, 0xca, 0x14, 0x28, 0x22, 0x27, 0x
 #define LARECOMP_VERSION "v0.1.2"
 extern "C" const char *rt_version(void) { return LARECOMP_VERSION; }  // (the log's first line: runtime/main.c)
 extern "C" void input_gamecube_update(void);  // runtime/hle/input.c
+// The project's Discord server (the README's invite): the start screen's DISCORD. Chat and news only - bug reports go
+// on GitHub Issues (Settings: Report a bug)
+#define DISCORD_INVITE "https://discord.gg/CdwFjGCEGf"
 
 // "Alpha 1" / "Beta 2" / "Version 1.0.0"
 static std::string tag_label(const std::string &t) {
@@ -1509,7 +1512,11 @@ extern "C" void launcher_run(const char *root) {
                     ImGui::PopFont();
                     auto pitch = [&](float gap) { return h + 6 + gap * h + (gap >= 0 ? 2 : 1) * sp; };
                     g_menu_gap = -0.18f;
-                    int above = upd_s == UPD_AVAILABLE && (!status.empty() || busy) ? 4 : 3;
+                    // (above QUIT: PLAY, SETTINGS, DISCORD, and UPDATE / SET UP GAME FILES when they're shown; with
+                    // both, QUIT goes a step lower rather than the block up into the title)
+                    bool upd_item = upd_s == UPD_AVAILABLE || (upd_s == UPD_FAILED && upd.tag[0]);
+                    int above = 3 + upd_item + (!status.empty() || busy);
+                    if (above > 4) above = 4;
                     ImGui::SetCursorPosY(285 * s + 3 * pitch(0.35f) - above * pitch(g_menu_gap));
                 }
                 bool hov = false;
@@ -1562,6 +1569,11 @@ extern "C" void launcher_run(const char *root) {
                     ImGui::SetCursorPosX(x0);
                     if (g_refocus == SETUP) ImGui::SetKeyboardFocusHere(), g_refocus = MAIN;
                     if (menu_item("SET UP GAME FILES", !busy)) page = SETUP;
+                }
+                ImGui::SetCursorPosX(x0);
+                if (menu_item("DISCORD", true)) {  // (the project's server, as the README links it: chat and news)
+                    fprintf(stderr, "[launcher] opening the Discord invite\n");
+                    SDL_OpenURL(DISCORD_INVITE);
                 }
                 ImGui::SetCursorPosX(x0);
                 if (menu_item("QUIT", true)) exit(0);

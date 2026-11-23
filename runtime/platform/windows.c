@@ -232,6 +232,7 @@ void plat_thread_perf_core(int role) {
 // or a file of anyone else's (scripts, tests: `2> file`) keeps what it prints, as before. (A process this one starts
 // again, after an update, inherits the launcher's handle, not the log's: it appends to the log by its name.)
 static char g_log_path[MAX_PATH];
+const char *plat_log_path(void) { return g_log_path; }
 
 static void log_to_file_without_console(void) {
     HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
@@ -311,10 +312,61 @@ void plat_fatal_notice(void) {
     MessageBoxA(NULL, text, "PrimeRecomp", MB_ICONERROR | MB_OK);
 }
 
+// Windows' accessibility shortcuts - Shift pressed five times (Sticky Keys), right Shift held 8 s (Filter Keys), Num
+// Lock held 5 s (Toggle Keys) - stop the game with a question box: Shift is a binding (Left Shift locks on in the
+// Keyboard only layout). As Microsoft advises for games ("Disabling Shortcut Keys in Games"): while PrimeRecomp runs the
+// shortcuts are off, unless the feature itself is on (then they're left alone), and they're put back as it ends. For
+// this session only, not the user's profile (no SPIF_UPDATEINIFILE: a crash leaves them off until Windows signs out).
+// A process this one starts in its place (plat_exec) gets the flags as they were through PRIMERECOMP_ACCESS_KEYS.
+static STICKYKEYS g_sticky = {sizeof g_sticky};
+static TOGGLEKEYS g_toggle = {sizeof g_toggle};
+static FILTERKEYS g_filter = {sizeof g_filter};
+static bool g_access_keys_changed;
+
+static void access_keys_restore(void) {
+    if (!g_access_keys_changed) return;
+    g_access_keys_changed = false;
+    SystemParametersInfoA(SPI_SETSTICKYKEYS, sizeof g_sticky, &g_sticky, 0);
+    SystemParametersInfoA(SPI_SETTOGGLEKEYS, sizeof g_toggle, &g_toggle, 0);
+    SystemParametersInfoA(SPI_SETFILTERKEYS, sizeof g_filter, &g_filter, 0);
+}
+
+static void access_keys_off(void) {
+    if (getenv("LARECOMP_KEEP_ACCESS_KEYS")) return;  // (opt-out: Windows' shortcuts as they are)
+    if (!SystemParametersInfoA(SPI_GETSTICKYKEYS, sizeof g_sticky, &g_sticky, 0) ||
+        !SystemParametersInfoA(SPI_GETTOGGLEKEYS, sizeof g_toggle, &g_toggle, 0) ||
+        !SystemParametersInfoA(SPI_GETFILTERKEYS, sizeof g_filter, &g_filter, 0))
+        return;
+    unsigned long sk, tk, fk;  // (started by an earlier PrimeRecomp process: its flags were the ones from before)
+    const char *was = getenv("PRIMERECOMP_ACCESS_KEYS");
+    if (was && sscanf(was, "%lx,%lx,%lx", &sk, &tk, &fk) == 3)
+        g_sticky.dwFlags = (DWORD)sk, g_toggle.dwFlags = (DWORD)tk, g_filter.dwFlags = (DWORD)fk;
+    else {
+        char v[64];
+        snprintf(v, sizeof v, "PRIMERECOMP_ACCESS_KEYS=%lx,%lx,%lx", (unsigned long)g_sticky.dwFlags,
+                 (unsigned long)g_toggle.dwFlags, (unsigned long)g_filter.dwFlags);
+        _putenv(v);
+    }
+    STICKYKEYS s = g_sticky;
+    TOGGLEKEYS t = g_toggle;
+    FILTERKEYS f = g_filter;
+    if (!(s.dwFlags & SKF_STICKYKEYSON)) s.dwFlags &= ~(DWORD)(SKF_HOTKEYACTIVE | SKF_CONFIRMHOTKEY);
+    if (!(t.dwFlags & TKF_TOGGLEKEYSON)) t.dwFlags &= ~(DWORD)(TKF_HOTKEYACTIVE | TKF_CONFIRMHOTKEY);
+    if (!(f.dwFlags & FKF_FILTERKEYSON)) f.dwFlags &= ~(DWORD)(FKF_HOTKEYACTIVE | FKF_CONFIRMHOTKEY);
+    if (s.dwFlags == g_sticky.dwFlags && t.dwFlags == g_toggle.dwFlags && f.dwFlags == g_filter.dwFlags) return;
+    g_access_keys_changed = true;
+    SystemParametersInfoA(SPI_SETSTICKYKEYS, sizeof s, &s, 0);
+    SystemParametersInfoA(SPI_SETTOGGLEKEYS, sizeof t, &t, 0);
+    SystemParametersInfoA(SPI_SETFILTERKEYS, sizeof f, &f, 0);
+    atexit(access_keys_restore);  // (and plat_terminate: the quick exit skips the handlers registered before it)
+    fprintf(stderr, "[input] Windows' Sticky Keys / Filter Keys / Toggle Keys shortcuts off while PrimeRecomp runs\n");
+}
+
 void plat_init(void) {
     if (prime_headless) return;  // stdout must remain the launcher's progress pipe; no dialogs
     log_to_file_without_console();
     require_cpu();
+    access_keys_off();
     _fmode = _O_BINARY;  // fopen/open default to binary (the runtime's "r"/"w" files are binary or LF text)
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);
@@ -534,7 +586,10 @@ bool plat_replace_file(const char *from, const char *to) {
 }
 
 // End the process at once, skipping DLL teardown (from an atexit handler, after flushing). Exit status 0.
-void plat_terminate(void) { TerminateProcess(GetCurrentProcess(), 0); }
+void plat_terminate(void) {
+    access_keys_restore();  // (Windows' accessibility shortcuts back as they were: access_keys_off)
+    TerminateProcess(GetCurrentProcess(), 0);
+}
 
 // ---- raw HID input reports (platform.h; runtime/hle/motion.c)
 // Steam's overlay (gameoverlayrenderer64.dll, in every game Steam starts) patches SetupDiGetClassDevs,

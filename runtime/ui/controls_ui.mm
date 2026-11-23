@@ -188,7 +188,8 @@ extern "C" void controls_bindings_draw(float scale) {
             if (rdev == BIND_DEV_PAD) snprintf(other, sizeof other, "%s", bind_pad_label(g_bind_pad[rother], fam));
             else bind_key_combo_name(rother, other, sizeof other);
         }
-        if (kind == 5) snprintf(msg, sizeof msg, "%s bindings reset to the defaults.", rdev == BIND_DEV_PAD ? "Controller" : "Keyboard");
+        if (kind == 5) snprintf(msg, sizeof msg, "%s bindings reset to the defaults.", rdev == BIND_DEV_PAD ? "Controller"
+                                : bind_keyboard_only_active() ? "Keyboard-only" : "Keyboard");
         else if (kind == 1) snprintf(msg, sizeof msg, "%s is now %s.", bind_input_name(rslot), now);
         else if (kind == 2)
             snprintf(msg, sizeof msg, "%s is now %s; %s moved to %s (swapped).", bind_input_name(rslot), now,
@@ -219,7 +220,8 @@ extern "C" void controls_bindings_draw(float scale) {
         ImGui::TableSetupColumn("Switch", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("In the game", ImGuiTableColumnFlags_WidthStretch, 1.1f);
         ImGui::TableSetupColumn("Controller", ImGuiTableColumnFlags_WidthStretch, 1.1f);
-        ImGui::TableSetupColumn("Keyboard / mouse", ImGuiTableColumnFlags_WidthStretch, 1.1f);
+        // (Keyboard only, Controls tab: the keyboard-only layout's own bindings - bindings.c)
+        ImGui::TableSetupColumn(bind_keyboard_only_active() ? "Keyboard only" : "Keyboard / mouse", ImGuiTableColumnFlags_WidthStretch, 1.1f);
         ImGui::TableHeadersRow();
         // in the order a player thinks of them: face buttons, shoulders, Plus / Minus, d-pad, sticks, beams
         static const int order[] = {BIND_A, BIND_B, BIND_X, BIND_Y, BIND_L, BIND_R, BIND_ZL, BIND_ZR, BIND_PLUS,
@@ -251,7 +253,10 @@ extern "C" void controls_bindings_draw(float scale) {
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(bind_is_default(BIND_DEV_KEY));
-    if (ImGui::Button("Reset keyboard to defaults")) { bind_capture_cancel(); bind_reset(BIND_DEV_KEY); }
+    if (ImGui::Button(bind_keyboard_only_active() ? "Reset keyboard only to defaults" : "Reset keyboard to defaults")) {
+        bind_capture_cancel();
+        bind_reset(BIND_DEV_KEY);
+    }
     ImGui::EndDisabled();
     ImGui::PushTextWrapPos(0);
     ImGui::TextDisabled("Bindings apply to the game in play only, except Menus: accept / back - the keys that confirm "

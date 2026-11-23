@@ -58,6 +58,9 @@ void plat_init(void);                                // first thing in main()
 bool plat_exe_path(char *buf, size_t size);
 void plat_exec(char *const argv[]);  // replace the process (NULL = same command line); returns only on failure
 void plat_terminate(void);  // end the process now, skipping DLL teardown (exit status 0)
+// The log file this run writes (primerecomp.log; the run before's is primerecomp.previous.log beside it), or "" when
+// what it prints goes elsewhere (a terminal, a pipe, a file of a script's)
+const char *plat_log_path(void);
 
 // Child processes (seed generator, game-file extraction). stdout + stderr go to log_path (NULL = /dev/null).
 typedef intptr_t PlatProc;  // 0 = failed to start

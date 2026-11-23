@@ -2,8 +2,9 @@
 """Log triage for GitHub issues: a short summary of the primerecomp.log files attached to an issue.
 
 .github/workflows/log_triage.yml runs it when an issue is opened / edited or a comment is added. It reads the issue
-and its comments through the GitHub API, downloads the attached logs (github.com/user-attachments/files/... links
-whose file name starts with "primerecomp", at most MAX_BYTES each), and keeps ONE bot comment per issue up to date
+and its comments through the GitHub API, downloads the attached logs (github.com/user-attachments/files/... links, or
+the gist.githubusercontent.com/.../raw/... file of a report sent from PrimeRecomp itself, whose file name starts with
+"primerecomp", at most MAX_BYTES each), and keeps ONE bot comment per issue up to date
 with a summary of the newest logs, plus a "log: crash" / "log: device-lost" / "log: ok" label for the newest one.
 
 Everything in an issue and in a log is untrusted data: it is only ever parsed here, never run or handed to a shell.
@@ -30,7 +31,9 @@ MAX_LOGS = 3                  # newest logs summarized per comment
 LABELS = {"crash": ("log: crash", "b60205", "Newest attached log ends in a crash or hang"),
           "device-lost": ("log: device-lost", "d93f0b", "Newest attached log ends with the GPU device lost"),
           "ok": ("log: ok", "0e8a16", "Newest attached log ends with a clean exit")}
-ATTACH_RE = re.compile(r"https://github\.com/user-attachments/files/\d+/[A-Za-z0-9._%+-]+")
+# (and the logs PrimeRecomp's Report a bug tab sends: a secret gist's raw file, runtime/report.c)
+ATTACH_RE = re.compile(r"https://github\.com/user-attachments/files/\d+/[A-Za-z0-9._%+-]+"
+                       r"|https://gist\.githubusercontent\.com/[A-Za-z0-9-]+/[0-9a-f]{20,40}/raw/(?:[0-9a-f]{40}/)?[A-Za-z0-9._%+-]+")
 REDIRECT_HOSTS = ("objects.githubusercontent.com",)  # (where github.com/user-attachments/files/... redirects)
 
 
@@ -160,6 +163,8 @@ def parse(text):
         r["end"], r["end_line"] = "hang", next((x for x in lines if x.startswith("[hang] =====") and x.strip() != "[hang] ====="), None)
     elif closed:
         r["end"] = "ok"
+    elif lines and lines[-1].startswith("[report] sending a bug report with the log of the run it was sent from"):
+        r["end"] = "sent"  # (the Report a bug tab's copy of the running game's log: runtime/report.c)
     else:
         r["end"] = "unknown"
     return r
@@ -203,6 +208,7 @@ def summarize(r):
            "crash": "crash" + (f" ({clean(r.get('crash_head'), 80)})" if r.get("crash_head") else "") + f": {code(r['end_line'] or '')}",
            "device-lost": f"the GPU device was lost: {code(r['end_line'] or '')}",
            "hang": f"hang (the hang report is in the log){': ' + code(r['end_line']) if r['end_line'] else ''}",
+           "sent": "still running: sent from the game's Report a bug tab during this run",
            "unknown": "the log stops without an exit line (closed from outside, frozen, or still running when copied)"}[r["end"]]
     out.append(f"- **How the run ended:** {end}")
     if r.get("state"):
@@ -276,7 +282,7 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
 
 
 def download(url):
-    if not ATTACH_RE.fullmatch(url): raise ValueError("not a GitHub attachment link")
+    if not ATTACH_RE.fullmatch(url): raise ValueError("not a GitHub attachment or gist link")
     opener = urllib.request.build_opener(_Redirects)
     req = urllib.request.Request(url, headers={"User-Agent": "primerecomp-log-triage"})  # (no token: public files)
     with opener.open(req, timeout=60) as resp:
