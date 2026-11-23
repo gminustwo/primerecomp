@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../achievements.h"
 #include "../hle.h"
 #include "../platform.h"
 #include "../romfs_build.h"
@@ -186,6 +187,16 @@ static int item_percent(const int32_t *it) {
     return n * 100 / 99;
 }
 
+int playlog_item_percent(const int32_t *it) { return item_percent(it); }  // (runtime/hle/achievements.c)
+
+// (runtime/hle/achievements.c) the room names, once read: how many (-1 until then), and each one's id and name
+int playlog_room_count(void) { return g_rooms_state == 2 ? g_nrooms : -1; }
+const char *playlog_room_at(int i, const uint8_t **id) {
+    if (g_rooms_state != 2 || i < 0 || i >= g_nrooms) return NULL;
+    *id = g_rooms[i].id;
+    return g_rooms[i].name;
+}
+
 // Items: picked up (a capacity up), or all of them when a save comes in (many at once)
 static void items_frame(uint64_t ps) {
     const int32_t *it = (const int32_t *)(uintptr_t)(ps + 0x2c);
@@ -246,6 +257,7 @@ void playlog_area(uint64_t lo, uint64_t hi) {
             char room[128];
             room_text(room, sizeof room);
             LOG("[state] (that room: %s)\n", room);
+            achievements_room(g_room, room_name(g_room));
         }
         return;
     }
@@ -259,15 +271,17 @@ void playlog_area(uint64_t lo, uint64_t hi) {
     g_room_index = room_index(g_room);
     g_room_named = g_room_index >= 0;
     state_line(NULL, "  (entered)");
+    achievements_room(g_room, room_name(g_room));
 }
 
-// Each frame Samus is in play (rt_player_frame), her position (x, y, z; y up)
-void playlog_frame(const float pos[3]) {
+// Each frame Samus is in play (rt_player_frame), her position (x, y, z; y up) and the state manager
+void playlog_frame(const float pos[3], uint64_t sm) {
     uint64_t ps = player_state();
     if (!ps) return;
     memcpy(g_pos, pos, sizeof g_pos), g_pos_set = true;
     g_play_ns = plat_now_ns();
     items_frame(ps);
+    achievements_frame(LD64(guest_sym("gpGameState")), ps, sm);
     controls_frame();
     bool alive = (LD8(ps) & 1) != 0;
     if (g_alive && !alive) {
