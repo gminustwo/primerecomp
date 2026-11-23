@@ -1215,8 +1215,22 @@ void rt_player_frame(Cpu *c) {
     static uint64_t logged = ~0ull;
     float *m = player_transform(g_player);
     if (m) {  // (the play log: runtime/hle/playlog.c)
-        extern void playlog_frame(const float pos[3]);
-        playlog_frame((const float[3]){m[3], m[7], m[11]});
+        extern void playlog_frame(const float pos[3], uint64_t sm);
+        playlog_frame((const float[3]){m[3], m[7], m[11]}, g_player_mgr);
+        // (debug) LARECOMP_ACH_SCANCHECK=<n>: every n frames, the scans done / counted as the game works them out
+        // (CPlayerStateMP1::CalculateScanPair), to hold runtime/hle/achievements.c's own count against
+        static long scan_check = -2;
+        if (scan_check == -2) scan_check = ENV("LARECOMP_ACH_SCANCHECK") ? atol(ENV("LARECOMP_ACH_SCANCHECK")) : 0;
+        uint64_t gs = LD64(guest_sym("gpGameState")), ps = gs ? LD64(gs + 0x20) : 0;
+        if (scan_check > 0 && frame % scan_check == 0 && ps) {
+            Cpu *saved = malloc(sizeof *saved);
+            *saved = *c;
+            c->x[0] = ps;
+            guest_call(c, guest_sym("_ZNK15CPlayerStateMP117CalculateScanPairEv"));
+            LOG("[achievements] the game's scan count: %u of %u\n", (unsigned)c->x[0], (unsigned)(c->x[0] >> 32));
+            *c = *saved;
+            free(saved);
+        }
     }
     if (every > 0 && m && frame % every == 0 && frame != logged) {
         logged = frame;
@@ -1540,28 +1554,33 @@ static void debug_load_areas(Cpu *c) {
 // on, the next gameplay frame does what an elevator does (CScriptWorldTeleporterMP1::AcceptScriptMsg, its transition
 // effect left out): the world and its desired area set, the game instance quit to continue there. The game loads that
 // room and starts at its spawn point - a test run reaches any room. (State manager in x0.)
+// Several, separated by ';', run in turn.
 static void debug_warp(Cpu *c) {
-    static long at = -2;
-    static uint64_t id[4];  // world lo, hi; room lo, hi
-    if (at == -2) {
-        at = -1;
-        const char *e = getenv("LARECOMP_WARP");
-        char w[40], r[40];
-        long f;
-        if (e && sscanf(e, "%ld:%32[0-9a-fA-F]:%32[0-9a-fA-F]", &f, w, r) == 3 && strlen(w) == 32 && strlen(r) == 32) {
+    enum { MAXW = 8 };
+    static long ats[MAXW];
+    static uint64_t ids[MAXW][4];  // world lo, hi; room lo, hi
+    static int nw = -1, cur;
+    if (nw < 0) {
+        nw = 0;
+        for (const char *e = getenv("LARECOMP_WARP"); e && *e && nw < MAXW;) {
+            char w[40], r[40];
+            long f;
+            if (sscanf(e, "%ld:%32[0-9a-fA-F]:%32[0-9a-fA-F]", &f, w, r) != 3 || strlen(w) != 32 || strlen(r) != 32) break;
             uint8_t b[32];
             for (int i = 0; i < 16; i++) {
                 unsigned v = 0, u = 0;
                 sscanf(w + 2 * i, "%2x", &v), sscanf(r + 2 * i, "%2x", &u);
                 b[i] = (uint8_t)v, b[16 + i] = (uint8_t)u;
             }
-            memcpy(id, b, 32);
-            at = f;
+            memcpy(ids[nw], b, 32);
+            ats[nw++] = f;
+            e = strchr(e, ';');
+            if (e) e++;
         }
     }
     extern uint64_t vk_frame_counter(void);
-    if (at < 0 || (long)vk_frame_counter() < at) return;
-    at = -1;
+    if (cur >= nw || (long)vk_frame_counter() < ats[cur]) return;
+    const uint64_t *id = ids[cur++];
     uint64_t mgr = c->x[0], gs = LD64(guest_sym("gpGameState"));
     if (!GUEST_PTR_OK(gs)) return;
     {   // (in byte order, as the "[area] load" lines and the paks give them)

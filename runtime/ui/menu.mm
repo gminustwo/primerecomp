@@ -34,6 +34,10 @@ void controls_bindings_draw(float scale);  // controls_ui.mm
 #include "../discord.h"
 #include "../report.h"
 }
+// (runtime/ui/achievements_ui.mm)
+void achievements_tab(float scale);
+bool achievements_popup_active(bool shown);
+void achievements_popup_draw(ImVec2 disp, ImFont *font, ImFont *big, float scale);
 
 // ------------------------------------------------------------------ state shared with the main thread
 static std::atomic<bool> g_open{false};
@@ -1741,9 +1745,11 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     // (Cosmetics, id 7: LAS Recomp's tunic / heart colors - nothing to recolor in Metroid Prime, so not shown)
     // (Mods, id 2: emulator mods and texture mods)
     // (Report a bug, id 10: runtime/report.c - a bug report to GitHub Issues with the log)
+    // (Achievements, id 11: runtime/ui/achievements_ui.mm)
     static const char *names[] = {"Video", "Audio", "Mods", "", "", "Cheats", "Gameplay", "", "Controls", "Quit",
-                                  "Report a bug"};
-    static const int order[] = {6, 0, 1, 8, 2, 5, 10, 9};  // Gameplay, Video, Audio, Controls, Mods, Cheats, Report, Quit
+                                  "Report a bug", "Achievements"};
+    // Gameplay, Video, Audio, Controls, Mods, Cheats, Achievements, Report a bug, Quit
+    static const int order[] = {6, 0, 1, 8, 2, 5, 11, 10, 9};
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT)
         if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
@@ -1851,6 +1857,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case 8: tab_about(); break;
                 case 9: tab_quit(scale, in_game); break;
                 case 10: tab_report(in_game); break;
+                case 11: achievements_tab(ImGui::GetFontSize() / 34); break;
                 }
                 if (t.id == -1 || t.id == 8) {
                     // pages of ImGui's own controls (Prelaunch, Controls): Down with nowhere further down to go - text
@@ -1946,7 +1953,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     const double tw = target_w, th = target_h;
     bool open = g_open.load();
     bool kbd = g_kbd.load() == 1;
-    if (!open && !kbd && !g_settings.show_fps) {
+    bool popup = achievements_popup_active(!open && !kbd);  // (one just earned: over the game, not over the menu)
+    if (!open && !kbd && !g_settings.show_fps && !popup) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         return;
     }
@@ -2025,6 +2033,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         osk_draw(g_font_big, scale);  // (a text field activated with the controller)
     }
 
+    if (popup && !open && !kbd) achievements_popup_draw(io.DisplaySize, g_menu_font, g_menu_font_big, scale);
     if (kbd) keyboard_draw(io, scale);
     ImGui::Render();
     g_text_busy = open && ui_text_busy();

@@ -9,6 +9,7 @@
 
 #include <pthread.h>
 
+#include "../achievements.h"
 #include "../hle.h"
 #include "../ipc.h"
 #include "../romfs_build.h"
@@ -717,6 +718,9 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
         ssize_t n = pread(f->fd, (void *)(uintptr_t)b->addr, (size_t)size, off);
         if (is_save_path(f->path)) {
             LOG("[save] read %s off %lld size %lld -> guest %llx\n", f->path, (long long)off, (long long)size, (unsigned long long)b->addr);
+            // (a save loaded: what it holds isn't earned again - runtime/hle/achievements.c)
+            const char *name = strrchr(f->path, '/');
+            if (off == 0 && n > 0 && name && !strcmp(name + 1, "save.bin")) achievements_save_read();
         }
         OUT(int64_t, 0) = n < 0 ? 0 : n;
         resp_size(resp, 8);
