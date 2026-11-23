@@ -8,14 +8,14 @@
       "id": "base",
       "label": "Metroid Prime Remastered v1.0.0 (no updates), extracted exefs + romfs",
       "role": "game",
-      "formats": [{ "type": "folder" }]
+      "formats": [{ "type": "folder" }],
+      "check": { "nup_build_id": "67c9ca1428222752" }
     }
   ],
   "prepare": {
     "program": ["primerecomp.exe", "PrimeRecomp.AppImage"],
     "args": ["--prepare", "--game={input:base}"],
-    "label": "Preparing Metroid Prime Remastered",
-    "timeout": 3600
+    "label": "Preparing Metroid Prime Remastered"
   },
   "start": {
     "program": ["primerecomp.exe", "PrimeRecomp.AppImage"],

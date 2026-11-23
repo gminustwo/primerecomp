@@ -25,7 +25,18 @@ class ManifestTests(unittest.TestCase):
         # The exe is tried first; the AppImage name is rebound by the launcher to the downloaded file.
         self.assertEqual(m["start"]["program"], ["primerecomp.exe", "PrimeRecomp.AppImage"])
         self.assertEqual(m["prepare"]["program"], m["start"]["program"])
-        self.assertGreaterEqual(m["prepare"]["timeout"], 1800)
+
+    def test_no_prepare_timeout(self):
+        # RecompLauncher has no time limit on the step any more (only an hour with no output stops it), and its
+        # schema no longer has the field.
+        self.assertNotIn("timeout", load_manifest()["prepare"])
+
+    def test_build_id_check_matches_the_game(self):
+        # The launcher refuses another version when the folder is picked; it must be the build the setup accepts.
+        text = (ROOT / "runtime/ui/launcher.mm").read_text()
+        line = re.search(r"BUILD_ID\[8\] = \{([^}]*)\}", text).group(1)
+        game_id = "".join(b.strip()[2:] for b in line.split(","))
+        self.assertEqual(load_manifest()["inputs"][0]["check"], {"nup_build_id": game_id})
 
     def test_matches_the_schema(self):
         if not SCHEMA: self.skipTest("pass --schema to validate against the published schema")
