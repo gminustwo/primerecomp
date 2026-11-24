@@ -3,6 +3,9 @@
 [![release](https://img.shields.io/github/v/release/gminustwo/primerecomp?filter=v%2A&sort=semver&display_name=tag&label=release&color=orange)](https://github.com/gminustwo/primerecomp/releases/latest)
 [![downloads](https://img.shields.io/github/downloads/gminustwo/primerecomp/total?label=downloads&color=brightgreen)](https://github.com/gminustwo/primerecomp/releases)
 [![Discord](https://img.shields.io/discord/1563998517536760009?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/CdwFjGCEGf)
+[![Patreon](https://img.shields.io/badge/Patreon-support-F96854?logo=patreon&logoColor=white)](https://www.patreon.com/rengar1)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/rengar12707)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/rengar)
 
 **PrimeRecomp** runs *Metroid Prime Remastered* (Nintendo Switch, 2023) natively on Windows, macOS (Apple Silicon) and
 Linux, including the Steam Deck. The game's code is statically recompiled.
