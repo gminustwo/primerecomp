@@ -30,6 +30,7 @@ Settings g_settings = {
     .hd_rumble = true,
     .check_updates = true,
     .discord = true,
+    .achievements = false,  // (off until the player turns them on: no popups over the game)
     .deadzone = {0.05f, 0.05f},
     .movie_audio = true,
     .show_fps = false,
@@ -324,6 +325,7 @@ void settings_load(void) {
         else if (!strcmp(key, "menu_tip_seen")) g_settings.menu_tip_seen = atoi(val) != 0, tip_key = true;
         else if (!strcmp(key, "check_updates")) g_settings.check_updates = atoi(val) != 0;
         else if (!strcmp(key, "discord_status")) g_settings.discord = atoi(val) != 0;
+        else if (!strcmp(key, "achievements")) g_settings.achievements = atoi(val) != 0;
         else bind_settings_load(key, val);  // bind_pad_* / bind_key_*: runtime/hle/bindings.c
     }
     fclose(f);
@@ -400,7 +402,7 @@ static void write_settings(void *o) {
     put(o, "fov = %d\nweapon_fov = %d\nskippable_cutscenes = %d\ngyro = %d\n", g_settings.fov, g_settings.weapon_fov,
             g_settings.skippable_cutscenes, g_settings.gyro);
     put(o, "crosshair = %d\n", g_settings.crosshair);
-    put(o, "discord_status = %d\n", g_settings.discord);
+    put(o, "discord_status = %d\nachievements = %d\n", g_settings.discord, g_settings.achievements);
     put(o, "mouse_aim = %d\nmouse_sens = %.2f\nmouse_invert = %d\n", g_settings.mouse_aim, g_settings.mouse_sens,
             g_settings.mouse_invert);
     put(o, "mouse_flick_jump = %d\n", g_settings.mouse_flick_jump);

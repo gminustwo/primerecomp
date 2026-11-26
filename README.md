@@ -75,10 +75,10 @@ reports and feature requests go on [Issues](https://github.com/gminustwo/primere
   Samus' upgrades set as you like - missiles, power bombs, energy tanks, suit, beams, visors, morph ball upgrades,
   artifacts - or all unlocked at once; Hard difficulty on the new-game Difficulty screen without finishing the game
   first
-- Achievements (F1 menu, or Settings on the start screen: Achievements tab): 57 of Metroid Prime's milestones -
-  bosses, upgrades, map stations and every room of each world, the Log Book's scans, Hard mode, a frigate escape
-  with time to spare, a run under 3:30 - earned as they happen in play, with a popup, and kept in `achievements.txt`
-  next to the `save` folder. They follow RetroAchievements' Metroid Prime set for the GameCube (by TheMysticalOne and
+- Achievements (F1 menu, or Settings on the start screen: Achievements tab; off by default, turned on there): 57 of
+  Metroid Prime's milestones - bosses, upgrades, map stations and every room of each world, the Log Book's scans, Hard
+  mode, a frigate escape with time to spare, a run under 3:30 - earned as they happen in play, with a popup, and kept
+  in `achievements.txt` next to the `save` folder. While they're off, nothing is earned and nothing pops up. They follow RetroAchievements' Metroid Prime set for the GameCube (by TheMysticalOne and
   Ghal416), in our own words; what a save already holds when it's loaded doesn't count, cheats don't stop them.
   Started by kryptalivian
 - Shader pre-load (F1 menu, Video tab; on by default): the game's shaders built on the start screen - everything

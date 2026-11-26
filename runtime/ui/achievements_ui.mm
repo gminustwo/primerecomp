@@ -15,6 +15,9 @@
 #include "theme.h"
 
 #include "../achievements.h"
+extern "C" {
+#include "../settings.h"
+}
 
 // ------------------------------------------------------------------ the pictures
 // A small line drawing for each kind (r: its radius)
@@ -103,6 +106,11 @@ void achievements_tab(float scale) {
         "What a save already holds when you load it doesn't count: from there on, each one is earned as it happens. "
         "Cheats don't stop them.\n\nThey're kept in achievements.txt, next to the save folder, apart from your saves.";
     if (ach_file_error()) intro += "\n\nachievements.txt couldn't be read or written: new ones are shown but may not be kept.";
+    if (opt_toggle("Achievements", &g_settings.achievements, false,
+                   "Earn achievements as you play, each with a popup at the bottom of the screen as it's earned.\n\n"
+                   "Off: none are earned and nothing pops up over the game. The ones already earned stay in the list.\n\n"
+                   "Turned on in the middle of a game, they count from that moment on, as when a save is loaded."))
+        settings_save();
     opt_action("Earned", sum, intro.c_str());
     static int filter = 0;
     static const char *const shows[] = {"All", "Earned", "Not yet"};
@@ -159,7 +167,10 @@ static double seconds(void) {
 bool achievements_popup_active(bool shown) {
     double now = seconds();
     if (g_pop >= 0 && now - g_pop_t0 > kPopSeconds) g_pop = -1;
-    if (g_pop < 0 && shown) {
+    if (!g_settings.achievements) {  // (off: nothing over the game, and none left waiting for later)
+        g_pop = -1;
+        while (ach_next_popup() >= 0) {}
+    } else if (g_pop < 0 && shown) {
         g_pop = ach_next_popup();
         g_pop_t0 = now;
     }
