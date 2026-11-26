@@ -155,6 +155,8 @@ typedef struct {
     bool check_updates;  // the start screen asks GitHub for a newer release (runtime/update.c; Settings > Prelaunch)
     bool discord;        // the Discord app on this computer shows the game on the player's profile: the world, the item
                          // percentage, the time played (runtime/discord.c; Gameplay tab "Discord status", issue #96)
+    bool achievements;   // achievements are earned in play, each with its popup (runtime/hle/achievements.c; the
+                         // Achievements tab). Off by default: nothing pops up over the game until it's turned on
 } Settings;
 
 extern Settings g_settings;

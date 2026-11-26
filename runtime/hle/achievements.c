@@ -2,6 +2,8 @@
 // left, a count reached - seen as it happens, from one frame in play to the next. What a save already holds when it's
 // loaded isn't earned again: a save being read (runtime/services/fs.c) or the game booting again makes the next frame
 // in play the new starting point (as RetroAchievements counts them). Cheats don't stop them: they're the player's own.
+// Off by default (g_settings.achievements, the Achievements tab): nothing is read or earned until the player turns them
+// on, and turning them on in play starts counting from that frame, as a load does.
 //
 // All read from the game's own data as it runs, nothing changed:
 // - the player state (CPlayerStateMP1; runtime/hle/playlog.c): +0x18 the visor (0 Combat, 1 X-Ray, 2 Scan, 3 Thermal),
@@ -31,6 +33,7 @@
 #include "../achievements.h"
 #include "../hle.h"
 #include "../paths.h"
+#include "../settings.h"
 
 #define GUEST_PTR_OK(p) ((p) >= GUEST_LO && (p) < GUEST_HI && !((p) & 7))
 #define GUEST_PTR4_OK(p) ((p) >= GUEST_LO && (p) < GUEST_HI && !((p) & 3))
@@ -491,6 +494,7 @@ static double play_time(void) {
 }
 
 void achievements_frame(uint64_t gs, uint64_t ps, uint64_t sm) {
+    if (!g_settings.achievements) { g_prev.ok = false; return; }  // (off: turned on later, that frame is the start)
     read_worlds();
     g_frame++;
     g_sm = sm;
